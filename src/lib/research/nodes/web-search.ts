@@ -2,7 +2,6 @@ import {
   coerceClaimType,
   coerceEvidenceMode,
   coerceSearchIntent,
-  coerceSectionKey,
   coerceSourceCategory,
   coerceSourceQualityLabel,
   coerceSourceRecency,
@@ -23,9 +22,22 @@ import {
   saveResearchSources,
   setRunStage,
 } from '@/lib/research/repository';
-import { searchIntentToSectionKey } from '@/lib/research/section-policy';
+import { resolveSectionKey } from '@/lib/research/section-routing';
 import type { ResearchGraphState } from '@/lib/research/schemas';
 import type { WebSearchService } from '@/lib/research/search';
+
+function getCanonicalSectionKey(metadata: Record<string, unknown>) {
+  const intent =
+    typeof metadata.queryIntent === 'string'
+      ? coerceSearchIntent(metadata.queryIntent)
+      : null;
+  return resolveSectionKey({
+    intent,
+    subtopic: typeof metadata.subtopic === 'string' ? metadata.subtopic : null,
+    sectionKey: typeof metadata.sectionKey === 'string' ? metadata.sectionKey : null,
+    claimType: typeof metadata.claimType === 'string' ? coerceClaimType(metadata.claimType) : null,
+  });
+}
 
 export function createWebSearchNode(searchService: WebSearchService) {
   return async function runWebSearchNode(state: ResearchGraphState) {
@@ -50,8 +62,10 @@ export function createWebSearchNode(searchService: WebSearchService) {
           url: source.url,
           snippet: source.snippet ?? '',
           query: typeof source.metadataJson.query === 'string' ? source.metadataJson.query : 'unknown',
+          subtopic:
+            typeof source.metadataJson.subtopic === 'string' ? source.metadataJson.subtopic : 'unknown',
           queryIntent: coerceSearchIntent(source.metadataJson.queryIntent),
-          sectionKey: coerceSectionKey(source.metadataJson.sectionKey),
+          sectionKey: getCanonicalSectionKey(source.metadataJson),
           claimType: coerceClaimType(source.metadataJson.claimType),
           evidenceMode: coerceEvidenceMode(source.metadataJson.evidenceMode),
           vendorTarget:
@@ -125,8 +139,14 @@ export function createWebSearchNode(searchService: WebSearchService) {
         snippet: source.snippet,
         metadataJson: {
           query: source.query,
+          subtopic: source.subtopic,
           queryIntent: source.queryIntent,
-          sectionKey: source.sectionKey,
+          sectionKey: resolveSectionKey({
+            intent: source.queryIntent,
+            subtopic: source.subtopic,
+            sectionKey: source.sectionKey,
+            claimType: source.claimType,
+          }),
           claimType: source.claimType,
           evidenceMode: source.evidenceMode,
           vendorTarget: source.vendorTarget,
@@ -153,10 +173,7 @@ export function createWebSearchNode(searchService: WebSearchService) {
       persistedSources.map((source) => ({
         sourceType: 'web',
         sourceId: source.id,
-        sectionKey:
-          typeof source.metadataJson.sectionKey === 'string'
-            ? coerceSectionKey(source.metadataJson.sectionKey)
-            : searchIntentToSectionKey[source.metadataJson.queryIntent as keyof typeof searchIntentToSectionKey] ?? null,
+        sectionKey: getCanonicalSectionKey(source.metadataJson),
         title: source.title,
         url: source.url,
         excerpt: source.snippet ?? '',
@@ -168,14 +185,7 @@ export function createWebSearchNode(searchService: WebSearchService) {
       persistedSources.map((source) => ({
         sourceType: 'web',
         retrieverType: 'web_search',
-        sectionKey:
-          typeof source.metadataJson.sectionKey === 'string'
-            ? coerceSectionKey(source.metadataJson.sectionKey)
-            : searchIntentToSectionKey[
-                (typeof source.metadataJson.queryIntent === 'string'
-                  ? source.metadataJson.queryIntent
-                  : 'buyer-pain') as keyof typeof searchIntentToSectionKey
-              ],
+        sectionKey: getCanonicalSectionKey(source.metadataJson),
         query: typeof source.metadataJson.query === 'string' ? source.metadataJson.query : 'unknown',
         sourceId: source.id,
         title: source.title,
@@ -226,8 +236,10 @@ export function createWebSearchNode(searchService: WebSearchService) {
         url: source.url,
         snippet: source.snippet ?? '',
         query: typeof source.metadataJson.query === 'string' ? source.metadataJson.query : 'unknown',
+        subtopic:
+          typeof source.metadataJson.subtopic === 'string' ? source.metadataJson.subtopic : 'unknown',
         queryIntent: coerceSearchIntent(source.metadataJson.queryIntent),
-        sectionKey: coerceSectionKey(source.metadataJson.sectionKey),
+        sectionKey: getCanonicalSectionKey(source.metadataJson),
         claimType: coerceClaimType(source.metadataJson.claimType),
         evidenceMode: coerceEvidenceMode(source.metadataJson.evidenceMode),
         vendorTarget:

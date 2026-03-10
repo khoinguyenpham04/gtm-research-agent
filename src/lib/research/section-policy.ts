@@ -6,6 +6,7 @@ import type {
   SearchIntent,
   SectionStatus,
 } from '@/lib/research/schemas';
+import { deriveSectionKeyFromIntent, resolveEvidenceSectionKey, resolveSectionKey } from '@/lib/research/section-routing';
 
 type SectionKey = ResearchFinding['sectionKey'];
 
@@ -29,12 +30,12 @@ interface SectionPolicy {
 }
 
 export const searchIntentToSectionKey: Record<SearchIntent, SectionKey> = {
-  'market-size': 'market-landscape',
-  adoption: 'icp-and-buyer',
-  'competitor-features': 'competitor-landscape',
-  pricing: 'pricing-and-packaging',
-  'buyer-pain': 'icp-and-buyer',
-  'gtm-channels': 'gtm-motion',
+  'market-size': deriveSectionKeyFromIntent('market-size', null),
+  adoption: deriveSectionKeyFromIntent('adoption', null),
+  'competitor-features': deriveSectionKeyFromIntent('competitor-features', null),
+  pricing: deriveSectionKeyFromIntent('pricing', null),
+  'buyer-pain': deriveSectionKeyFromIntent('buyer-pain', null),
+  'gtm-channels': deriveSectionKeyFromIntent('gtm-channels', null),
 };
 
 const sectionPolicyByKey: Record<SectionKey, SectionPolicy> = {
@@ -189,16 +190,7 @@ function getEvidenceMode(record: ResearchEvidence) {
 }
 
 function getEvidenceSection(record: ResearchEvidence) {
-  if (record.sectionKey) {
-    return record.sectionKey;
-  }
-
-  const queryIntent =
-    typeof record.metadataJson.queryIntent === 'string'
-      ? (record.metadataJson.queryIntent as SearchIntent)
-      : null;
-
-  return queryIntent ? searchIntentToSectionKey[queryIntent] : null;
+  return resolveEvidenceSectionKey(record);
 }
 
 function getEvidenceText(record: ResearchEvidence) {
@@ -322,12 +314,40 @@ function hasPurchaseFrictionSignals(record: ResearchEvidence) {
   );
 }
 
+function getEvidenceSubtopic(record: ResearchEvidence) {
+  return typeof record.metadataJson.subtopic === 'string'
+    ? record.metadataJson.subtopic.toLowerCase()
+    : '';
+}
+
 export function getGtmEvidenceSignals(evidenceRecords: ResearchEvidence[]) {
+  const hasExplicitSubtopics = evidenceRecords.some((record) => Boolean(getEvidenceSubtopic(record)));
+  const buyingProcessRecords = evidenceRecords.filter((record) =>
+    hasExplicitSubtopics
+      ? getEvidenceSubtopic(record) === 'buying-process'
+      : hasBuyingProcessSignals(record),
+  );
+  const channelRecords = evidenceRecords.filter((record) =>
+    hasExplicitSubtopics
+      ? getEvidenceSubtopic(record) === 'channel-preference'
+      : hasChannelSignals(record),
+  );
+  const partnerPreferenceRecords = evidenceRecords.filter((record) =>
+    hasExplicitSubtopics
+      ? getEvidenceSubtopic(record) === 'partner-msp-direct'
+      : hasPartnerPreferenceSignals(record),
+  );
+  const purchaseFrictionRecords = evidenceRecords.filter((record) =>
+    hasExplicitSubtopics
+      ? getEvidenceSubtopic(record) === 'purchase-friction'
+      : hasPurchaseFrictionSignals(record),
+  );
+
   return {
-    buyingProcessCount: evidenceRecords.filter(hasBuyingProcessSignals).length,
-    channelCount: evidenceRecords.filter(hasChannelSignals).length,
-    partnerPreferenceCount: evidenceRecords.filter(hasPartnerPreferenceSignals).length,
-    purchaseFrictionCount: evidenceRecords.filter(hasPurchaseFrictionSignals).length,
+    buyingProcessCount: buyingProcessRecords.length,
+    channelCount: channelRecords.length,
+    partnerPreferenceCount: partnerPreferenceRecords.length,
+    purchaseFrictionCount: purchaseFrictionRecords.length,
   };
 }
 
@@ -362,7 +382,21 @@ export function filterCandidatesForSection(
   sectionKey: SectionKey,
   candidates: RetrievalCandidate[],
 ) {
-  return candidates.filter((candidate) => candidate.sectionKey === sectionKey);
+  return candidates.filter(
+    (candidate) =>
+      resolveSectionKey({
+        intent:
+          typeof candidate.metadataJson.queryIntent === 'string'
+            ? (candidate.metadataJson.queryIntent as SearchIntent)
+            : null,
+        sectionKey: candidate.sectionKey,
+        claimType: candidate.claimType,
+        subtopic:
+          typeof candidate.metadataJson.subtopic === 'string'
+            ? candidate.metadataJson.subtopic
+            : null,
+      }) === sectionKey,
+  );
 }
 
 export function assessSectionStatus(

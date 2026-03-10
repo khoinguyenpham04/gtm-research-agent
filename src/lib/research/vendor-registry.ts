@@ -13,6 +13,29 @@ interface CanonicalVendorConfig {
 }
 
 const canonicalVendorRegistry: Record<string, CanonicalVendorConfig> = {
+  gong: {
+    aliases: ['gong', 'gong.io'],
+    pages: [
+      {
+        url: 'https://www.gong.io/conversation-intelligence',
+        title: 'Conversation intelligence software that turns every call into revenue',
+        vendorPageType: 'product',
+        intents: ['competitor-features'],
+      },
+      {
+        url: 'https://www.gong.io/pricing',
+        title: 'Gong Revenue AI Pricing',
+        vendorPageType: 'pricing',
+        intents: ['pricing'],
+      },
+      {
+        url: 'https://help.gong.io/docs/plans-and-seats',
+        title: 'Plans and seats - Gong Help Center',
+        vendorPageType: 'docs',
+        intents: ['pricing', 'competitor-features'],
+      },
+    ],
+  },
   otter: {
     aliases: ['otter', 'otter ai', 'otter.ai'],
     pages: [
@@ -145,4 +168,8 @@ export function resolveCanonicalVendorPages(
   }
 
   return [];
+}
+
+export function listCanonicalVendorPages() {
+  return Object.values(canonicalVendorRegistry).flatMap((config) => config.pages);
 }

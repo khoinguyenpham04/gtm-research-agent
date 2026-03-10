@@ -14,10 +14,10 @@ import { runPlanNode } from '@/lib/research/nodes/plan';
 import { runVerificationNode } from '@/lib/research/nodes/verification';
 import { createWebSearchNode } from '@/lib/research/nodes/web-search';
 import {
-  finalReportSectionKeyValues,
   researchGraphStateSchema,
   type ResearchGraphState,
 } from '@/lib/research/schemas';
+import { resolveEvidenceSectionKey, resolveSectionKey } from '@/lib/research/section-routing';
 import {
   coerceSearchIntent,
   coerceClaimType,
@@ -32,6 +32,15 @@ import type { WebSearchService } from '@/lib/research/search';
 function toWebSource(
   source: Awaited<ReturnType<typeof listResearchSources>>[number],
 ) {
+  const queryIntent =
+    typeof source.metadataJson.queryIntent === 'string'
+      ? coerceSearchIntent(source.metadataJson.queryIntent)
+      : null;
+  const claimType =
+    typeof source.metadataJson.claimType === 'string'
+      ? coerceClaimType(source.metadataJson.claimType)
+      : null;
+
   return {
     id: source.id,
     sourceType: 'web' as const,
@@ -39,12 +48,15 @@ function toWebSource(
     url: source.url,
     snippet: source.snippet ?? '',
     query: typeof source.metadataJson.query === 'string' ? source.metadataJson.query : 'unknown',
-    queryIntent: coerceSearchIntent(source.metadataJson.queryIntent),
-    sectionKey:
-      typeof source.metadataJson.sectionKey === 'string'
-        ? coerceSectionKey(source.metadataJson.sectionKey)
-        : 'icp-and-buyer',
-    claimType: coerceClaimType(source.metadataJson.claimType),
+    subtopic: typeof source.metadataJson.subtopic === 'string' ? source.metadataJson.subtopic : 'unknown',
+    queryIntent: queryIntent ?? 'buyer-pain',
+    sectionKey: resolveSectionKey({
+      intent: queryIntent,
+      subtopic: typeof source.metadataJson.subtopic === 'string' ? source.metadataJson.subtopic : null,
+      sectionKey: typeof source.metadataJson.sectionKey === 'string' ? source.metadataJson.sectionKey : null,
+      claimType,
+    }),
+    claimType: claimType ?? 'buyer-pain',
     evidenceMode: coerceEvidenceMode(source.metadataJson.evidenceMode),
     vendorTarget: typeof source.metadataJson.vendorTarget === 'string' ? source.metadataJson.vendorTarget : null,
     vendorPageType: coerceVendorPageType(source.metadataJson.vendorPageType),
@@ -73,12 +85,6 @@ function toWebSource(
     rationale: typeof source.metadataJson.rationale === 'string' ? source.metadataJson.rationale : 'Unscored source.',
     isPrimary: Boolean(source.metadataJson.isPrimary),
   };
-}
-
-function coerceSectionKey(value: string): ResearchGraphState['findings'][number]['sectionKey'] {
-  return (finalReportSectionKeyValues as readonly string[]).includes(value)
-    ? (value as ResearchGraphState['findings'][number]['sectionKey'])
-    : 'risks-and-unknowns';
 }
 
 export function createResearchGraph(searchService: WebSearchService) {
@@ -134,13 +140,16 @@ export async function buildInitialGraphState(runId: string, base: {
         fileName:
           typeof record.metadataJson.fileName === 'string' ? record.metadataJson.fileName : record.title,
         summary: record.excerpt,
-        sectionKey: record.sectionKey ?? undefined,
+        sectionKey: resolveEvidenceSectionKey(record),
         documentChunkId: record.documentChunkId ?? undefined,
         similarity:
           typeof record.metadataJson.similarity === 'number' ? record.metadataJson.similarity : null,
       })),
     findings: findings.map((finding) => ({
-      sectionKey: coerceSectionKey(finding.sectionKey),
+      sectionKey: resolveSectionKey({
+        sectionKey: finding.sectionKey,
+        claimType: finding.claimType,
+      }),
       claimType: finding.claimType,
       claim: finding.claim,
       evidence: finding.evidenceJson,

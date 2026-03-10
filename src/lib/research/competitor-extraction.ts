@@ -1,16 +1,18 @@
+import { listCanonicalVendorPages } from '@/lib/research/vendor-registry';
 import type {
   CompetitorMatrixEntry,
   ResearchEvidence,
   ResearchFinding,
 } from '@/lib/research/schemas';
 
-interface DeterministicCompetitorProfile extends CompetitorMatrixEntry {
+export interface DeterministicCompetitorProfile extends CompetitorMatrixEntry {
   evidenceIds: string[];
   hasFeatureEvidence: boolean;
   hasPricingEvidence: boolean;
 }
 
 const vendorAliases: Array<{ label: string; aliases: string[] }> = [
+  { label: 'Gong', aliases: ['gong.io', 'gong'] },
   { label: 'Otter.ai', aliases: ['otter.ai', 'otter ai', 'otter'] },
   { label: 'Fireflies.ai', aliases: ['fireflies.ai', 'fireflies ai', 'fireflies'] },
   { label: 'Avoma', aliases: ['avoma.com', 'avoma'] },
@@ -30,6 +32,9 @@ const featureSignals: Array<[string, string[]]> = [
 ];
 
 const crmSignals = ['salesforce', 'hubspot', 'pipedrive', 'zoho', 'freshsales', 'close', 'dynamics'];
+const canonicalVendorPageUrls = new Set(
+  listCanonicalVendorPages().map((page) => page.url.toLowerCase()),
+);
 
 function normalizeText(input: string | null | undefined) {
   return (input ?? '')
@@ -102,7 +107,29 @@ function isCompetitorRecord(record: ResearchEvidence) {
   );
 }
 
-function isPricingRecord(record: ResearchEvidence) {
+function isCanonicalCompetitorRecord(record: ResearchEvidence) {
+  if (!isCompetitorRecord(record) || !record.url) {
+    return false;
+  }
+
+  const normalizedUrl = record.url.toLowerCase();
+  const pageType =
+    typeof record.metadataJson.vendorPageType === 'string'
+      ? record.metadataJson.vendorPageType
+      : 'unknown';
+
+  if (!['product', 'docs', 'pricing'].includes(pageType)) {
+    return false;
+  }
+
+  if (normalizedUrl.includes('/blog/') || normalizedUrl.includes('/press/')) {
+    return false;
+  }
+
+  return canonicalVendorPageUrls.has(normalizedUrl);
+}
+
+export function isPricingRecord(record: ResearchEvidence) {
   return (
     record.sectionKey === 'pricing-and-packaging' ||
     record.metadataJson.vendorPageType === 'pricing' ||
@@ -114,6 +141,47 @@ function uniqueStrings(values: string[]) {
   return values.filter((value, index, allValues) => value && allValues.indexOf(value) === index);
 }
 
+function compactSegmentLabel(input: string) {
+  const normalized = input.toLowerCase();
+  const labels: string[] = [];
+
+  if (normalized.includes('uk')) {
+    labels.push('UK');
+  }
+
+  if (normalized.includes('smb') || normalized.includes('small business') || normalized.includes('small team')) {
+    labels.push('SMB');
+  } else if (normalized.includes('mid-market')) {
+    labels.push('mid-market');
+  } else if (normalized.includes('enterprise')) {
+    labels.push('enterprise');
+  }
+
+  if (normalized.includes('sales') || normalized.includes('revenue')) {
+    labels.push('sales teams');
+  } else if (normalized.includes('customer success')) {
+    labels.push('customer success teams');
+  } else if (normalized.includes('team')) {
+    labels.push('business teams');
+  }
+
+  const compact = labels.join(' ').trim();
+  return compact.length > 0 ? compact : '';
+}
+
+function extractPricePoints(input: string) {
+  const normalized = input.replace(/\s+/g, ' ').trim();
+  const matches = normalized.match(/([$£€]\s?\d+(?:\.\d+)?(?:\s*(?:\/|per)\s*(?:seat|user|month))?)/gi) ?? [];
+  const specialLabels = [
+    normalized.toLowerCase().includes('free') ? 'free plan' : '',
+    normalized.toLowerCase().includes('enterprise') || normalized.toLowerCase().includes('contact')
+      ? 'enterprise/contact'
+      : '',
+  ].filter(Boolean);
+
+  return uniqueStrings([...matches.map((match) => match.replace(/\s+/g, ' ').trim()), ...specialLabels]).slice(0, 3);
+}
+
 function inferIcp(records: ResearchEvidence[]) {
   const explicitTarget = records
     .map((record) =>
@@ -122,17 +190,23 @@ function inferIcp(records: ResearchEvidence[]) {
     .find(Boolean);
 
   if (explicitTarget) {
-    return explicitTarget;
+    const compact = compactSegmentLabel(explicitTarget);
+    if (compact) {
+      return compact;
+    }
   }
 
   const combined = records.map(getCombinedText).join(' ');
+  if (combined.includes('sales') && (combined.includes('small') || combined.includes('smb'))) {
+    return 'SMB sales teams';
+  }
   if (combined.includes('sales')) {
-    return 'Sales teams and revenue teams';
+    return 'Sales teams';
   }
   if (combined.includes('small teams') || combined.includes('small business')) {
-    return 'Small teams and SMB users';
+    return 'SMB teams';
   }
-  return 'Cross-functional teams evaluating meeting automation';
+  return 'Business teams';
 }
 
 function inferCoreFeatures(records: ResearchEvidence[]) {
@@ -196,38 +270,53 @@ function inferPricingEvidence(records: ResearchEvidence[]) {
     return 'Pricing not established from canonical vendor evidence.';
   }
 
-  const snippets = pricingRecords
-    .map((record) =>
-      trimEvidenceText(
+  const pricePoints = uniqueStrings(
+    pricingRecords.flatMap((record) =>
+      extractPricePoints(
         typeof record.metadataJson.planPricingText === 'string' && record.metadataJson.planPricingText.trim()
           ? record.metadataJson.planPricingText
           : record.excerpt,
       ),
-    )
-    .filter(Boolean);
+    ),
+  );
 
-  return uniqueStrings(snippets).slice(0, 2).join(' ');
+  if (pricePoints.length > 0) {
+    return trimEvidenceText(pricePoints.join(', '));
+  }
+
+  return trimEvidenceText(
+    uniqueStrings(
+      pricingRecords.map((record) =>
+        typeof record.metadataJson.vendorPageType === 'string' && record.metadataJson.vendorPageType === 'pricing'
+          ? 'pricing page available'
+          : record.title,
+      ),
+    ).slice(0, 2).join(' | '),
+  );
 }
 
 function inferTargetSegment(records: ResearchEvidence[]) {
   const combined = records.map(getCombinedText).join(' ');
 
+  if (combined.includes('sales') && (combined.includes('small') || combined.includes('smb'))) {
+    return 'SMB sales teams';
+  }
+  if (combined.includes('enterprise') && (combined.includes('small') || combined.includes('business'))) {
+    return 'SMB to enterprise teams';
+  }
   if (combined.includes('enterprise')) {
-    if (combined.includes('small') || combined.includes('business')) {
-      return 'SMB through enterprise teams';
-    }
-    return 'Mid-market and enterprise teams';
+    return 'Enterprise teams';
   }
 
   if (combined.includes('small teams') || combined.includes('small business')) {
-    return 'Small teams and SMB buyers';
+    return 'SMB buyers';
   }
 
   if (combined.includes('sales')) {
-    return 'Sales-led SMB and mid-market teams';
+    return 'Sales teams';
   }
 
-  return 'General business teams adopting meeting automation';
+  return 'Business teams';
 }
 
 function inferConfidence(records: ResearchEvidence[], hasFeatureEvidence: boolean, hasPricingEvidence: boolean) {
@@ -245,7 +334,7 @@ function inferConfidence(records: ResearchEvidence[], hasFeatureEvidence: boolea
 export function buildDeterministicCompetitorProfiles(evidenceRecords: ResearchEvidence[]) {
   const grouped = new Map<string, ResearchEvidence[]>();
 
-  for (const record of evidenceRecords.filter(isCompetitorRecord)) {
+  for (const record of evidenceRecords.filter(isCanonicalCompetitorRecord)) {
     const vendor = getVendorLabel(record);
     const existing = grouped.get(vendor) ?? [];
     existing.push(record);

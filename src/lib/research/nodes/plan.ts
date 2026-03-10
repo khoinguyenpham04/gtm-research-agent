@@ -11,6 +11,7 @@ import {
   type ResearchGraphState,
   type ResearchPlan,
 } from '@/lib/research/schemas';
+import { resolvePlannedSearchQuery } from '@/lib/research/section-routing';
 
 const defaultVendorTargets = ['Otter.ai', 'Fireflies.ai', 'Fathom', 'Zoom AI Companion'];
 
@@ -144,7 +145,9 @@ function buildFallbackQueries(topic: string): PlannedSearchQuery[] {
 }
 
 function normalizePlan(plan: ResearchPlan, topic: string): ResearchPlan {
-  const mergedQueries = withUniqueQueries([...plan.searchQueries, ...buildFallbackQueries(topic)]).slice(0, 18);
+  const mergedQueries = withUniqueQueries(
+    [...plan.searchQueries, ...buildFallbackQueries(topic)].map(resolvePlannedSearchQuery),
+  ).slice(0, 18);
 
   return {
     ...plan,

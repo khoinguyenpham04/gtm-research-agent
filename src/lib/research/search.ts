@@ -1,4 +1,5 @@
 import type { PlannedSearchQuery, ScoredSource } from '@/lib/research/schemas';
+import { resolvePlannedSearchQuery, resolveSectionKey } from '@/lib/research/section-routing';
 import { scoreWebSource } from '@/lib/research/source-scoring';
 import {
   resolveCanonicalVendorPages,
@@ -218,7 +219,7 @@ export class TavilySearchService implements WebSearchService {
     }
 
     const failures: string[] = [];
-    const results = await this.mapWithConcurrency(queries, MAX_QUERY_CONCURRENCY, async (query) => {
+    const results = await this.mapWithConcurrency(queries.map(resolvePlannedSearchQuery), MAX_QUERY_CONCURRENCY, async (query) => {
       try {
         return await this.searchOne(query);
       } catch (error) {
@@ -236,8 +237,11 @@ export class TavilySearchService implements WebSearchService {
 
     for (const group of results) {
       for (const source of group) {
-        const key = source.url ?? `${source.query}:${source.title}`;
-        if (!deduped.has(key)) {
+        const key = source.url
+          ? `${source.sectionKey}:${source.url}`
+          : `${source.sectionKey}:${source.query}:${source.title}`;
+        const existing = deduped.get(key);
+        if (!existing || existing.qualityScore < source.qualityScore) {
           deduped.set(key, source);
         }
       }
@@ -252,6 +256,12 @@ export class TavilySearchService implements WebSearchService {
   }
 
   private async searchOne(queryPlan: PlannedSearchQuery) {
+    const canonicalSectionKey = resolveSectionKey({
+      intent: queryPlan.intent,
+      subtopic: queryPlan.subtopic,
+      sectionKey: queryPlan.sectionKey,
+      claimType: queryPlan.claimType,
+    });
     const variants = this.buildQueryVariants(queryPlan);
     const failures: string[] = [];
     const results: ScoredSource[][] = [];
@@ -275,8 +285,9 @@ export class TavilySearchService implements WebSearchService {
                 url: result.url!.trim(),
                 snippet: result.content!.trim().slice(0, 500),
                 query: queryPlan.query,
+                subtopic: queryPlan.subtopic,
                 queryIntent: queryPlan.intent,
-                sectionKey: queryPlan.sectionKey,
+                sectionKey: canonicalSectionKey,
                 claimType: queryPlan.claimType,
                 evidenceMode: queryPlan.evidenceMode,
                 vendorTarget: queryPlan.vendorTarget,
@@ -433,6 +444,13 @@ export class TavilySearchService implements WebSearchService {
     page: CanonicalVendorPage,
     index: number,
   ) {
+    const canonicalSectionKey = resolveSectionKey({
+      intent: queryPlan.intent,
+      subtopic: queryPlan.subtopic,
+      sectionKey: queryPlan.sectionKey,
+      claimType: queryPlan.claimType,
+    });
+
     try {
       const response = await fetch(page.url, {
         cache: 'no-store',
@@ -463,8 +481,9 @@ export class TavilySearchService implements WebSearchService {
         url: page.url,
         snippet,
         query: queryPlan.query,
+        subtopic: queryPlan.subtopic,
         queryIntent: queryPlan.intent,
-        sectionKey: queryPlan.sectionKey,
+        sectionKey: canonicalSectionKey,
         claimType: queryPlan.claimType,
         evidenceMode: queryPlan.evidenceMode,
         vendorTarget: queryPlan.vendorTarget,

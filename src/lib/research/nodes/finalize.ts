@@ -129,6 +129,73 @@ function buildSectionMarkdown(sectionKey: ResearchFinding['sectionKey'], finding
   return lines.join('\n');
 }
 
+function buildIcpSummary(findings: ResearchFinding[], competitorMatrix: CompetitorMatrixEntry[]) {
+  const combined = [
+    ...findings.map((finding) => finding.claim.toLowerCase()),
+    ...competitorMatrix.map((entry) => `${entry.icp} ${entry.targetSegment}`.toLowerCase()),
+  ].join(' ');
+
+  if (combined.includes('sales') && (combined.includes('small') || combined.includes('smb'))) {
+    return 'UK SMB sales teams already using cloud CRM and meeting software.';
+  }
+
+  if (combined.includes('sales')) {
+    return 'UK sales teams with recurring meeting follow-up and CRM admin work.';
+  }
+
+  if (combined.includes('small') || combined.includes('smb')) {
+    return 'UK SMB teams with repeat meeting documentation and follow-up workflows.';
+  }
+
+  return 'UK SMB sales teams with repeat meeting and CRM follow-up workflows.';
+}
+
+function buildTriggerProblemSummary(findings: ResearchFinding[]) {
+  const combined = findings.map((finding) => finding.claim.toLowerCase()).join(' ');
+
+  if (
+    combined.includes('crm') ||
+    combined.includes('follow-up') ||
+    combined.includes('notes') ||
+    combined.includes('admin')
+  ) {
+    return 'Manual meeting notes, CRM updates, and follow-up admin reduce time spent selling.';
+  }
+
+  return 'Post-meeting admin and fragmented follow-up slow sales execution and CRM hygiene.';
+}
+
+function buildPricingThesis(
+  pricingClaims: ResearchFinding[],
+  competitorMatrix: CompetitorMatrixEntry[],
+) {
+  if (pricingClaims.length === 0 && competitorMatrix.length === 0) {
+    return 'Use transparent self-serve per-seat pricing before adding enterprise sales assist or custom packaging.';
+  }
+
+  const pricingText = [
+    ...pricingClaims.map((finding) => finding.claim.toLowerCase()),
+    ...competitorMatrix.map((entry) => entry.pricingEvidence.toLowerCase()),
+  ].join(' ');
+
+  if (pricingText.includes('enterprise') || pricingText.includes('contact')) {
+    return 'Lead with transparent self-serve per-seat pricing and keep an enterprise/contact tier for larger deployments.';
+  }
+
+  return 'Lead with transparent self-serve per-seat pricing and a low-friction team tier for expansion.';
+}
+
+function buildGtmChannelSummary(
+  readySectionKeys: Set<ResearchFinding['sectionKey']>,
+  gtmClaims: ResearchFinding[],
+) {
+  if (!readySectionKeys.has('gtm-motion') || gtmClaims.length === 0) {
+    return 'Insufficient direct GTM evidence to choose between direct, partner, MSP, or marketplace-led acquisition yet; validate the buying path before scaling channel spend.';
+  }
+
+  return gtmClaims[0]?.claim ?? 'Validate the strongest direct and channel route from verified GTM evidence before scaling spend.';
+}
+
 function buildRecommendationSection(
   findings: ResearchFinding[],
   readySectionKeys: Set<ResearchFinding['sectionKey']>,
@@ -155,34 +222,25 @@ function buildRecommendationSection(
 
   const bySection = (sectionKey: ResearchFinding['sectionKey']) =>
     upstreamClaims.filter((finding) => finding.sectionKey === sectionKey);
-  const firstClaim = (sectionKey: ResearchFinding['sectionKey']) => bySection(sectionKey)[0]?.claim ?? '';
   const incompleteSections = baseSections.filter((section) => section.status !== 'ready');
-  const pricingClaim = firstClaim('pricing-and-packaging');
-  const gtmClaim = firstClaim('gtm-motion');
-  const riskClaim = firstClaim('risks-and-unknowns');
-  const buyerClaim = firstClaim('icp-and-buyer');
+  const pricingClaims = bySection('pricing-and-packaging');
+  const gtmClaims = bySection('gtm-motion');
+  const riskClaims = bySection('risks-and-unknowns');
+  const buyerClaims = bySection('icp-and-buyer');
   const competitorCount = competitorMatrix.length;
   const directClaimCount = upstreamClaims.filter((finding) => finding.inferenceLabel === 'direct').length;
 
   const recommendationInput: StructuredRecommendation = {
-    icp:
-      buyerClaim ||
-      'UK SMB sales teams already using CRM and meeting software, especially those with admin-heavy follow-up workflows.',
-    triggerProblem:
-      buyerClaim ||
-      'Manual meeting notes, CRM updates, and follow-up coordination reduce time spent selling.',
+    icp: buildIcpSummary(buyerClaims, competitorMatrix),
+    triggerProblem: buildTriggerProblemSummary(buyerClaims),
     positionAgainstIncumbentWorkflow:
       competitorCount > 0
         ? 'Position as a lightweight layer on top of existing meeting and CRM workflows, replacing manual note capture and CRM writeback rather than forcing a platform switch.'
         : 'Position against manual note-taking, fragmented follow-up, and incomplete CRM updates rather than against a single incumbent vendor.',
-    pricingHypothesis:
-      pricingClaim ||
-      'Anchor on a per-seat SaaS model with clear free-to-paid progression and a business tier that stays close to the prevailing low-$20s per user per month range.',
-    gtmChannelHypothesis:
-      gtmClaim ||
-      'Insufficient direct evidence to choose between direct, partner, MSP, or marketplace-led acquisition yet; validate the buying path before scaling channel spend.',
+    pricingHypothesis: buildPricingThesis(pricingClaims, competitorMatrix),
+    gtmChannelHypothesis: buildGtmChannelSummary(readySectionKeys, gtmClaims),
     implementationRisk:
-      riskClaim ||
+      riskClaims[0]?.claim ||
       'UK deployment still needs explicit handling for consent, privacy, data protection, and CRM integration friction before broader rollout.',
     confidence:
       readySectionKeys.has('gtm-motion') &&

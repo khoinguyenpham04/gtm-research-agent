@@ -114,6 +114,7 @@ export const normalizedWebSourceSchema = z.object({
   url: z.string().trim().url().nullable(),
   snippet: z.string().trim().min(1),
   query: z.string().trim().min(1),
+  subtopic: z.string().trim().min(1),
   queryIntent: searchIntentSchema,
   sectionKey: finalReportSectionKeySchema,
   claimType: claimTypeSchema,
