@@ -6,6 +6,7 @@ import {
   coerceSourceCategory,
   coerceSourceQualityLabel,
   coerceSourceRecency,
+  coerceVendorPageType,
   shouldUseSourceInSynthesis,
 } from '@/lib/research/source-scoring';
 import {
@@ -55,6 +56,21 @@ export function createWebSearchNode(searchService: WebSearchService) {
           evidenceMode: coerceEvidenceMode(source.metadataJson.evidenceMode),
           vendorTarget:
             typeof source.metadataJson.vendorTarget === 'string' ? source.metadataJson.vendorTarget : null,
+          vendorPageType: coerceVendorPageType(source.metadataJson.vendorPageType),
+          productName:
+            typeof source.metadataJson.productName === 'string' ? source.metadataJson.productName : null,
+          targetUser:
+            typeof source.metadataJson.targetUser === 'string' ? source.metadataJson.targetUser : null,
+          coreFeatures: Array.isArray(source.metadataJson.coreFeatures)
+            ? source.metadataJson.coreFeatures.filter((value): value is string => typeof value === 'string')
+            : [],
+          crmIntegrations: Array.isArray(source.metadataJson.crmIntegrations)
+            ? source.metadataJson.crmIntegrations.filter((value): value is string => typeof value === 'string')
+            : [],
+          planPricingText:
+            typeof source.metadataJson.planPricingText === 'string'
+              ? source.metadataJson.planPricingText
+              : null,
           domain: typeof source.metadataJson.domain === 'string' ? source.metadataJson.domain : null,
           sourceCategory: coerceSourceCategory(source.metadataJson.sourceCategory),
           qualityScore:
@@ -114,6 +130,12 @@ export function createWebSearchNode(searchService: WebSearchService) {
           claimType: source.claimType,
           evidenceMode: source.evidenceMode,
           vendorTarget: source.vendorTarget,
+          vendorPageType: source.vendorPageType,
+          productName: source.productName,
+          targetUser: source.targetUser,
+          coreFeatures: source.coreFeatures,
+          crmIntegrations: source.crmIntegrations,
+          planPricingText: source.planPricingText,
           domain: source.domain,
           sourceCategory: source.sourceCategory,
           qualityScore: source.qualityScore,
@@ -210,6 +232,21 @@ export function createWebSearchNode(searchService: WebSearchService) {
         evidenceMode: coerceEvidenceMode(source.metadataJson.evidenceMode),
         vendorTarget:
           typeof source.metadataJson.vendorTarget === 'string' ? source.metadataJson.vendorTarget : null,
+        vendorPageType: coerceVendorPageType(source.metadataJson.vendorPageType),
+        productName:
+          typeof source.metadataJson.productName === 'string' ? source.metadataJson.productName : null,
+        targetUser:
+          typeof source.metadataJson.targetUser === 'string' ? source.metadataJson.targetUser : null,
+        coreFeatures: Array.isArray(source.metadataJson.coreFeatures)
+          ? source.metadataJson.coreFeatures.filter((value): value is string => typeof value === 'string')
+          : [],
+        crmIntegrations: Array.isArray(source.metadataJson.crmIntegrations)
+          ? source.metadataJson.crmIntegrations.filter((value): value is string => typeof value === 'string')
+          : [],
+        planPricingText:
+          typeof source.metadataJson.planPricingText === 'string'
+            ? source.metadataJson.planPricingText
+            : null,
         domain: typeof source.metadataJson.domain === 'string' ? source.metadataJson.domain : null,
         sourceCategory: coerceSourceCategory(source.metadataJson.sourceCategory),
         qualityScore:

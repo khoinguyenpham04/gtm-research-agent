@@ -35,6 +35,40 @@ const MAX_QUERY_CONCURRENCY = 3;
 const FETCH_TIMEOUT_MS = 12_000;
 const MAX_FETCH_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 700;
+const PAGE_FETCH_TIMEOUT_MS = 8_000;
+const featureKeywords = [
+  'transcription',
+  'summaries',
+  'summary',
+  'meeting notes',
+  'action items',
+  'conversation intelligence',
+  'speaker identification',
+  'recording',
+  'crm sync',
+  'crm integration',
+  'real-time recap',
+  'sales coaching',
+  'call summaries',
+];
+const crmKeywords = [
+  'Salesforce',
+  'HubSpot',
+  'Microsoft Dynamics',
+  'Pipedrive',
+  'Zoho',
+  'Copper',
+  'Freshsales',
+];
+
+interface VendorPageFacts {
+  vendorPageType: ScoredSource['vendorPageType'];
+  productName: string | null;
+  targetUser: string | null;
+  coreFeatures: string[];
+  crmIntegrations: string[];
+  planPricingText: string | null;
+}
 
 function parseDomain(url: string | undefined) {
   if (!url) {
@@ -46,6 +80,79 @@ function parseDomain(url: string | undefined) {
   } catch {
     return null;
   }
+}
+
+function stripHtml(input: string) {
+  return input
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function detectVendorPageType(url: string, title: string, text: string): VendorPageFacts['vendorPageType'] {
+  const haystack = `${url.toLowerCase()} ${title.toLowerCase()} ${text.toLowerCase()}`;
+
+  if (/(pricing|plans|plan highlights|user\/month|seat\/month|billed)/.test(haystack)) {
+    return 'pricing';
+  }
+  if (/(\/docs|\/learn|documentation|developers)/.test(haystack)) {
+    return 'docs';
+  }
+  if (/(\/news|\/blog|launch|introduces|announces)/.test(haystack)) {
+    return 'newsroom';
+  }
+  if (/(\/compare|\/vs|comparison)/.test(haystack)) {
+    return 'comparison';
+  }
+  if (/(features|meeting assistant|ai companion|sales teams|product)/.test(haystack)) {
+    return 'product';
+  }
+  return 'unknown';
+}
+
+function firstSentenceMatching(text: string, regex: RegExp) {
+  const sentences = text.split(/(?<=[.!?])\s+/);
+  return sentences.find((sentence) => regex.test(sentence))?.trim() ?? null;
+}
+
+function extractListMatches(text: string, values: string[]) {
+  const lowered = text.toLowerCase();
+  return values.filter((value) => lowered.includes(value.toLowerCase()));
+}
+
+function extractTargetUser(text: string) {
+  const patterns = [
+    /small and medium(?:-sized)? businesses/i,
+    /small businesses/i,
+    /sales teams/i,
+    /customer success teams/i,
+    /enterprise teams/i,
+    /developers/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = firstSentenceMatching(text, pattern);
+    if (match) {
+      return match;
+    }
+  }
+
+  return null;
+}
+
+function extractProductName(title: string, vendorTarget: string | null) {
+  const cleaned = title
+    .replace(/\s+[|-]\s+.*$/, '')
+    .replace(/\s+Try.*$/i, '')
+    .trim();
+
+  if (cleaned.length > 0) {
+    return cleaned;
+  }
+
+  return vendorTarget;
 }
 
 export class TavilySearchService implements WebSearchService {
@@ -99,9 +206,14 @@ export class TavilySearchService implements WebSearchService {
       try {
         const payload = await this.fetchVariant(queryVariant);
         results.push(
-          (payload.results ?? [])
-            .filter((result) => result.url && result.title && result.content)
-            .map((result, index) => {
+          await Promise.all(
+            (payload.results ?? [])
+              .filter((result) => result.url && result.title && result.content)
+              .map(async (result, index) => {
+                const vendorFacts =
+                  queryPlan.evidenceMode === 'vendor-primary'
+                    ? await this.extractVendorPageFacts(result.url!.trim(), result.title!.trim(), result.content!.trim(), queryPlan.vendorTarget)
+                    : null;
               const scored = scoreWebSource({
                 id: `${queryPlan.intent}-${variantIndex}-${index}-${result.url!.trim()}`,
                 sourceType: 'web',
@@ -115,6 +227,12 @@ export class TavilySearchService implements WebSearchService {
                 evidenceMode: queryPlan.evidenceMode,
                 vendorTarget: queryPlan.vendorTarget,
                 domain: parseDomain(result.url),
+                vendorPageType: vendorFacts?.vendorPageType ?? null,
+                productName: vendorFacts?.productName ?? null,
+                targetUser: vendorFacts?.targetUser ?? null,
+                coreFeatures: vendorFacts?.coreFeatures ?? [],
+                crmIntegrations: vendorFacts?.crmIntegrations ?? [],
+                planPricingText: vendorFacts?.planPricingText ?? null,
               });
 
               return {
@@ -123,6 +241,7 @@ export class TavilySearchService implements WebSearchService {
                 evidenceMode: queryPlan.evidenceMode,
               };
             }),
+          ),
         );
       } catch (error) {
         failures.push(error instanceof Error ? error.message : 'Unknown search error.');
@@ -207,6 +326,54 @@ export class TavilySearchService implements WebSearchService {
     }
 
     return [...new Set(variants)];
+  }
+
+  private async extractVendorPageFacts(
+    url: string,
+    title: string,
+    snippet: string,
+    vendorTarget: string | null,
+  ): Promise<VendorPageFacts | null> {
+    try {
+      const response = await fetch(url, {
+        cache: 'no-store',
+        signal: AbortSignal.timeout(PAGE_FETCH_TIMEOUT_MS),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Page fetch failed: ${response.status}`);
+      }
+
+      const html = await response.text();
+      const text = stripHtml(html).slice(0, 8000);
+      const combined = `${title}. ${snippet}. ${text}`;
+      return {
+        vendorPageType: detectVendorPageType(url, title, combined),
+        productName: extractProductName(title, vendorTarget),
+        targetUser: extractTargetUser(combined),
+        coreFeatures: extractListMatches(combined, featureKeywords).slice(0, 6),
+        crmIntegrations: extractListMatches(combined, crmKeywords).slice(0, 5),
+        planPricingText:
+          firstSentenceMatching(
+            combined,
+            /(\$|£|€|usd|gbp|eur|user\/month|seat\/month|billed annually|billed monthly|free plan)/i,
+          ) ?? null,
+      };
+    } catch {
+      const combined = `${title}. ${snippet}`;
+      return {
+        vendorPageType: detectVendorPageType(url, title, combined),
+        productName: extractProductName(title, vendorTarget),
+        targetUser: extractTargetUser(combined),
+        coreFeatures: extractListMatches(combined, featureKeywords).slice(0, 6),
+        crmIntegrations: extractListMatches(combined, crmKeywords).slice(0, 5),
+        planPricingText:
+          firstSentenceMatching(
+            combined,
+            /(\$|£|€|usd|gbp|eur|user\/month|seat\/month|billed annually|billed monthly|free plan)/i,
+          ) ?? null,
+      };
+    }
   }
 
   private async mapWithConcurrency<T, R>(

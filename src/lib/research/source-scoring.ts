@@ -6,15 +6,33 @@ import {
   sourceCategoryValues,
   sourceQualityLabelValues,
   sourceRecencyValues,
+  vendorPageTypeValues,
   type Citation,
   type ClaimType,
   type EvidenceMode,
   type ScoredSource,
+  type VendorPageType,
 } from '@/lib/research/schemas';
 
 const CURRENT_YEAR = new Date().getUTCFullYear();
 const STRONG_PRIMARY_THRESHOLD = 0.82;
 const MEDIUM_QUALITY_THRESHOLD = 0.62;
+const vendorDomainPatterns = [
+  'zoom.com',
+  'zoom.us',
+  'news.zoom.us',
+  'microsoft.com',
+  'learn.microsoft.com',
+  'otter.ai',
+  'fireflies.ai',
+  'fathom.video',
+  'avoma.com',
+  'gong.io',
+  'tldv.io',
+  'read.ai',
+  'meetjamie.ai',
+  'jiminny.com',
+];
 
 function extractPublishedYear(input: string) {
   const matches = input.match(/\b20\d{2}\b/g);
@@ -51,6 +69,64 @@ function startsWithAny(input: string, prefixes: string[]) {
   return prefixes.some((prefix) => input.startsWith(prefix));
 }
 
+function isVendorDomain(domain: string) {
+  return vendorDomainPatterns.some((pattern) => domain === pattern || domain.endsWith(`.${pattern}`));
+}
+
+function detectVendorPageType(url: string | null, title: string, vendorTarget: string | null): VendorPageType | null {
+  const normalizedUrl = (url ?? '').toLowerCase();
+  const normalizedTitle = title.toLowerCase();
+  const normalizedTarget = (vendorTarget ?? '').toLowerCase();
+  const haystack = `${normalizedUrl} ${normalizedTitle} ${normalizedTarget}`;
+
+  if (
+    haystack.includes('/pricing') ||
+    haystack.includes('plan') ||
+    haystack.includes('price') ||
+    haystack.includes('billing')
+  ) {
+    return 'pricing';
+  }
+
+  if (
+    haystack.includes('/docs') ||
+    haystack.includes('/documentation') ||
+    haystack.includes('/learn') ||
+    haystack.includes('/developers')
+  ) {
+    return 'docs';
+  }
+
+  if (
+    haystack.includes('/news') ||
+    haystack.includes('/blog') ||
+    haystack.includes('launch') ||
+    haystack.includes('introduces')
+  ) {
+    return 'newsroom';
+  }
+
+  if (
+    haystack.includes('/compare') ||
+    haystack.includes('/vs') ||
+    normalizedTitle.includes('comparison')
+  ) {
+    return 'comparison';
+  }
+
+  if (
+    haystack.includes('/product') ||
+    haystack.includes('/products') ||
+    haystack.includes('/features') ||
+    haystack.includes('ai companion') ||
+    haystack.includes('meeting assistant')
+  ) {
+    return 'product';
+  }
+
+  return null;
+}
+
 function getSourceCategory(url: string | null, domain: string | null, title: string): ScoredSource['sourceCategory'] {
   const normalizedDomain = (domain ?? '').toLowerCase();
   const normalizedTitle = title.toLowerCase();
@@ -74,13 +150,7 @@ function getSourceCategory(url: string | null, domain: string | null, title: str
     return 'research';
   }
 
-  if (
-    normalizedDomain.includes('salesforce.com') ||
-    normalizedDomain.includes('zapier.com') ||
-    normalizedDomain.includes('ringover') ||
-    normalizedDomain.includes('meetjamie') ||
-    normalizedDomain.includes('pcmag.com')
-  ) {
+  if (isVendorDomain(normalizedDomain)) {
     return 'vendor';
   }
 
@@ -113,7 +183,7 @@ function getBaseScore(category: ScoredSource['sourceCategory']) {
     case 'media':
       return 0.62;
     case 'vendor':
-      return 0.56;
+      return 0.62;
     case 'community':
       return 0.45;
     case 'blog':
@@ -230,6 +300,12 @@ export function coerceEvidenceMode(value: unknown): EvidenceMode {
     : 'market-adjacent';
 }
 
+export function coerceVendorPageType(value: unknown): VendorPageType | null {
+  return typeof value === 'string' && (vendorPageTypeValues as readonly string[]).includes(value)
+    ? (value as VendorPageType)
+    : null;
+}
+
 export function coerceSourceQualityLabel(value: unknown): ScoredSource['qualityLabel'] {
   return typeof value === 'string' && (sourceQualityLabelValues as readonly string[]).includes(value)
     ? (value as ScoredSource['qualityLabel'])
@@ -275,11 +351,14 @@ export function scoreWebSource(input: Omit<ScoredSource, 'sourceCategory' | 'qua
   const qualityLabel = getQualityLabel(qualityScore);
   const claimType = getClaimType(input.queryIntent);
   const evidenceMode = getEvidenceMode(sourceCategory, input.queryIntent, combinedText);
+  const vendorPageType =
+    input.vendorPageType ?? detectVendorPageType(input.url, input.title, input.vendorTarget);
 
   return {
     ...input,
     claimType,
     evidenceMode,
+    vendorPageType,
     sourceCategory,
     qualityScore,
     qualityLabel,

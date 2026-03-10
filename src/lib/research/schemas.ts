@@ -47,6 +47,14 @@ export const evidenceModeValues = [
   'document-internal',
 ] as const;
 export const inferenceLabelValues = ['direct', 'inferred', 'speculative'] as const;
+export const vendorPageTypeValues = [
+  'product',
+  'pricing',
+  'docs',
+  'newsroom',
+  'comparison',
+  'unknown',
+] as const;
 export const finalReportSectionKeyValues = [
   'market-landscape',
   'icp-and-buyer',
@@ -68,6 +76,7 @@ export const finalReportSectionKeySchema = z.enum(finalReportSectionKeyValues);
 export const claimTypeSchema = z.enum(claimTypeValues);
 export const evidenceModeSchema = z.enum(evidenceModeValues);
 export const inferenceLabelSchema = z.enum(inferenceLabelValues);
+export const vendorPageTypeSchema = z.enum(vendorPageTypeValues);
 
 export const createResearchRunInputSchema = z.object({
   topic: z.string().trim().min(3, 'Topic must be at least 3 characters long.'),
@@ -111,6 +120,12 @@ export const normalizedWebSourceSchema = z.object({
   evidenceMode: evidenceModeSchema,
   vendorTarget: z.string().trim().min(1).nullable(),
   domain: z.string().trim().nullable(),
+  vendorPageType: vendorPageTypeSchema.nullable().default(null),
+  productName: z.string().trim().min(1).nullable().default(null),
+  targetUser: z.string().trim().min(1).nullable().default(null),
+  coreFeatures: z.array(z.string().trim().min(1)).default([]),
+  crmIntegrations: z.array(z.string().trim().min(1)).default([]),
+  planPricingText: z.string().trim().min(1).nullable().default(null),
 });
 
 export const scoredSourceSchema = normalizedWebSourceSchema.extend({
@@ -272,6 +287,7 @@ export type ScoredSource = z.infer<typeof scoredSourceSchema>;
 export type ClaimType = z.infer<typeof claimTypeSchema>;
 export type EvidenceMode = z.infer<typeof evidenceModeSchema>;
 export type InferenceLabel = z.infer<typeof inferenceLabelSchema>;
+export type VendorPageType = z.infer<typeof vendorPageTypeSchema>;
 export type SectionStatus = (typeof sectionStatusValues)[number];
 export type LinkedDocument = z.infer<typeof linkedDocumentSchema>;
 export type DocumentContext = z.infer<typeof documentContextSchema>;

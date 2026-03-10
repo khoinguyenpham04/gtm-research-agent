@@ -81,6 +81,7 @@ function sanitizeFindings(
       const specificity = inferFindingSpecificity(
         finding.sectionKey,
         buildEvidenceByCitation(evidence, evidenceRecordIndex),
+        finding.claim,
       );
 
       return {

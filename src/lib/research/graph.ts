@@ -25,6 +25,7 @@ import {
   coerceSourceCategory,
   coerceSourceQualityLabel,
   coerceSourceRecency,
+  coerceVendorPageType,
 } from '@/lib/research/source-scoring';
 import type { WebSearchService } from '@/lib/research/search';
 
@@ -46,6 +47,21 @@ function toWebSource(
     claimType: coerceClaimType(source.metadataJson.claimType),
     evidenceMode: coerceEvidenceMode(source.metadataJson.evidenceMode),
     vendorTarget: typeof source.metadataJson.vendorTarget === 'string' ? source.metadataJson.vendorTarget : null,
+    vendorPageType: coerceVendorPageType(source.metadataJson.vendorPageType),
+    productName:
+      typeof source.metadataJson.productName === 'string' ? source.metadataJson.productName : null,
+    targetUser:
+      typeof source.metadataJson.targetUser === 'string' ? source.metadataJson.targetUser : null,
+    coreFeatures: Array.isArray(source.metadataJson.coreFeatures)
+      ? source.metadataJson.coreFeatures.filter((value): value is string => typeof value === 'string')
+      : [],
+    crmIntegrations: Array.isArray(source.metadataJson.crmIntegrations)
+      ? source.metadataJson.crmIntegrations.filter((value): value is string => typeof value === 'string')
+      : [],
+    planPricingText:
+      typeof source.metadataJson.planPricingText === 'string'
+        ? source.metadataJson.planPricingText
+        : null,
     domain: typeof source.metadataJson.domain === 'string' ? source.metadataJson.domain : null,
     sourceCategory: coerceSourceCategory(source.metadataJson.sourceCategory),
     qualityScore:
