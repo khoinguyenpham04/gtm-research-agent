@@ -14,6 +14,12 @@ interface SectionPolicy {
   minVerifiedFindings: number;
   minStrongEvidence: number;
   minVendorPrimaryEvidence: number;
+  minProductCategoryEvidence: number;
+  minBarrierEvidence: number;
+  minBuyingProcessEvidence: number;
+  minChannelEvidence: number;
+  minPartnerPreferenceEvidence: number;
+  minPurchaseFrictionEvidence: number;
   maxWeakEvidence: number;
   allowedSourceTypes: Array<ResearchEvidence['sourceType']>;
   allowedCategories: string[];
@@ -37,6 +43,12 @@ const sectionPolicyByKey: Record<SectionKey, SectionPolicy> = {
     minVerifiedFindings: 1,
     minStrongEvidence: 1,
     minVendorPrimaryEvidence: 0,
+    minProductCategoryEvidence: 1,
+    minBarrierEvidence: 0,
+    minBuyingProcessEvidence: 0,
+    minChannelEvidence: 0,
+    minPartnerPreferenceEvidence: 0,
+    minPurchaseFrictionEvidence: 0,
     maxWeakEvidence: 1,
     allowedSourceTypes: ['web', 'document'],
     allowedCategories: ['official', 'research', 'media'],
@@ -47,6 +59,12 @@ const sectionPolicyByKey: Record<SectionKey, SectionPolicy> = {
     minVerifiedFindings: 1,
     minStrongEvidence: 1,
     minVendorPrimaryEvidence: 0,
+    minProductCategoryEvidence: 0,
+    minBarrierEvidence: 0,
+    minBuyingProcessEvidence: 0,
+    minChannelEvidence: 0,
+    minPartnerPreferenceEvidence: 0,
+    minPurchaseFrictionEvidence: 0,
     maxWeakEvidence: 1,
     allowedSourceTypes: ['web', 'document'],
     allowedCategories: ['official', 'research', 'media'],
@@ -57,6 +75,12 @@ const sectionPolicyByKey: Record<SectionKey, SectionPolicy> = {
     minVerifiedFindings: 1,
     minStrongEvidence: 0,
     minVendorPrimaryEvidence: 1,
+    minProductCategoryEvidence: 0,
+    minBarrierEvidence: 0,
+    minBuyingProcessEvidence: 0,
+    minChannelEvidence: 0,
+    minPartnerPreferenceEvidence: 0,
+    minPurchaseFrictionEvidence: 0,
     maxWeakEvidence: 2,
     allowedSourceTypes: ['web', 'document'],
     allowedCategories: ['vendor', 'media', 'research'],
@@ -67,16 +91,28 @@ const sectionPolicyByKey: Record<SectionKey, SectionPolicy> = {
     minVerifiedFindings: 1,
     minStrongEvidence: 0,
     minVendorPrimaryEvidence: 1,
+    minProductCategoryEvidence: 0,
+    minBarrierEvidence: 0,
+    minBuyingProcessEvidence: 0,
+    minChannelEvidence: 0,
+    minPartnerPreferenceEvidence: 0,
+    minPurchaseFrictionEvidence: 0,
     maxWeakEvidence: 1,
     allowedSourceTypes: ['web', 'document'],
     allowedCategories: ['vendor', 'media', 'research'],
     allowedEvidenceModes: ['vendor-primary', 'independent-validation', 'document-internal'],
   },
   'gtm-motion': {
-    minEvidence: 2,
+    minEvidence: 4,
     minVerifiedFindings: 1,
     minStrongEvidence: 1,
     minVendorPrimaryEvidence: 0,
+    minProductCategoryEvidence: 0,
+    minBarrierEvidence: 0,
+    minBuyingProcessEvidence: 1,
+    minChannelEvidence: 1,
+    minPartnerPreferenceEvidence: 1,
+    minPurchaseFrictionEvidence: 1,
     maxWeakEvidence: 1,
     allowedSourceTypes: ['web', 'document'],
     allowedCategories: ['official', 'research', 'media'],
@@ -87,6 +123,12 @@ const sectionPolicyByKey: Record<SectionKey, SectionPolicy> = {
     minVerifiedFindings: 1,
     minStrongEvidence: 1,
     minVendorPrimaryEvidence: 0,
+    minProductCategoryEvidence: 0,
+    minBarrierEvidence: 1,
+    minBuyingProcessEvidence: 0,
+    minChannelEvidence: 0,
+    minPartnerPreferenceEvidence: 0,
+    minPurchaseFrictionEvidence: 0,
     maxWeakEvidence: 1,
     allowedSourceTypes: ['web', 'document'],
     allowedCategories: ['official', 'research', 'media'],
@@ -97,6 +139,12 @@ const sectionPolicyByKey: Record<SectionKey, SectionPolicy> = {
     minVerifiedFindings: 2,
     minStrongEvidence: 0,
     minVendorPrimaryEvidence: 0,
+    minProductCategoryEvidence: 0,
+    minBarrierEvidence: 0,
+    minBuyingProcessEvidence: 0,
+    minChannelEvidence: 0,
+    minPartnerPreferenceEvidence: 0,
+    minPurchaseFrictionEvidence: 0,
     maxWeakEvidence: 0,
     allowedSourceTypes: [],
     allowedCategories: [],
@@ -151,6 +199,136 @@ function getEvidenceSection(record: ResearchEvidence) {
       : null;
 
   return queryIntent ? searchIntentToSectionKey[queryIntent] : null;
+}
+
+function getEvidenceText(record: ResearchEvidence) {
+  return [
+    record.title,
+    record.excerpt,
+    typeof record.metadataJson.query === 'string' ? record.metadataJson.query : '',
+    typeof record.metadataJson.productName === 'string' ? record.metadataJson.productName : '',
+    typeof record.metadataJson.targetUser === 'string' ? record.metadataJson.targetUser : '',
+    typeof record.metadataJson.planPricingText === 'string' ? record.metadataJson.planPricingText : '',
+    typeof record.metadataJson.vendorPageType === 'string' ? record.metadataJson.vendorPageType : '',
+    Array.isArray(record.metadataJson.coreFeatures) ? record.metadataJson.coreFeatures.join(' ') : '',
+    Array.isArray(record.metadataJson.crmIntegrations)
+      ? record.metadataJson.crmIntegrations.join(' ')
+      : '',
+  ]
+    .join(' ')
+    .toLowerCase();
+}
+
+function hasProductCategorySignals(record: ResearchEvidence) {
+  const mode = getEvidenceMode(record);
+  if (mode === 'product-specific' || mode === 'vendor-primary' || mode === 'document-internal') {
+    return true;
+  }
+
+  const combined = getEvidenceText(record);
+  return (
+    combined.includes('meeting assistant') ||
+    combined.includes('meeting assistants') ||
+    combined.includes('conversation intelligence') ||
+    combined.includes('ai note taker') ||
+    combined.includes('meeting notes') ||
+    combined.includes('call summaries') ||
+    combined.includes('sales agent')
+  );
+}
+
+function hasBarrierSignals(record: ResearchEvidence) {
+  const combined = getEvidenceText(record);
+  return (
+    combined.includes('barrier') ||
+    combined.includes('barriers') ||
+    combined.includes('lack of funding') ||
+    combined.includes('cost') ||
+    combined.includes('costs') ||
+    combined.includes('roi') ||
+    combined.includes('privacy') ||
+    combined.includes('trust') ||
+    combined.includes('security') ||
+    combined.includes('skills') ||
+    combined.includes('lack of skilled personnel') ||
+    combined.includes('integration') ||
+    combined.includes('reliability') ||
+    combined.includes('uncertain') ||
+    combined.includes('scam')
+  );
+}
+
+function hasBuyingProcessSignals(record: ResearchEvidence) {
+  const combined = getEvidenceText(record);
+  return (
+    combined.includes('buying process') ||
+    combined.includes('software buying') ||
+    combined.includes('buyer journey') ||
+    combined.includes('purchase process') ||
+    combined.includes('procurement') ||
+    combined.includes('evaluate vendors') ||
+    combined.includes('evaluation') ||
+    combined.includes('shortlist') ||
+    combined.includes('decision-maker') ||
+    combined.includes('approval') ||
+    combined.includes('purchase decision')
+  );
+}
+
+function hasChannelSignals(record: ResearchEvidence) {
+  const combined = getEvidenceText(record);
+  return (
+    combined.includes('channel') ||
+    combined.includes('go to market') ||
+    combined.includes('go-to-market') ||
+    combined.includes('marketplace') ||
+    combined.includes('reseller') ||
+    combined.includes('partner-led') ||
+    combined.includes('self-serve') ||
+    combined.includes('direct purchase') ||
+    combined.includes('buy direct') ||
+    combined.includes('app marketplace')
+  );
+}
+
+function hasPartnerPreferenceSignals(record: ResearchEvidence) {
+  const combined = getEvidenceText(record);
+  return (
+    combined.includes('msp') ||
+    combined.includes('managed service') ||
+    combined.includes('reseller') ||
+    combined.includes('partner') ||
+    combined.includes('channel partner') ||
+    combined.includes('direct purchase') ||
+    combined.includes('buy direct') ||
+    combined.includes('marketplace') ||
+    combined.includes('referral')
+  );
+}
+
+function hasPurchaseFrictionSignals(record: ResearchEvidence) {
+  const combined = getEvidenceText(record);
+  return (
+    hasBarrierSignals(record) ||
+    combined.includes('implementation') ||
+    combined.includes('rollout') ||
+    combined.includes('change management') ||
+    combined.includes('approval') ||
+    combined.includes('compliance') ||
+    combined.includes('data residency') ||
+    combined.includes('consent') ||
+    combined.includes('integration') ||
+    combined.includes('training')
+  );
+}
+
+export function getGtmEvidenceSignals(evidenceRecords: ResearchEvidence[]) {
+  return {
+    buyingProcessCount: evidenceRecords.filter(hasBuyingProcessSignals).length,
+    channelCount: evidenceRecords.filter(hasChannelSignals).length,
+    partnerPreferenceCount: evidenceRecords.filter(hasPartnerPreferenceSignals).length,
+    purchaseFrictionCount: evidenceRecords.filter(hasPurchaseFrictionSignals).length,
+  };
 }
 
 export function evidenceMatchesSectionPolicy(sectionKey: SectionKey, record: ResearchEvidence) {
@@ -216,6 +394,9 @@ export function assessSectionStatus(
   const vendorPrimaryCount = selectedEvidence.filter(
     (record) => getEvidenceMode(record) === 'vendor-primary',
   ).length;
+  const productCategoryEvidenceCount = selectedEvidence.filter(hasProductCategorySignals).length;
+  const barrierEvidenceCount = selectedEvidence.filter(hasBarrierSignals).length;
+  const gtmSignals = getGtmEvidenceSignals(selectedEvidence);
   const verifiedFindings = findings.filter(
     (finding) => finding.sectionKey === sectionKey && finding.status === 'verified',
   );
@@ -230,6 +411,42 @@ export function assessSectionStatus(
 
   if (vendorPrimaryCount < policy.minVendorPrimaryEvidence) {
     notes.push(`Section requires at least ${policy.minVendorPrimaryEvidence} vendor-primary evidence record${policy.minVendorPrimaryEvidence === 1 ? '' : 's'}.`);
+  }
+
+  if (productCategoryEvidenceCount < policy.minProductCategoryEvidence) {
+    notes.push(
+      `Section requires at least ${policy.minProductCategoryEvidence} product-category or market-report evidence record${policy.minProductCategoryEvidence === 1 ? '' : 's'}.`,
+    );
+  }
+
+  if (barrierEvidenceCount < policy.minBarrierEvidence) {
+    notes.push(
+      `Section requires at least ${policy.minBarrierEvidence} direct barrier-evidence record${policy.minBarrierEvidence === 1 ? '' : 's'}.`,
+    );
+  }
+
+  if (gtmSignals.buyingProcessCount < policy.minBuyingProcessEvidence) {
+    notes.push(
+      `Section requires at least ${policy.minBuyingProcessEvidence} buying-process evidence record${policy.minBuyingProcessEvidence === 1 ? '' : 's'}.`,
+    );
+  }
+
+  if (gtmSignals.channelCount < policy.minChannelEvidence) {
+    notes.push(
+      `Section requires at least ${policy.minChannelEvidence} channel-evidence record${policy.minChannelEvidence === 1 ? '' : 's'}.`,
+    );
+  }
+
+  if (gtmSignals.partnerPreferenceCount < policy.minPartnerPreferenceEvidence) {
+    notes.push(
+      `Section requires at least ${policy.minPartnerPreferenceEvidence} partner, MSP, marketplace, or direct-preference evidence record${policy.minPartnerPreferenceEvidence === 1 ? '' : 's'}.`,
+    );
+  }
+
+  if (gtmSignals.purchaseFrictionCount < policy.minPurchaseFrictionEvidence) {
+    notes.push(
+      `Section requires at least ${policy.minPurchaseFrictionEvidence} purchase-friction evidence record${policy.minPurchaseFrictionEvidence === 1 ? '' : 's'}.`,
+    );
   }
 
   if (weakEvidenceCount > policy.maxWeakEvidence) {

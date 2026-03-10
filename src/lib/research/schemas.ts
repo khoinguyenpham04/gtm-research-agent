@@ -105,7 +105,7 @@ export const plannedSearchQuerySchema = z.object({
 
 export const researchPlanSchema = z.object({
   researchQuestions: z.array(z.string().trim().min(1)).min(3).max(5),
-  searchQueries: z.array(plannedSearchQuerySchema).min(6).max(14),
+  searchQueries: z.array(plannedSearchQuerySchema).min(6).max(18),
   sections: z.array(plannedSectionSchema).length(4),
 });
 
@@ -242,6 +242,17 @@ export const competitorMatrixEntrySchema = z.object({
   confidence: z.enum(confidenceValues),
 });
 
+export const structuredRecommendationSchema = z.object({
+  icp: z.string().trim().min(1),
+  triggerProblem: z.string().trim().min(1),
+  positionAgainstIncumbentWorkflow: z.string().trim().min(1),
+  pricingHypothesis: z.string().trim().min(1),
+  gtmChannelHypothesis: z.string().trim().min(1),
+  implementationRisk: z.string().trim().min(1),
+  confidence: z.enum(confidenceValues),
+  openQuestions: z.array(z.string().trim().min(1)).min(1).max(6),
+});
+
 export const verifiedFindingSchema = researchFindingSchema.extend({
   status: z.enum(['verified', 'needs-review']),
 });
@@ -253,7 +264,6 @@ export const draftReportSchema = z.object({
 export const verificationOutputSchema = z.object({
   keyTakeaways: z.array(z.string().trim().min(1)).min(3).max(5),
   findings: z.array(verifiedFindingSchema).min(4),
-  competitorMatrix: z.array(competitorMatrixEntrySchema).max(8),
 });
 
 export const researchGraphStateSchema = z.object({
@@ -299,6 +309,7 @@ export type DraftReportSection = z.infer<typeof draftReportSectionSchema>;
 export type DraftReport = z.infer<typeof draftReportSchema>;
 export type VerifiedFinding = z.infer<typeof verifiedFindingSchema>;
 export type CompetitorMatrixEntry = z.infer<typeof competitorMatrixEntrySchema>;
+export type StructuredRecommendation = z.infer<typeof structuredRecommendationSchema>;
 export type VerificationOutput = z.infer<typeof verificationOutputSchema>;
 export type ResearchGraphState = z.infer<typeof researchGraphStateSchema>;
 

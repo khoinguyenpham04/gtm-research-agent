@@ -93,8 +93,38 @@ function buildFallbackQueries(topic: string): PlannedSearchQuery[] {
     {
       intent: 'gtm-channels',
       sectionKey: 'gtm-motion',
-      subtopic: 'smb-software-buying',
-      query: `UK SMB software buying journey collaboration software site:gov.uk OR site:oecd.org OR filetype:pdf`,
+      subtopic: 'buying-process',
+      query: `UK SMB SaaS buying process evaluation shortlist procurement survey report`,
+      sourcePreference: 'primary',
+      claimType: 'gtm-channel',
+      evidenceMode: 'independent-validation',
+      vendorTarget: null,
+    },
+    {
+      intent: 'gtm-channels',
+      sectionKey: 'gtm-motion',
+      subtopic: 'channel-preference',
+      query: `UK SMB software buying channels direct purchase marketplace review sites report`,
+      sourcePreference: 'mixed',
+      claimType: 'gtm-channel',
+      evidenceMode: 'independent-validation',
+      vendorTarget: null,
+    },
+    {
+      intent: 'gtm-channels',
+      sectionKey: 'gtm-motion',
+      subtopic: 'partner-msp-direct',
+      query: `UK SMB software purchase MSP reseller partner marketplace direct survey report`,
+      sourcePreference: 'mixed',
+      claimType: 'gtm-channel',
+      evidenceMode: 'independent-validation',
+      vendorTarget: null,
+    },
+    {
+      intent: 'gtm-channels',
+      sectionKey: 'gtm-motion',
+      subtopic: 'purchase-friction',
+      query: `UK SMB software buying barriers security privacy integration approval SaaS survey report`,
       sourcePreference: 'primary',
       claimType: 'gtm-channel',
       evidenceMode: 'independent-validation',
@@ -114,7 +144,7 @@ function buildFallbackQueries(topic: string): PlannedSearchQuery[] {
 }
 
 function normalizePlan(plan: ResearchPlan, topic: string): ResearchPlan {
-  const mergedQueries = withUniqueQueries([...plan.searchQueries, ...buildFallbackQueries(topic)]).slice(0, 14);
+  const mergedQueries = withUniqueQueries([...plan.searchQueries, ...buildFallbackQueries(topic)]).slice(0, 18);
 
   return {
     ...plan,
@@ -150,7 +180,7 @@ export async function runPlanNode(state: ResearchGraphState) {
       `Objective: ${state.objective ?? 'Not provided.'}`,
       `Linked documents: ${linkedDocNames || 'None.'}`,
       'Return exactly 4 report sections. Use section keys from the existing GTM workflow where possible.',
-      'Return 8-12 decomposed search queries across these intents:',
+      'Return 10-16 decomposed search queries across these intents:',
       '- market-size',
       '- adoption',
       '- competitor-features',
@@ -177,11 +207,12 @@ export async function runPlanNode(state: ResearchGraphState) {
       '- icp-and-buyer should have at least 2 queries: one adoption query and one workflow pain query',
       '- competitor-landscape should include vendor-targeted queries for likely competitors',
       '- pricing-and-packaging should include vendor-targeted pricing queries for likely competitors',
-      '- gtm-motion should target software buying behavior and channel preference',
+      '- gtm-motion should target buying process, channel preference, partner or MSP or marketplace preference, and purchase friction',
       '- risks-and-unknowns should target trust, integration, skills, or adoption barriers',
       '- market-size and adoption queries should explicitly target primary evidence with terms like site:gov.uk, site:ons.gov.uk, site:oecd.org, filetype:pdf, report, survey, or statistics',
       '- competitor-features and pricing queries should name likely vendors and prefer official vendor domains or pricing pages',
-      '- buyer-pain and gtm-channels queries should target sales-team workflow pain, software buying behavior, and channel strategy',
+      '- buyer-pain and gtm-channels queries should target sales-team workflow pain, software buying behavior, channel strategy, and purchase friction',
+      '- gtm-motion should include at least one query each for buying process, channel evidence, partner or direct preference, and purchase-friction evidence',
       '- queries must be specific, evidence-oriented, and optimized for March 10, 2026 context',
     ].join('\n'),
   });

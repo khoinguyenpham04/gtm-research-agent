@@ -1,5 +1,9 @@
 import type { PlannedSearchQuery, ScoredSource } from '@/lib/research/schemas';
 import { scoreWebSource } from '@/lib/research/source-scoring';
+import {
+  resolveCanonicalVendorPages,
+  type CanonicalVendorPage,
+} from '@/lib/research/vendor-registry';
 
 export interface WebSearchService {
   searchMany(queries: PlannedSearchQuery[]): Promise<ScoredSource[]>;
@@ -91,6 +95,11 @@ function stripHtml(input: string) {
     .trim();
 }
 
+function extractHtmlTitle(html: string) {
+  const match = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+  return match?.[1]?.replace(/\s+/g, ' ').trim() ?? null;
+}
+
 function detectVendorPageType(url: string, title: string, text: string): VendorPageFacts['vendorPageType'] {
   const haystack = `${url.toLowerCase()} ${title.toLowerCase()} ${text.toLowerCase()}`;
 
@@ -153,6 +162,51 @@ function extractProductName(title: string, vendorTarget: string | null) {
   }
 
   return vendorTarget;
+}
+
+function buildCanonicalSnippet(pageType: CanonicalVendorPage['vendorPageType'], text: string) {
+  const canonicalSentenceMatchers: Record<
+    CanonicalVendorPage['vendorPageType'],
+    RegExp
+  > = {
+    product:
+      /(meeting assistant|meeting notes|transcription|action items|crm|sales|summary|conversation intelligence)/i,
+    pricing:
+      /(\$|£|€|usd|gbp|eur|user\/month|seat\/month|billed annually|billed monthly|free plan)/i,
+    docs: /(salesforce|hubspot|crm|integration|sync|api|setup)/i,
+    newsroom: /(launch|introduces|announces|sales|meeting|crm|assistant)/i,
+    comparison: /(compare|comparison|vs|features|pricing|crm)/i,
+  };
+
+  return (
+    firstSentenceMatching(text, canonicalSentenceMatchers[pageType]) ??
+    text.slice(0, 500).trim() ??
+    null
+  );
+}
+
+function buildVendorPageFacts(
+  url: string,
+  title: string,
+  snippet: string,
+  vendorTarget: string | null,
+  pageText: string,
+  forcedPageType?: VendorPageFacts['vendorPageType'],
+): VendorPageFacts {
+  const combined = `${title}. ${snippet}. ${pageText}`.trim();
+
+  return {
+    vendorPageType: forcedPageType ?? detectVendorPageType(url, title, combined),
+    productName: extractProductName(title, vendorTarget),
+    targetUser: extractTargetUser(combined),
+    coreFeatures: extractListMatches(combined, featureKeywords).slice(0, 6),
+    crmIntegrations: extractListMatches(combined, crmKeywords).slice(0, 5),
+    planPricingText:
+      firstSentenceMatching(
+        combined,
+        /(\$|£|€|usd|gbp|eur|user\/month|seat\/month|billed annually|billed monthly|free plan)/i,
+      ) ?? null,
+  };
 }
 
 export class TavilySearchService implements WebSearchService {
@@ -246,6 +300,11 @@ export class TavilySearchService implements WebSearchService {
       } catch (error) {
         failures.push(error instanceof Error ? error.message : 'Unknown search error.');
       }
+    }
+
+    const canonicalVendorSources = await this.fetchCanonicalVendorSources(queryPlan);
+    if (canonicalVendorSources.length > 0) {
+      results.push(canonicalVendorSources);
     }
 
     if (results.length === 0 && failures.length > 0) {
@@ -346,33 +405,79 @@ export class TavilySearchService implements WebSearchService {
 
       const html = await response.text();
       const text = stripHtml(html).slice(0, 8000);
-      const combined = `${title}. ${snippet}. ${text}`;
-      return {
-        vendorPageType: detectVendorPageType(url, title, combined),
-        productName: extractProductName(title, vendorTarget),
-        targetUser: extractTargetUser(combined),
-        coreFeatures: extractListMatches(combined, featureKeywords).slice(0, 6),
-        crmIntegrations: extractListMatches(combined, crmKeywords).slice(0, 5),
-        planPricingText:
-          firstSentenceMatching(
-            combined,
-            /(\$|£|€|usd|gbp|eur|user\/month|seat\/month|billed annually|billed monthly|free plan)/i,
-          ) ?? null,
-      };
+      return buildVendorPageFacts(url, title, snippet, vendorTarget, text);
     } catch {
-      const combined = `${title}. ${snippet}`;
-      return {
-        vendorPageType: detectVendorPageType(url, title, combined),
-        productName: extractProductName(title, vendorTarget),
-        targetUser: extractTargetUser(combined),
-        coreFeatures: extractListMatches(combined, featureKeywords).slice(0, 6),
-        crmIntegrations: extractListMatches(combined, crmKeywords).slice(0, 5),
-        planPricingText:
-          firstSentenceMatching(
-            combined,
-            /(\$|£|€|usd|gbp|eur|user\/month|seat\/month|billed annually|billed monthly|free plan)/i,
-          ) ?? null,
-      };
+      return buildVendorPageFacts(url, title, snippet, vendorTarget, '');
+    }
+  }
+
+  private async fetchCanonicalVendorSources(queryPlan: PlannedSearchQuery) {
+    if (queryPlan.evidenceMode !== 'vendor-primary' || !queryPlan.vendorTarget) {
+      return [] as ScoredSource[];
+    }
+
+    const pages = resolveCanonicalVendorPages(queryPlan.vendorTarget, queryPlan.intent);
+    if (pages.length === 0) {
+      return [] as ScoredSource[];
+    }
+
+    const sources = await Promise.all(
+      pages.map((page, index) => this.buildCanonicalVendorSource(queryPlan, page, index)),
+    );
+
+    return sources.filter((source): source is ScoredSource => Boolean(source));
+  }
+
+  private async buildCanonicalVendorSource(
+    queryPlan: PlannedSearchQuery,
+    page: CanonicalVendorPage,
+    index: number,
+  ) {
+    try {
+      const response = await fetch(page.url, {
+        cache: 'no-store',
+        signal: AbortSignal.timeout(PAGE_FETCH_TIMEOUT_MS),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Canonical vendor page fetch failed: ${response.status}`);
+      }
+
+      const html = await response.text();
+      const text = stripHtml(html).slice(0, 8000);
+      const title = extractHtmlTitle(html) ?? page.title;
+      const snippet = buildCanonicalSnippet(page.vendorPageType, text) ?? page.title;
+      const vendorFacts = buildVendorPageFacts(
+        page.url,
+        title,
+        snippet,
+        queryPlan.vendorTarget,
+        text,
+        page.vendorPageType,
+      );
+
+      return scoreWebSource({
+        id: `${queryPlan.intent}-canonical-${index}-${page.url}`,
+        sourceType: 'web',
+        title,
+        url: page.url,
+        snippet,
+        query: queryPlan.query,
+        queryIntent: queryPlan.intent,
+        sectionKey: queryPlan.sectionKey,
+        claimType: queryPlan.claimType,
+        evidenceMode: queryPlan.evidenceMode,
+        vendorTarget: queryPlan.vendorTarget,
+        domain: parseDomain(page.url),
+        vendorPageType: vendorFacts.vendorPageType ?? page.vendorPageType,
+        productName: vendorFacts.productName,
+        targetUser: vendorFacts.targetUser,
+        coreFeatures: vendorFacts.coreFeatures,
+        crmIntegrations: vendorFacts.crmIntegrations,
+        planPricingText: vendorFacts.planPricingText,
+      });
+    } catch {
+      return null;
     }
   }
 

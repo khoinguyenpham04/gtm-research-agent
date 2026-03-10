@@ -2,7 +2,10 @@ import { Output, generateText } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import type { ZodSchema } from 'zod';
 
-const RESEARCH_MODEL = process.env.RESEARCH_MODEL?.trim() || 'gpt-4o-mini';
+// const RESEARCH_MODEL = process.env.RESEARCH_MODEL?.trim() || 'gpt-4o-mini';
+
+const RESEARCH_MODEL='gpt-5-mini'
+
 
 function getModel() {
   if (!process.env.OPENAI_API_KEY?.trim()) {

@@ -1,6 +1,11 @@
 import { generateStructuredOutput } from '@/lib/research/ai';
 import { buildEvidenceByCitation, getDefaultClaimType, inferFindingSpecificity } from '@/lib/research/claim-specificity';
 import {
+  buildCompetitorMatrixEntries,
+  countDistinctCompetitorVendors,
+  buildCompetitorProfileSummary,
+} from '@/lib/research/competitor-extraction';
+import {
   appendResearchEvent,
   hasStageCompleted,
   listResearchFindings,
@@ -138,6 +143,8 @@ export async function runVerificationNode(state: ResearchGraphState) {
   const evidenceIndex = buildEvidenceIndex(synthesisEvidence);
   const evidenceRecordIndex = buildEvidenceRecordIndex(synthesisEvidence);
   const ruleSourceIndex = buildEvidenceRuleSourceIndex(synthesisEvidence);
+  const deterministicCompetitorMatrix = buildCompetitorMatrixEntries(synthesisEvidence);
+  const competitorProfileSummary = buildCompetitorProfileSummary(synthesisEvidence);
   const evidenceSummary = synthesisEvidence
     .map((record) =>
       [
@@ -178,10 +185,12 @@ export async function runVerificationNode(state: ResearchGraphState) {
       `Objective: ${state.objective ?? 'Not provided.'}`,
       'Evidence rules:',
       '- claims should remain verified only if evidence is sufficiently strong',
-      '- competitorMatrix rows must stay close to the cited evidence and should be sparse if evidence is thin',
       '- do not invent pricing, integrations, or positioning details that are not grounded in the evidence',
       '- downgrade broad AI market evidence to inferred unless it directly supports the claim about meeting assistants, buyer workflow, or the product category',
       '- competitor and pricing claims require vendor-primary evidence to remain direct',
+      '- gtm-motion claims must stay about buying process, channel choice, partner or direct preference, and purchase friction; productivity alone is not GTM motion evidence',
+      '- competitor claims should summarize vendor deltas from the deterministic vendor profiles, not restate vendor marketing copy vendor by vendor',
+      `Deterministic competitor profiles:\n${competitorProfileSummary}`,
       `Evidence ledger:\n${evidenceSummary || 'No evidence available.'}`,
       `Draft claims:\n${draftFindingsSummary || 'No draft claims available.'}`,
       'For every finding object, always include status, verificationNotes, gaps, and contradictions.',
@@ -193,33 +202,47 @@ export async function runVerificationNode(state: ResearchGraphState) {
     .filter((finding) => !getSectionPolicy(finding.sectionKey).derivedOnly)
     .map((finding) => {
       const assessment = getEvidenceRuleAssessment(finding.evidence, ruleSourceIndex);
+      const competitorVendorCount =
+        finding.sectionKey === 'competitor-landscape'
+          ? countDistinctCompetitorVendors(buildEvidenceByCitation(finding.evidence, evidenceRecordIndex))
+          : 0;
       const failed = !assessment.passes;
       const specificityFailed = finding.inferenceLabel === 'speculative';
+      const competitorDeltaFailed =
+        finding.sectionKey === 'competitor-landscape' && competitorVendorCount < 2;
       const inferredPenalty = finding.inferenceLabel === 'inferred';
 
       return {
         ...finding,
         confidence:
-          failed || specificityFailed
+          failed || specificityFailed || competitorDeltaFailed
             ? 'low'
             : inferredPenalty && finding.confidence === 'high'
               ? 'medium'
               : finding.confidence,
-        status: failed || specificityFailed ? 'needs-review' : finding.status,
-        verificationNotes: failed
+        status: failed || specificityFailed || competitorDeltaFailed ? 'needs-review' : finding.status,
+        verificationNotes: failed || competitorDeltaFailed
           ? [
               finding.verificationNotes,
-              'Evidence rule failed: requires one strong primary/research source or two independent medium-quality sources.',
+              failed
+                ? 'Evidence rule failed: requires one strong primary/research source or two independent medium-quality sources.'
+                : '',
+              competitorDeltaFailed
+                ? 'Competitor summary failed: needs evidence spanning at least two distinct vendors.'
+                : '',
             ]
               .filter(Boolean)
               .join(' ')
           : finding.verificationNotes,
         gaps:
-          failed || specificityFailed
+          failed || specificityFailed || competitorDeltaFailed
             ? [
                 ...finding.gaps,
                 ...(specificityFailed
                   ? ['Evidence remains speculative for this section and needs more section-specific support.']
+                  : []),
+                ...(competitorDeltaFailed
+                  ? ['Add evidence from at least one more vendor before treating this as a comparative competitor claim.']
                   : []),
                 'Add one strong official/research source or two independent medium-quality sources to verify this claim.',
               ]
@@ -236,21 +259,21 @@ export async function runVerificationNode(state: ResearchGraphState) {
     {
       verifiedFindingCount: findings.filter((finding) => finding.status === 'verified').length,
       needsReviewCount: findings.filter((finding) => finding.status === 'needs-review').length,
-      competitorMatrixCount: verified.competitorMatrix.length,
+      competitorMatrixCount: deterministicCompetitorMatrix.length,
     },
   );
   console.info(`[research:${state.runId}] stage_complete`, {
     stage: 'verification',
     verifiedFindingCount: findings.filter((finding) => finding.status === 'verified').length,
     needsReviewCount: findings.filter((finding) => finding.status === 'needs-review').length,
-    competitorMatrixCount: verified.competitorMatrix.length,
+    competitorMatrixCount: deterministicCompetitorMatrix.length,
   });
 
   return {
     status: 'verifying' as const,
     currentStage: 'verification',
     findings,
-    competitorMatrix: verified.competitorMatrix as CompetitorMatrixEntry[],
+    competitorMatrix: deterministicCompetitorMatrix as CompetitorMatrixEntry[],
     keyTakeaways: verified.keyTakeaways,
   };
 }

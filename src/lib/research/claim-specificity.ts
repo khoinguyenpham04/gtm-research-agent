@@ -6,6 +6,7 @@ import type {
   ResearchEvidence,
   ResearchFinding,
 } from '@/lib/research/schemas';
+import { getGtmEvidenceSignals } from '@/lib/research/section-policy';
 
 const claimTypeBySection: Record<ResearchFinding['sectionKey'], ClaimType> = {
   'market-landscape': 'market-sizing',
@@ -89,6 +90,40 @@ function hasBuyingBehaviorSignals(record: ResearchEvidence) {
     combined.includes('referral') ||
     combined.includes('search') ||
     combined.includes('software buying')
+  );
+}
+
+function hasProductCategorySignals(record: ResearchEvidence) {
+  const combined = getCombinedEvidenceText(record);
+  return (
+    combined.includes('meeting assistant') ||
+    combined.includes('meeting assistants') ||
+    combined.includes('conversation intelligence') ||
+    combined.includes('ai note taker') ||
+    combined.includes('meeting notes') ||
+    combined.includes('call summaries') ||
+    combined.includes('sales agent')
+  );
+}
+
+function hasBarrierSignals(record: ResearchEvidence) {
+  const combined = getCombinedEvidenceText(record);
+  return (
+    combined.includes('barrier') ||
+    combined.includes('barriers') ||
+    combined.includes('lack of funding') ||
+    combined.includes('cost') ||
+    combined.includes('costs') ||
+    combined.includes('roi') ||
+    combined.includes('privacy') ||
+    combined.includes('trust') ||
+    combined.includes('security') ||
+    combined.includes('skills') ||
+    combined.includes('lack of skilled personnel') ||
+    combined.includes('integration') ||
+    combined.includes('reliability') ||
+    combined.includes('uncertain') ||
+    combined.includes('scam')
   );
 }
 
@@ -194,16 +229,31 @@ export function inferFindingSpecificity(
   }
 
   if (sectionKey === 'gtm-motion') {
-    if (evidenceRecords.some(hasBuyingBehaviorSignals) || evidenceMode === 'document-internal') {
+    const gtmSignals = getGtmEvidenceSignals(evidenceRecords);
+    const hasCompleteMotionEvidence =
+      gtmSignals.buyingProcessCount >= 1 &&
+      gtmSignals.channelCount >= 1 &&
+      gtmSignals.partnerPreferenceCount >= 1 &&
+      gtmSignals.purchaseFrictionCount >= 1;
+
+    if (hasCompleteMotionEvidence || evidenceMode === 'document-internal') {
       return { claimType, evidenceMode, inferenceLabel: 'direct', notes };
     }
 
-    notes.push('Claim lacks direct buying-behavior or channel evidence for GTM motion.');
+    if (evidenceRecords.some(hasBuyingBehaviorSignals)) {
+      notes.push('Claim covers only part of the GTM motion and is missing channel, partner/direct, or purchase-friction evidence.');
+      return { claimType, evidenceMode, inferenceLabel: 'inferred', notes };
+    }
+
+    notes.push('Claim lacks direct buying-process, channel, partner/direct, or purchase-friction evidence for GTM motion.');
     return { claimType, evidenceMode, inferenceLabel: 'speculative', notes };
   }
 
   if (sectionKey === 'risks-and-unknowns') {
-    if (independentSpecificCount >= 1 || evidenceMode === 'document-internal') {
+    if (
+      (independentSpecificCount >= 1 && evidenceRecords.some(hasBarrierSignals)) ||
+      evidenceMode === 'document-internal'
+    ) {
       return { claimType, evidenceMode, inferenceLabel: 'direct', notes };
     }
 
@@ -217,7 +267,12 @@ export function inferFindingSpecificity(
     claimTargetsMeetingAssistantDemand(claim) &&
     !evidenceRecords.some((record) => {
       const mode = getEvidenceMode(record);
-      return mode === 'product-specific' || mode === 'vendor-primary' || mode === 'document-internal';
+      return (
+        mode === 'product-specific' ||
+        mode === 'vendor-primary' ||
+        mode === 'document-internal' ||
+        hasProductCategorySignals(record)
+      );
     })
   ) {
     notes.push('General AI adoption evidence only supports meeting-assistant demand as an inference.');

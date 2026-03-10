@@ -17,6 +17,7 @@ import type {
   ResearchFinding,
   ResearchGraphState,
 } from '@/lib/research/schemas';
+import { structuredRecommendationSchema, type StructuredRecommendation } from '@/lib/research/schemas';
 
 const sectionDefinitions = [
   { key: 'market-landscape', title: 'Market Landscape' },
@@ -27,6 +28,26 @@ const sectionDefinitions = [
   { key: 'risks-and-unknowns', title: 'Risks and Unknowns' },
   { key: 'recommendation', title: 'Recommendation' },
 ] as const;
+
+const sectionRank: Record<ResearchFinding['sectionKey'], number> = {
+  'market-landscape': 0,
+  'icp-and-buyer': 1,
+  'competitor-landscape': 2,
+  'pricing-and-packaging': 3,
+  'gtm-motion': 4,
+  'risks-and-unknowns': 5,
+  recommendation: 6,
+};
+
+const confidenceRank: Record<ResearchFinding['confidence'], number> = {
+  high: 0,
+  medium: 1,
+  low: 2,
+};
+
+interface SectionBuildResult extends DraftReportSection {
+  sectionKey: ResearchFinding['sectionKey'];
+}
 
 function uniqueCitations(findings: ResearchFinding[]) {
   const seen = new Map<string, Citation>();
@@ -108,13 +129,19 @@ function buildSectionMarkdown(sectionKey: ResearchFinding['sectionKey'], finding
   return lines.join('\n');
 }
 
-function buildRecommendationSection(findings: ResearchFinding[]) {
+function buildRecommendationSection(
+  findings: ResearchFinding[],
+  readySectionKeys: Set<ResearchFinding['sectionKey']>,
+  baseSections: SectionBuildResult[],
+  competitorMatrix: CompetitorMatrixEntry[],
+) {
   const dependencies = getSectionPolicy('recommendation').recommendationDependencies ?? [];
   const upstreamClaims = findings.filter(
     (finding) =>
       finding.status === 'verified' &&
       finding.inferenceLabel !== 'speculative' &&
-      dependencies.includes(finding.sectionKey),
+      dependencies.includes(finding.sectionKey) &&
+      readySectionKeys.has(finding.sectionKey),
   );
 
   if (upstreamClaims.length < 2) {
@@ -126,15 +153,78 @@ function buildRecommendationSection(findings: ResearchFinding[]) {
     };
   }
 
+  const bySection = (sectionKey: ResearchFinding['sectionKey']) =>
+    upstreamClaims.filter((finding) => finding.sectionKey === sectionKey);
+  const firstClaim = (sectionKey: ResearchFinding['sectionKey']) => bySection(sectionKey)[0]?.claim ?? '';
+  const incompleteSections = baseSections.filter((section) => section.status !== 'ready');
+  const pricingClaim = firstClaim('pricing-and-packaging');
+  const gtmClaim = firstClaim('gtm-motion');
+  const riskClaim = firstClaim('risks-and-unknowns');
+  const buyerClaim = firstClaim('icp-and-buyer');
+  const competitorCount = competitorMatrix.length;
+  const directClaimCount = upstreamClaims.filter((finding) => finding.inferenceLabel === 'direct').length;
+
+  const recommendationInput: StructuredRecommendation = {
+    icp:
+      buyerClaim ||
+      'UK SMB sales teams already using CRM and meeting software, especially those with admin-heavy follow-up workflows.',
+    triggerProblem:
+      buyerClaim ||
+      'Manual meeting notes, CRM updates, and follow-up coordination reduce time spent selling.',
+    positionAgainstIncumbentWorkflow:
+      competitorCount > 0
+        ? 'Position as a lightweight layer on top of existing meeting and CRM workflows, replacing manual note capture and CRM writeback rather than forcing a platform switch.'
+        : 'Position against manual note-taking, fragmented follow-up, and incomplete CRM updates rather than against a single incumbent vendor.',
+    pricingHypothesis:
+      pricingClaim ||
+      'Anchor on a per-seat SaaS model with clear free-to-paid progression and a business tier that stays close to the prevailing low-$20s per user per month range.',
+    gtmChannelHypothesis:
+      gtmClaim ||
+      'Insufficient direct evidence to choose between direct, partner, MSP, or marketplace-led acquisition yet; validate the buying path before scaling channel spend.',
+    implementationRisk:
+      riskClaim ||
+      'UK deployment still needs explicit handling for consent, privacy, data protection, and CRM integration friction before broader rollout.',
+    confidence:
+      readySectionKeys.has('gtm-motion') &&
+      readySectionKeys.has('risks-and-unknowns') &&
+      directClaimCount >= 3
+        ? 'high'
+        : readySectionKeys.has('pricing-and-packaging') && directClaimCount >= 2
+          ? 'medium'
+          : 'low',
+    openQuestions: [
+      ...incompleteSections.flatMap((section) =>
+        section.statusNotes.map((note) => `${section.title}: ${note}`),
+      ),
+      ...upstreamClaims.flatMap((finding) => finding.gaps),
+    ]
+      .filter((value, index, values) => Boolean(value) && values.indexOf(value) === index)
+      .slice(0, 6),
+  };
+
+  if (recommendationInput.openQuestions.length === 0) {
+    recommendationInput.openQuestions.push(
+      'Validate UK buying-path evidence for direct, partner, MSP, or marketplace-led acquisition before committing to a scaled GTM motion.',
+    );
+  }
+
+  const recommendation = structuredRecommendationSchema.parse(recommendationInput);
+
   const lines = [
-    '### Derived recommendation',
-    `- Target the segment suggested by the strongest verified buyer and market evidence.`,
-    `- Treat inferred claims as directional and direct claims as the operating baseline.`,
-    `- Use the GTM motion and risk findings below as operating constraints rather than assumptions.`,
-    `- Avoid pricing or competitor differentiation claims that remain in needs-review state.`,
+    '### Structured recommendation',
+    `- ICP: ${recommendation.icp}`,
+    `- Trigger problem: ${recommendation.triggerProblem}`,
+    `- Position against incumbent workflow: ${recommendation.positionAgainstIncumbentWorkflow}`,
+    `- Pricing hypothesis: ${recommendation.pricingHypothesis}`,
+    `- GTM channel hypothesis: ${recommendation.gtmChannelHypothesis}`,
+    `- Implementation risk: ${recommendation.implementationRisk}`,
+    `- Confidence: ${recommendation.confidence}`,
+    '',
+    '### Open questions',
+    ...recommendation.openQuestions.map((question) => `- ${question}`),
     '',
     '### Verified inputs used',
-    ...upstreamClaims.slice(0, 5).map((finding) => `- [${finding.sectionKey}] ${finding.claim}`),
+    ...upstreamClaims.slice(0, 6).map((finding) => `- [${finding.sectionKey}] ${finding.claim}`),
   ];
 
   return {
@@ -151,19 +241,9 @@ function buildReportSections(
   evidenceRecords: ResearchGraphState['evidenceRecords'],
   retrievalCandidates: ResearchGraphState['retrievalCandidates'],
 ) {
-  return sectionDefinitions.map((section) => {
-    if (section.key === 'recommendation') {
-      const recommendation = buildRecommendationSection(findings);
-      return {
-        sectionKey: section.key,
-        title: section.title,
-        contentMarkdown: recommendation.contentMarkdown,
-        citations: recommendation.citations,
-        status: recommendation.status,
-        statusNotes: recommendation.statusNotes,
-      } satisfies DraftReportSection;
-    }
-
+  const baseSections = sectionDefinitions
+    .filter((section) => section.key !== 'recommendation')
+    .map((section) => {
     const sectionFindings = findings.filter((finding) => finding.sectionKey === section.key);
     const sectionStatus = assessSectionStatus(section.key, evidenceRecords, findings);
     const selectedCandidates = filterCandidatesForSection(section.key, retrievalCandidates).filter(
@@ -175,10 +255,13 @@ function buildReportSections(
     }
 
     if (sectionStatus.status === 'insufficient_evidence') {
-      return buildInsufficientEvidenceSection(
-        { sectionKey: section.key, title: section.title },
-        sectionStatus.notes,
-      );
+      return {
+        ...buildInsufficientEvidenceSection(
+          { sectionKey: section.key, title: section.title },
+          sectionStatus.notes,
+        ),
+        sectionKey: section.key,
+      } satisfies SectionBuildResult;
     }
 
     return {
@@ -188,14 +271,71 @@ function buildReportSections(
       citations: uniqueCitations(sectionFindings).map((citation) => citation.evidenceId),
       status: sectionStatus.status,
       statusNotes: sectionStatus.notes,
-    } satisfies DraftReportSection;
+    } satisfies SectionBuildResult;
   });
+
+  const readySectionKeys = new Set(
+    baseSections
+      .filter((section) => section.status === 'ready')
+      .map((section) => section.sectionKey as ResearchFinding['sectionKey']),
+  );
+  const recommendation = buildRecommendationSection(
+    findings,
+    readySectionKeys,
+    baseSections,
+    competitorMatrix,
+  );
+
+  return [
+    ...baseSections,
+    {
+      sectionKey: 'recommendation',
+      title: 'Recommendation',
+      contentMarkdown: recommendation.contentMarkdown,
+      citations: recommendation.citations,
+      status: recommendation.status,
+      statusNotes: recommendation.statusNotes,
+    } satisfies SectionBuildResult,
+  ];
 }
 
-function buildExecutiveSummary(findings: ResearchFinding[]) {
-  const verifiedClaims = findings.filter((finding) => finding.status === 'verified').slice(0, 4);
+function sortFindingsForSummary(left: ResearchFinding, right: ResearchFinding) {
+  if (left.inferenceLabel !== right.inferenceLabel) {
+    return left.inferenceLabel === 'direct' ? -1 : 1;
+  }
+
+  if (left.confidence !== right.confidence) {
+    return confidenceRank[left.confidence] - confidenceRank[right.confidence];
+  }
+
+  return sectionRank[left.sectionKey] - sectionRank[right.sectionKey];
+}
+
+function buildReadySectionTakeaways(
+  findings: ResearchFinding[],
+  readySectionKeys: Set<ResearchFinding['sectionKey']>,
+) {
+  return findings
+    .filter(
+      (finding) => finding.status === 'verified' && readySectionKeys.has(finding.sectionKey),
+    )
+    .sort(sortFindingsForSummary)
+    .map((finding) => finding.claim)
+    .filter((claim, index, claims) => claims.indexOf(claim) === index)
+    .slice(0, 5);
+}
+
+function buildExecutiveSummary(
+  findings: ResearchFinding[],
+  readySectionKeys: Set<ResearchFinding['sectionKey']>,
+) {
+  const verifiedClaims = findings
+    .filter((finding) => finding.status === 'verified' && readySectionKeys.has(finding.sectionKey))
+    .sort(sortFindingsForSummary)
+    .slice(0, 4);
+
   if (verifiedClaims.length === 0) {
-    return 'No claims met the verification bar. Review the evidence ledger and needs-review findings before using this brief for decisions.';
+    return 'No section met the ready threshold. Review the evidence ledger and insufficient sections before using this brief for decisions.';
   }
 
   return verifiedClaims.map((finding) => finding.claim).join(' ');
@@ -271,9 +411,15 @@ export async function runFinalizeNode(state: ResearchGraphState) {
     state.evidenceRecords,
     state.retrievalCandidates,
   );
-  const executiveSummary = buildExecutiveSummary(state.findings);
+  const readySectionKeys = new Set(
+    sections
+      .filter((section) => section.status === 'ready')
+      .map((section) => section.sectionKey as ResearchFinding['sectionKey']),
+  );
+  const keyTakeaways = buildReadySectionTakeaways(state.findings, readySectionKeys);
+  const executiveSummary = buildExecutiveSummary(state.findings, readySectionKeys);
   const finalReportMarkdown = buildFinalMarkdown(
-    state.keyTakeaways,
+    keyTakeaways,
     sections,
     evidenceIndex,
     executiveSummary,
