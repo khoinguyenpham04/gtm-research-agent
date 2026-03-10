@@ -14,7 +14,7 @@ export const researchRunStatusValues = [
 export const researchStageValues = [
   'plan',
   'web_search',
-  'mock_document_retrieval',
+  'document_retrieval',
   'draft_report',
   'verification',
   'finalize',
@@ -25,6 +25,7 @@ export const findingStatusValues = ['draft', 'verified', 'needs-review'] as cons
 export const sourceCategoryValues = ['official', 'research', 'vendor', 'media', 'blog', 'community'] as const;
 export const sourceQualityLabelValues = ['high', 'medium', 'low'] as const;
 export const sourceRecencyValues = ['current', 'recent', 'dated', 'historical', 'unknown'] as const;
+export const evidenceSourceTypeValues = ['web', 'document'] as const;
 export const searchIntentValues = [
   'market-size',
   'adoption',
@@ -96,26 +97,52 @@ export const linkedDocumentSchema = z.object({
   fileName: z.string().nullable(),
 });
 
+export const finalReportSectionKeySchema = z.enum(finalReportSectionKeyValues);
+
 export const documentContextSchema = z.object({
+  evidenceId: z.string(),
   documentExternalId: z.string(),
   fileName: z.string().nullable(),
   summary: z.string(),
+  sectionKey: finalReportSectionKeySchema.optional(),
+  documentChunkId: z.number().int().nullable().optional(),
+  similarity: z.number().nullable().optional(),
 });
 
 export const citationSchema = z.object({
+  evidenceId: z.string(),
   sourceId: z.string(),
+  sourceType: z.enum(evidenceSourceTypeValues),
   title: z.string(),
   url: z.string().nullable(),
+  excerpt: z.string().trim().min(1),
+  documentExternalId: z.string().nullable(),
+  documentChunkId: z.number().int().nullable(),
+});
+
+export const researchEvidenceSchema = z.object({
+  id: z.string(),
+  sourceType: z.enum(evidenceSourceTypeValues),
+  sourceId: z.string().nullable(),
+  title: z.string().trim().min(1),
+  url: z.string().trim().nullable(),
+  excerpt: z.string().trim().min(1),
+  sectionKey: z.enum(finalReportSectionKeyValues).nullable(),
+  documentExternalId: z.string().nullable(),
+  documentChunkId: z.number().int().nullable(),
+  metadataJson: z.record(z.string(), z.unknown()),
+  createdAt: z.string(),
 });
 
 export const researchFindingSchema = z.object({
-  sectionKey: z.string().trim().min(1),
+  sectionKey: finalReportSectionKeySchema,
   claim: z.string().trim().min(1),
   evidence: z.array(citationSchema).min(1),
   confidence: z.enum(confidenceValues),
   status: z.enum(findingStatusValues),
   verificationNotes: z.string().trim(),
   gaps: z.array(z.string()),
+  contradictions: z.array(z.string()),
 });
 
 export const draftReportSectionSchema = z.object({
@@ -124,14 +151,6 @@ export const draftReportSectionSchema = z.object({
   contentMarkdown: z.string().trim().min(1),
   citations: z.array(z.string()),
 });
-
-export const draftReportSchema = z.object({
-  executiveSummary: z.string().trim().min(1),
-  findings: z.array(researchFindingSchema).min(1),
-  sections: z.array(draftReportSectionSchema).min(1),
-});
-
-export const finalReportSectionKeySchema = z.enum(finalReportSectionKeyValues);
 
 export const finalReportSectionSchema = z.object({
   title: z.string().trim().min(1),
@@ -150,24 +169,17 @@ export const competitorMatrixEntrySchema = z.object({
 });
 
 export const verifiedFindingSchema = researchFindingSchema.extend({
-  sectionKey: finalReportSectionKeySchema,
   status: z.enum(['verified', 'needs-review']),
 });
 
-export const verifiedReportSchema = z.object({
-  executiveSummary: z.string().trim().min(1),
+export const draftReportSchema = z.object({
+  findings: z.array(researchFindingSchema).min(4).max(14),
+});
+
+export const verificationOutputSchema = z.object({
   keyTakeaways: z.array(z.string().trim().min(1)).min(3).max(5),
   findings: z.array(verifiedFindingSchema).min(4),
-  competitorMatrix: z.array(competitorMatrixEntrySchema).min(2).max(6),
-  sections: z.object({
-    marketLandscape: finalReportSectionSchema,
-    icpAndBuyer: finalReportSectionSchema,
-    competitorLandscape: finalReportSectionSchema,
-    pricingAndPackaging: finalReportSectionSchema,
-    gtmMotion: finalReportSectionSchema,
-    risksAndUnknowns: finalReportSectionSchema,
-    recommendation: finalReportSectionSchema,
-  }),
+  competitorMatrix: z.array(competitorMatrixEntrySchema).max(8),
 });
 
 export const researchGraphStateSchema = z.object({
@@ -178,9 +190,12 @@ export const researchGraphStateSchema = z.object({
   linkedDocuments: z.array(linkedDocumentSchema).default([]),
   plan: researchPlanSchema.nullable().default(null),
   webSources: z.array(scoredSourceSchema).default([]),
+  evidenceRecords: z.array(researchEvidenceSchema).default([]),
   documentContext: z.array(documentContextSchema).default([]),
   findings: z.array(researchFindingSchema).default([]),
   reportSections: z.array(draftReportSectionSchema).default([]),
+  keyTakeaways: z.array(z.string()).default([]),
+  competitorMatrix: z.array(competitorMatrixEntrySchema).default([]),
   finalReportMarkdown: z.string().nullable().default(null),
   status: z.enum(researchRunStatusValues),
   currentStage: z.string(),
@@ -197,12 +212,13 @@ export type ScoredSource = z.infer<typeof scoredSourceSchema>;
 export type LinkedDocument = z.infer<typeof linkedDocumentSchema>;
 export type DocumentContext = z.infer<typeof documentContextSchema>;
 export type Citation = z.infer<typeof citationSchema>;
+export type ResearchEvidence = z.infer<typeof researchEvidenceSchema>;
 export type ResearchFinding = z.infer<typeof researchFindingSchema>;
 export type DraftReportSection = z.infer<typeof draftReportSectionSchema>;
 export type DraftReport = z.infer<typeof draftReportSchema>;
 export type VerifiedFinding = z.infer<typeof verifiedFindingSchema>;
 export type CompetitorMatrixEntry = z.infer<typeof competitorMatrixEntrySchema>;
-export type VerifiedReport = z.infer<typeof verifiedReportSchema>;
+export type VerificationOutput = z.infer<typeof verificationOutputSchema>;
 export type ResearchGraphState = z.infer<typeof researchGraphStateSchema>;
 
 export interface ResearchRunSnapshot {
@@ -237,8 +253,10 @@ export interface ResearchRunSnapshot {
     status: string;
     verificationNotes: string;
     gapsJson: string[];
+    contradictionsJson: string[];
     createdAt: string;
   }>;
+  evidence: ResearchEvidence[];
   reportSections: Array<{
     id: string;
     sectionKey: string;

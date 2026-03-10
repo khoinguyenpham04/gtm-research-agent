@@ -270,7 +270,7 @@ export function getEvidenceRuleAssessment(
   sourceIndex: Map<string, Pick<ScoredSource, 'sourceCategory' | 'qualityScore' | 'domain' | 'url'>>,
 ) {
   const matchedSources = evidence
-    .map((citation) => sourceIndex.get(citation.sourceId))
+    .map((citation) => sourceIndex.get(citation.evidenceId))
     .filter((source): source is NonNullable<typeof source> => Boolean(source));
 
   const hasStrongPrimary = matchedSources.some(

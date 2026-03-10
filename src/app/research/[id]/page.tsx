@@ -54,11 +54,34 @@ interface Snapshot {
     id: string;
     sectionKey: string;
     claim: string;
-    evidenceJson: Array<{ sourceId: string; title: string; url: string | null }>;
+    evidenceJson: Array<{
+      evidenceId: string;
+      sourceId: string;
+      sourceType: string;
+      title: string;
+      url: string | null;
+      excerpt: string;
+      documentExternalId?: string | null;
+      documentChunkId?: number | null;
+    }>;
     confidence: string;
     status: string;
     verificationNotes: string;
     gapsJson: string[];
+    contradictionsJson: string[];
+    createdAt: string;
+  }>;
+  evidence: Array<{
+    id: string;
+    sourceType: string;
+    sourceId: string | null;
+    title: string;
+    url: string | null;
+    excerpt: string;
+    sectionKey: string | null;
+    documentExternalId: string | null;
+    documentChunkId: number | null;
+    metadataJson: Record<string, unknown>;
     createdAt: string;
   }>;
   reportSections: Array<{
@@ -83,11 +106,17 @@ interface EventRecord {
 const stageOrder = [
   'plan',
   'web_search',
-  'mock_document_retrieval',
+  'document_retrieval',
   'draft_report',
   'verification',
   'finalize',
 ];
+
+function displayStage(stage: string) {
+  return stage === 'mock_document_retrieval'
+    ? 'document retrieval'
+    : stage.replaceAll('_', ' ');
+}
 
 function formatDate(value: string) {
   const parsed = new Date(value);
@@ -278,7 +307,7 @@ export default function ResearchRunDetailPage() {
                 <Card>
                   <CardHeader>
                     <CardTitle>Stage progress</CardTitle>
-                    <CardDescription>{snapshot.run.currentStage}</CardDescription>
+                    <CardDescription>{displayStage(snapshot.run.currentStage)}</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     {stageOrder.map((stage, index) => {
@@ -293,7 +322,7 @@ export default function ResearchRunDetailPage() {
                             }`}
                           />
                           <div>
-                            <p className="text-sm font-medium text-slate-900">{stage.replaceAll('_', ' ')}</p>
+                            <p className="text-sm font-medium text-slate-900">{displayStage(stage)}</p>
                             <p className="text-xs text-slate-500">
                               {isComplete ? 'Completed' : isActive ? 'In progress' : 'Pending'}
                             </p>
@@ -341,7 +370,7 @@ export default function ResearchRunDetailPage() {
                 <Card>
                   <CardHeader>
                     <CardTitle>Linked documents</CardTitle>
-                    <CardDescription>Attached now, real retrieval next slice.</CardDescription>
+                    <CardDescription>Linked files used for run-scoped document retrieval.</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-3">
                     {snapshot.linkedDocuments.length === 0 ? (
@@ -363,73 +392,78 @@ export default function ResearchRunDetailPage() {
               <div className="space-y-6">
                 <Card>
                   <CardHeader>
-                    <CardTitle>Evidence</CardTitle>
-                    <CardDescription>Persisted web and mocked document sources.</CardDescription>
+                    <CardTitle>Evidence ledger</CardTitle>
+                    <CardDescription>Persisted web snippets and retrieved document chunks used by claims.</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    {snapshot.sources.length === 0 ? (
-                      <p className="text-sm text-slate-500">No sources yet.</p>
+                    {snapshot.evidence.length === 0 ? (
+                      <p className="text-sm text-slate-500">No evidence yet.</p>
                     ) : (
-                      snapshot.sources.map((source) => (
-                        <div key={source.id} className="rounded-lg border border-slate-200 p-4">
+                      snapshot.evidence.map((record) => (
+                        <div key={record.id} className="rounded-lg border border-slate-200 p-4">
                           <div className="flex items-start justify-between gap-3">
                             <div>
-                              <p className="font-medium text-slate-900">{source.title}</p>
-                              {source.url && (
+                              <p className="font-medium text-slate-900">{record.title}</p>
+                              {record.url && (
                                 <a
-                                  href={source.url}
+                                  href={record.url}
                                   target="_blank"
                                   rel="noreferrer"
                                   className="text-sm text-slate-600 underline-offset-4 hover:underline"
                                 >
-                                  {source.url}
+                                  {record.url}
                                 </a>
                               )}
                             </div>
                             <div className="flex flex-col items-end gap-2">
-                              <Badge variant="outline">{source.sourceType}</Badge>
-                              {typeof source.metadataJson.qualityLabel === 'string' && (
+                              <Badge variant="outline">{record.sourceType}</Badge>
+                              {typeof record.metadataJson.qualityLabel === 'string' && (
                                 <Badge
                                   variant={
-                                    source.metadataJson.qualityLabel === 'high'
+                                    record.metadataJson.qualityLabel === 'high'
                                       ? 'success'
-                                      : source.metadataJson.qualityLabel === 'medium'
+                                      : record.metadataJson.qualityLabel === 'medium'
                                         ? 'secondary'
                                         : 'destructive'
                                   }
                                 >
-                                  {String(source.metadataJson.qualityLabel)}
+                                  {String(record.metadataJson.qualityLabel)}
                                 </Badge>
                               )}
                             </div>
                           </div>
                           <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-500">
-                            {typeof source.metadataJson.queryIntent === 'string' && (
-                              <span>intent: {String(source.metadataJson.queryIntent)}</span>
+                            {record.sectionKey && <span>section: {record.sectionKey}</span>}
+                            {typeof record.metadataJson.queryIntent === 'string' && (
+                              <span>intent: {String(record.metadataJson.queryIntent)}</span>
                             )}
-                            {typeof source.metadataJson.sourceCategory === 'string' && (
-                              <span>category: {String(source.metadataJson.sourceCategory)}</span>
+                            {typeof record.metadataJson.sourceCategory === 'string' && (
+                              <span>category: {String(record.metadataJson.sourceCategory)}</span>
                             )}
-                            {typeof source.metadataJson.qualityScore === 'number' && (
-                              <span>score: {Number(source.metadataJson.qualityScore).toFixed(2)}</span>
+                            {typeof record.metadataJson.qualityScore === 'number' && (
+                              <span>score: {Number(record.metadataJson.qualityScore).toFixed(2)}</span>
                             )}
-                            {typeof source.metadataJson.recency === 'string' && (
-                              <span>recency: {String(source.metadataJson.recency)}</span>
+                            {typeof record.metadataJson.recency === 'string' && (
+                              <span>recency: {String(record.metadataJson.recency)}</span>
                             )}
-                            {typeof source.metadataJson.publishedYear === 'number' && (
-                              <span>year: {String(source.metadataJson.publishedYear)}</span>
+                            {typeof record.metadataJson.publishedYear === 'number' && (
+                              <span>year: {String(record.metadataJson.publishedYear)}</span>
                             )}
-                            {typeof source.metadataJson.usedInSynthesis === 'boolean' && (
+                            {typeof record.metadataJson.similarity === 'number' && (
                               <span>
-                                synthesis: {source.metadataJson.usedInSynthesis ? 'included' : 'excluded'}
+                                similarity: {Number(record.metadataJson.similarity).toFixed(4)}
                               </span>
                             )}
+                            {typeof record.metadataJson.usedInSynthesis === 'boolean' && (
+                              <span>
+                                synthesis: {record.metadataJson.usedInSynthesis ? 'included' : 'excluded'}
+                              </span>
+                            )}
+                            {record.documentExternalId && <span>document: {record.documentExternalId}</span>}
                           </div>
-                          {source.snippet && (
-                            <p className="mt-3 text-sm leading-6 text-slate-600">{source.snippet}</p>
-                          )}
-                          {typeof source.metadataJson.rationale === 'string' && (
-                            <p className="mt-2 text-xs text-slate-500">{String(source.metadataJson.rationale)}</p>
+                          <p className="mt-3 text-sm leading-6 text-slate-600">{record.excerpt}</p>
+                          {typeof record.metadataJson.rationale === 'string' && (
+                            <p className="mt-2 text-xs text-slate-500">{String(record.metadataJson.rationale)}</p>
                           )}
                         </div>
                       ))
@@ -472,22 +506,34 @@ export default function ResearchRunDetailPage() {
                               ))}
                             </div>
                           )}
+                          {finding.contradictionsJson.length > 0 && (
+                            <div className="mt-2 space-y-1">
+                              {finding.contradictionsJson.map((contradiction) => (
+                                <p key={`${finding.id}-${contradiction}`} className="text-xs text-rose-700">
+                                  Contradiction: {contradiction}
+                                </p>
+                              ))}
+                            </div>
+                          )}
                           <div className="mt-3 space-y-1">
                             {finding.evidenceJson.map((evidence) => (
-                              <p key={`${finding.id}-${evidence.sourceId}`} className="text-xs text-slate-500">
-                                {evidence.url ? (
-                                  <a
-                                    href={evidence.url}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="underline-offset-4 hover:underline"
-                                  >
-                                    {evidence.title}
-                                  </a>
-                                ) : (
-                                  evidence.title
-                                )}
-                              </p>
+                              <div key={`${finding.id}-${evidence.evidenceId}`} className="rounded-md bg-slate-50 p-3 text-xs text-slate-600">
+                                <p className="font-medium text-slate-700">
+                                  {evidence.url ? (
+                                    <a
+                                      href={evidence.url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="underline-offset-4 hover:underline"
+                                    >
+                                      {evidence.title}
+                                    </a>
+                                  ) : (
+                                    evidence.title
+                                  )}
+                                </p>
+                                <p className="mt-1">{evidence.excerpt}</p>
+                              </div>
                             ))}
                           </div>
                         </div>

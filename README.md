@@ -40,7 +40,7 @@ Current run stages:
 
 1. `plan`
 2. `web_search`
-3. `mock_document_retrieval`
+3. `document_retrieval`
 4. `draft_report`
 5. `verification`
 6. `finalize`
@@ -55,9 +55,11 @@ Current research behavior:
   - buyer pain
   - GTM channels
 - searches the web through Tavily
+- retrieves relevant chunks from linked uploaded documents
 - scores sources by category, recency, and quality
 - gates low-quality sources before synthesis
-- drafts findings and report sections
+- builds an evidence ledger across web and document evidence
+- drafts claims from evidence instead of free-writing the report first
 - verifies claims with evidence rules
 - outputs a GTM brief with:
   - executive summary
@@ -106,11 +108,13 @@ Implemented:
 - visible stage progress
 - web research with source scoring and verification
 - document ingestion
+- real run-scoped retrieval from linked uploaded documents
+- evidence ledger with web snippets and retrieved document chunks
+- claim-centric verification and final report assembly
 - competitor matrix in final report
 
 Not implemented yet:
 
-- real run-scoped document retrieval inside research runs
 - background workers or queued execution
 - streaming event transport
 - inline report editing
@@ -119,7 +123,7 @@ Not implemented yet:
 
 Important current limitation:
 
-- the research workflow still uses `mock_document_retrieval`, so uploaded documents can be linked to a run but are not yet retrieved into synthesis through vector search.
+- retrieval is now real, but section-specific evidence selection and competitor/pricing extraction still need refinement.
 
 ## Workflow Review
 
@@ -139,11 +143,12 @@ Important current limitation:
 3. LangGraph executes the run.
 4. The planner generates report sections and intent-specific search queries.
 5. Tavily retrieves web results.
-6. Sources are scored and gated.
-7. A draft report is generated from gated evidence.
-8. A verification pass re-scores claims and enforces evidence rules.
-9. Final sections and markdown are saved.
-10. The user can reopen the run and inspect evidence, findings, and the final report.
+6. Relevant chunks are retrieved from linked uploaded documents.
+7. Sources are scored and gated.
+8. Draft claims are generated directly from evidence records.
+9. A verification pass re-scores claims and enforces evidence rules.
+10. Final sections and markdown are rendered from verified claims.
+11. The user can reopen the run and inspect evidence, findings, and the final report.
 
 ### Verification rules in the current MVP
 
@@ -318,16 +323,16 @@ Defined in [.env.example](/Users/khoinguyen_pham/GitHub/gtm-research-agent/.env.
 - The UI uses polling, not SSE or websocket streaming.
 - Web evidence quality is improving but still uneven for competitor and pricing research.
 - Some official sources can be topically adjacent rather than truly market-specific.
-- Real vector retrieval from linked documents inside research runs is the next major step.
+- Retrieval and auditability are in place, but the report still needs stronger GTM-specific competitor and pricing evidence.
 
 ## Recommended Next Steps
 
 The most valuable next product steps are:
 
-1. Replace `mock_document_retrieval` with real run-scoped vector retrieval.
-2. Add intent-specific retrieval strategies for market, competitor, and pricing evidence.
-3. Improve structured competitor and pricing extraction from primary vendor sources.
-4. Add retry controls and richer event streaming for long-running runs.
+1. Add intent-specific retrieval strategies for market, competitor, and pricing evidence.
+2. Improve structured competitor and pricing extraction from primary vendor sources.
+3. Add retry controls and richer event streaming for long-running runs.
+4. Add a stronger working surface for auditing and re-running sections after report generation.
 
 ## Verification
 

@@ -13,6 +13,10 @@ function isResearchStage(value: string): value is ResearchStage {
   return (researchStageValues as readonly string[]).includes(value);
 }
 
+function normalizeStage(value: string) {
+  return value === 'mock_document_retrieval' ? 'document_retrieval' : value;
+}
+
 export async function executeResearchRun(runId: string) {
   try {
     const run = await getResearchRun(runId);
@@ -38,7 +42,7 @@ export async function executeResearchRun(runId: string) {
       topic: run.topic,
       objective: run.objective,
       status: run.status === 'queued' ? 'planning' : run.status,
-      currentStage: run.currentStage === 'plan' ? 'plan' : run.currentStage,
+      currentStage: normalizeStage(run.currentStage === 'plan' ? 'plan' : run.currentStage),
       planJson: run.planJson,
       finalReportMarkdown: run.finalReportMarkdown,
     });
@@ -52,13 +56,14 @@ export async function executeResearchRun(runId: string) {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown research run failure.';
     const latestRun = await getResearchRun(runId);
-    const failedStage = isResearchStage(latestRun.currentStage) ? latestRun.currentStage : 'finalize';
+    const normalizedStage = normalizeStage(latestRun.currentStage);
+    const failedStage = isResearchStage(normalizedStage) ? normalizedStage : 'finalize';
     console.error(`[research:${runId}] execution_failed`, {
       failedStage,
       message,
       stack: error instanceof Error ? error.stack : undefined,
     });
-    await failRun(runId, latestRun.currentStage, message);
+    await failRun(runId, normalizedStage, message);
     await appendResearchEvent(runId, failedStage, 'stage_failed', message, {
       failedStage,
     });

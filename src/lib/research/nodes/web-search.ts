@@ -7,9 +7,12 @@ import {
 } from '@/lib/research/source-scoring';
 import {
   appendResearchEvent,
+  clearResearchEvidence,
   clearResearchSources,
   hasStageCompleted,
+  listResearchEvidence,
   listResearchSources,
+  saveResearchEvidence,
   saveResearchSources,
   setRunStage,
 } from '@/lib/research/repository';
@@ -25,7 +28,10 @@ export function createWebSearchNode(searchService: WebSearchService) {
     }
 
     if (await hasStageCompleted(state.runId, 'web_search')) {
-      const persistedSources = await listResearchSources(state.runId);
+      const [persistedSources, evidence] = await Promise.all([
+        listResearchSources(state.runId),
+        listResearchEvidence(state.runId),
+      ]);
       const webSources = persistedSources
         .filter((source) => source.sourceType === 'web')
         .map((source) => ({
@@ -55,6 +61,7 @@ export function createWebSearchNode(searchService: WebSearchService) {
         status: state.status,
         currentStage: state.currentStage,
         webSources,
+        evidenceRecords: evidence,
       };
     }
 
@@ -76,6 +83,7 @@ export function createWebSearchNode(searchService: WebSearchService) {
     }
 
     await clearResearchSources(state.runId, 'web');
+    await clearResearchEvidence(state.runId, 'web');
     const searchResults = await searchService.searchMany(state.plan.searchQueries);
     const persistedSources = await saveResearchSources(
       state.runId,
@@ -99,6 +107,17 @@ export function createWebSearchNode(searchService: WebSearchService) {
         },
       })),
     );
+    const persistedEvidence = await saveResearchEvidence(
+      state.runId,
+      persistedSources.map((source) => ({
+        sourceType: 'web',
+        sourceId: source.id,
+        title: source.title,
+        url: source.url,
+        excerpt: source.snippet ?? '',
+        metadataJson: source.metadataJson,
+      })),
+    );
 
     const highQualityCount = searchResults.filter((source) => source.qualityLabel === 'high').length;
     const gatedCount = searchResults.filter((source) => shouldUseSourceInSynthesis(source)).length;
@@ -118,6 +137,10 @@ export function createWebSearchNode(searchService: WebSearchService) {
     return {
       status: 'searching' as const,
       currentStage: 'web_search',
+      evidenceRecords: [
+        ...state.evidenceRecords.filter((record) => record.sourceType !== 'web'),
+        ...persistedEvidence,
+      ],
       webSources: persistedSources.map((source) => ({
         id: source.id,
         sourceType: 'web' as const,

@@ -3,6 +3,7 @@ import type {
   Citation,
   CreateResearchRunInput,
   ResearchFinding,
+  ResearchEvidence,
   LinkedDocument,
   DraftReportSection,
   ResearchPlan,
@@ -61,6 +62,7 @@ interface ResearchFindingRow {
   status: string;
   verification_notes: string | null;
   gaps_json: string[];
+  contradictions_json: string[];
   created_at: string;
 }
 
@@ -70,6 +72,20 @@ interface ResearchReportSectionRow {
   title: string;
   content_markdown: string;
   citations_json: string[];
+  created_at: string;
+}
+
+interface ResearchEvidenceRow {
+  id: string;
+  source_type: 'web' | 'document';
+  source_id: string | null;
+  document_chunk_id: number | null;
+  document_external_id: string | null;
+  section_key: string | null;
+  title: string;
+  url: string | null;
+  excerpt: string;
+  metadata_json: JsonRecord;
   created_at: string;
 }
 
@@ -83,7 +99,7 @@ interface LegacyDocumentRow {
 }
 
 interface InsertSourceInput {
-  sourceType: 'web' | 'document_mock';
+  sourceType: 'web' | 'document';
   title: string;
   url: string | null;
   snippet: string | null;
@@ -98,6 +114,18 @@ export interface ResearchEventRecord {
   message: string;
   payloadJson: JsonRecord;
   createdAt: string;
+}
+
+interface InsertEvidenceInput {
+  sourceType: 'web' | 'document';
+  sourceId: string | null;
+  documentChunkId?: number | null;
+  documentExternalId?: string | null;
+  sectionKey?: string | null;
+  title: string;
+  url: string | null;
+  excerpt: string;
+  metadataJson: JsonRecord;
 }
 
 function mapLinkedDocument(row: ResearchRunDocumentRow): LinkedDocument {
@@ -361,13 +389,28 @@ export async function listResearchEvents(runId: string) {
   return (data ?? []).map(mapResearchEvent);
 }
 
-export async function clearResearchSources(runId: string, sourceType: 'web' | 'document_mock') {
+export async function clearResearchSources(runId: string, sourceType: 'web' | 'document') {
   const supabase = createSupabaseServerClient();
   const { error } = await supabase
     .from('research_sources')
     .delete()
     .eq('run_id', runId)
     .eq('source_type', sourceType);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+export async function clearResearchEvidence(runId: string, sourceType?: 'web' | 'document') {
+  const supabase = createSupabaseServerClient();
+  let query = supabase.from('research_evidence').delete().eq('run_id', runId);
+
+  if (sourceType) {
+    query = query.eq('source_type', sourceType);
+  }
+
+  const { error } = await query;
 
   if (error) {
     throw new Error(error.message);
@@ -431,6 +474,80 @@ export async function listResearchSources(runId: string) {
   }));
 }
 
+export async function saveResearchEvidence(runId: string, evidence: InsertEvidenceInput[]) {
+  const supabase = createSupabaseServerClient();
+
+  if (evidence.length === 0) {
+    return [] as ResearchEvidence[];
+  }
+
+  const { data, error } = await supabase
+    .from('research_evidence')
+    .insert(
+      evidence.map((item) => ({
+        run_id: runId,
+        source_type: item.sourceType,
+        source_id: item.sourceId,
+        document_chunk_id: item.documentChunkId ?? null,
+        document_external_id: item.documentExternalId ?? null,
+        section_key: item.sectionKey ?? null,
+        title: item.title,
+        url: item.url,
+        excerpt: item.excerpt,
+        metadata_json: item.metadataJson,
+        created_at: getNowIso(),
+      })),
+    )
+    .select('*')
+    .returns<ResearchEvidenceRow[]>();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []).map((row) => ({
+    id: row.id,
+    sourceType: row.source_type,
+    sourceId: row.source_id,
+    title: row.title,
+    url: row.url,
+    excerpt: row.excerpt,
+    sectionKey: row.section_key as ResearchEvidence['sectionKey'],
+    documentExternalId: row.document_external_id,
+    documentChunkId: row.document_chunk_id,
+    metadataJson: row.metadata_json ?? {},
+    createdAt: row.created_at,
+  }));
+}
+
+export async function listResearchEvidence(runId: string) {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from('research_evidence')
+    .select('*')
+    .eq('run_id', runId)
+    .order('created_at', { ascending: true })
+    .returns<ResearchEvidenceRow[]>();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []).map((row) => ({
+    id: row.id,
+    sourceType: row.source_type,
+    sourceId: row.source_id,
+    title: row.title,
+    url: row.url,
+    excerpt: row.excerpt,
+    sectionKey: row.section_key as ResearchEvidence['sectionKey'],
+    documentExternalId: row.document_external_id,
+    documentChunkId: row.document_chunk_id,
+    metadataJson: row.metadata_json ?? {},
+    createdAt: row.created_at,
+  }));
+}
+
 export async function replaceResearchFindings(runId: string, findings: ResearchFinding[]) {
   const supabase = createSupabaseServerClient();
   const deleteResult = await supabase.from('research_findings').delete().eq('run_id', runId);
@@ -453,6 +570,7 @@ export async function replaceResearchFindings(runId: string, findings: ResearchF
       status: finding.status,
       verification_notes: finding.verificationNotes,
       gaps_json: finding.gaps,
+      contradictions_json: finding.contradictions,
       created_at: getNowIso(),
     })),
   );
@@ -484,6 +602,7 @@ export async function listResearchFindings(runId: string) {
     status: row.status,
     verificationNotes: row.verification_notes ?? '',
     gapsJson: row.gaps_json ?? [],
+    contradictionsJson: row.contradictions_json ?? [],
     createdAt: row.created_at,
   }));
 }
@@ -540,11 +659,12 @@ export async function listResearchReportSections(runId: string) {
 }
 
 export async function getResearchRunSnapshot(runId: string): Promise<ResearchRunSnapshot> {
-  const [run, linkedDocuments, sources, findings, reportSections] = await Promise.all([
+  const [run, linkedDocuments, sources, findings, evidence, reportSections] = await Promise.all([
     getResearchRun(runId),
     listLinkedDocuments(runId),
     listResearchSources(runId),
     listResearchFindings(runId),
+    listResearchEvidence(runId),
     listResearchReportSections(runId),
   ]);
 
@@ -553,6 +673,7 @@ export async function getResearchRunSnapshot(runId: string): Promise<ResearchRun
     linkedDocuments,
     sources,
     findings,
+    evidence,
     reportSections,
   };
 }

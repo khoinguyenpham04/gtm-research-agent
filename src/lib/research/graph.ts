@@ -1,17 +1,19 @@
 import { END, START, StateGraph } from '@langchain/langgraph';
 import {
+  listResearchEvidence,
   listLinkedDocuments,
   listResearchFindings,
   listResearchReportSections,
   listResearchSources,
 } from '@/lib/research/repository';
 import { runDraftReportNode } from '@/lib/research/nodes/draft-report';
+import { runDocumentRetrievalNode } from '@/lib/research/nodes/document-retrieval';
 import { runFinalizeNode } from '@/lib/research/nodes/finalize';
-import { runMockDocumentRetrievalNode } from '@/lib/research/nodes/mock-document-retrieval';
 import { runPlanNode } from '@/lib/research/nodes/plan';
 import { runVerificationNode } from '@/lib/research/nodes/verification';
 import { createWebSearchNode } from '@/lib/research/nodes/web-search';
 import {
+  finalReportSectionKeyValues,
   researchGraphStateSchema,
   type ResearchGraphState,
 } from '@/lib/research/schemas';
@@ -47,18 +49,24 @@ function toWebSource(
   };
 }
 
+function coerceSectionKey(value: string): ResearchGraphState['findings'][number]['sectionKey'] {
+  return (finalReportSectionKeyValues as readonly string[]).includes(value)
+    ? (value as ResearchGraphState['findings'][number]['sectionKey'])
+    : 'risks-and-unknowns';
+}
+
 export function createResearchGraph(searchService: WebSearchService) {
   return new StateGraph(researchGraphStateSchema)
     .addNode('plan_stage', runPlanNode)
     .addNode('web_search_stage', createWebSearchNode(searchService))
-    .addNode('mock_document_retrieval_stage', runMockDocumentRetrievalNode)
+    .addNode('document_retrieval_stage', runDocumentRetrievalNode)
     .addNode('draft_report_stage', runDraftReportNode)
     .addNode('verification_stage', runVerificationNode)
     .addNode('finalize_stage', runFinalizeNode)
     .addEdge(START, 'plan_stage')
     .addEdge('plan_stage', 'web_search_stage')
-    .addEdge('web_search_stage', 'mock_document_retrieval_stage')
-    .addEdge('mock_document_retrieval_stage', 'draft_report_stage')
+    .addEdge('web_search_stage', 'document_retrieval_stage')
+    .addEdge('document_retrieval_stage', 'draft_report_stage')
     .addEdge('draft_report_stage', 'verification_stage')
     .addEdge('verification_stage', 'finalize_stage')
     .addEdge('finalize_stage', END)
@@ -73,10 +81,11 @@ export async function buildInitialGraphState(runId: string, base: {
   planJson: ResearchGraphState['plan'];
   finalReportMarkdown: string | null;
 }) {
-  const [linkedDocuments, sources, findings, sections] = await Promise.all([
+  const [linkedDocuments, sources, findings, evidence, sections] = await Promise.all([
     listLinkedDocuments(runId),
     listResearchSources(runId),
     listResearchFindings(runId),
+    listResearchEvidence(runId),
     listResearchReportSections(runId),
   ]);
 
@@ -88,24 +97,29 @@ export async function buildInitialGraphState(runId: string, base: {
     linkedDocuments,
     plan: base.planJson,
     webSources: sources.filter((source) => source.sourceType === 'web').map(toWebSource),
-    documentContext: sources
-      .filter((source) => source.sourceType === 'document_mock')
-      .map((source) => ({
-        documentExternalId:
-          typeof source.metadataJson.documentExternalId === 'string'
-            ? source.metadataJson.documentExternalId
-            : source.id,
-        fileName: typeof source.metadataJson.fileName === 'string' ? source.metadataJson.fileName : null,
-        summary: source.snippet ?? 'Document linked for future retrieval.',
+    evidenceRecords: evidence,
+    documentContext: evidence
+      .filter((record) => record.sourceType === 'document')
+      .map((record) => ({
+        evidenceId: record.id,
+        documentExternalId: record.documentExternalId ?? 'unknown-document',
+        fileName:
+          typeof record.metadataJson.fileName === 'string' ? record.metadataJson.fileName : record.title,
+        summary: record.excerpt,
+        sectionKey: record.sectionKey ?? undefined,
+        documentChunkId: record.documentChunkId ?? undefined,
+        similarity:
+          typeof record.metadataJson.similarity === 'number' ? record.metadataJson.similarity : null,
       })),
     findings: findings.map((finding) => ({
-      sectionKey: finding.sectionKey,
+      sectionKey: coerceSectionKey(finding.sectionKey),
       claim: finding.claim,
       evidence: finding.evidenceJson,
       confidence: finding.confidence,
       status: finding.status as ResearchGraphState['findings'][number]['status'],
       verificationNotes: finding.verificationNotes,
       gaps: finding.gapsJson,
+      contradictions: finding.contradictionsJson,
     })),
     reportSections: sections.map((section) => ({
       sectionKey: section.sectionKey,
@@ -113,6 +127,8 @@ export async function buildInitialGraphState(runId: string, base: {
       contentMarkdown: section.contentMarkdown,
       citations: section.citationsJson,
     })),
+    keyTakeaways: [],
+    competitorMatrix: [],
     finalReportMarkdown: base.finalReportMarkdown,
     status: base.status,
     currentStage: base.currentStage,
