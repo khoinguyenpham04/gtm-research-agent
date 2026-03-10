@@ -8,14 +8,18 @@ import {
 import {
   appendResearchEvent,
   clearResearchEvidence,
+  clearResearchRetrievalCandidates,
   clearResearchSources,
   hasStageCompleted,
   listResearchEvidence,
+  listResearchRetrievalCandidates,
   listResearchSources,
   saveResearchEvidence,
+  saveResearchRetrievalCandidates,
   saveResearchSources,
   setRunStage,
 } from '@/lib/research/repository';
+import { searchIntentToSectionKey } from '@/lib/research/section-policy';
 import type { ResearchGraphState } from '@/lib/research/schemas';
 import type { WebSearchService } from '@/lib/research/search';
 
@@ -32,6 +36,7 @@ export function createWebSearchNode(searchService: WebSearchService) {
         listResearchSources(state.runId),
         listResearchEvidence(state.runId),
       ]);
+      const candidates = await listResearchRetrievalCandidates(state.runId);
       const webSources = persistedSources
         .filter((source) => source.sourceType === 'web')
         .map((source) => ({
@@ -62,6 +67,7 @@ export function createWebSearchNode(searchService: WebSearchService) {
         currentStage: state.currentStage,
         webSources,
         evidenceRecords: evidence,
+        retrievalCandidates: candidates,
       };
     }
 
@@ -84,6 +90,7 @@ export function createWebSearchNode(searchService: WebSearchService) {
 
     await clearResearchSources(state.runId, 'web');
     await clearResearchEvidence(state.runId, 'web');
+    await clearResearchRetrievalCandidates(state.runId, { sourceType: 'web' });
     const searchResults = await searchService.searchMany(state.plan.searchQueries);
     const persistedSources = await saveResearchSources(
       state.runId,
@@ -112,9 +119,33 @@ export function createWebSearchNode(searchService: WebSearchService) {
       persistedSources.map((source) => ({
         sourceType: 'web',
         sourceId: source.id,
+        sectionKey: searchIntentToSectionKey[source.metadataJson.queryIntent as keyof typeof searchIntentToSectionKey] ?? null,
         title: source.title,
         url: source.url,
         excerpt: source.snippet ?? '',
+        metadataJson: source.metadataJson,
+      })),
+    );
+    const persistedCandidates = await saveResearchRetrievalCandidates(
+      state.runId,
+      persistedSources.map((source) => ({
+        sourceType: 'web',
+        retrieverType: 'web_search',
+        sectionKey:
+          searchIntentToSectionKey[
+            (typeof source.metadataJson.queryIntent === 'string'
+              ? source.metadataJson.queryIntent
+              : 'buyer-pain') as keyof typeof searchIntentToSectionKey
+          ],
+        query: typeof source.metadataJson.query === 'string' ? source.metadataJson.query : 'unknown',
+        sourceId: source.id,
+        title: source.title,
+        url: source.url,
+        rawScore:
+          typeof source.metadataJson.qualityScore === 'number' ? source.metadataJson.qualityScore : 0,
+        fusedScore:
+          typeof source.metadataJson.qualityScore === 'number' ? source.metadataJson.qualityScore : 0,
+        selected: Boolean(source.metadataJson.usedInSynthesis),
         metadataJson: source.metadataJson,
       })),
     );
@@ -140,6 +171,10 @@ export function createWebSearchNode(searchService: WebSearchService) {
       evidenceRecords: [
         ...state.evidenceRecords.filter((record) => record.sourceType !== 'web'),
         ...persistedEvidence,
+      ],
+      retrievalCandidates: [
+        ...state.retrievalCandidates.filter((candidate) => candidate.sourceType !== 'web'),
+        ...persistedCandidates,
       ],
       webSources: persistedSources.map((source) => ({
         id: source.id,

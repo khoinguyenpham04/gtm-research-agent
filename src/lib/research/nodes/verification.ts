@@ -15,6 +15,7 @@ import {
   type VerificationOutput,
   verificationOutputSchema,
 } from '@/lib/research/schemas';
+import { getSectionPolicy } from '@/lib/research/section-policy';
 import { coerceSourceCategory, getEvidenceRuleAssessment } from '@/lib/research/source-scoring';
 
 function buildEvidenceIndex(evidenceRecords: ResearchEvidence[]) {
@@ -158,7 +159,9 @@ export async function runVerificationNode(state: ResearchGraphState) {
     ].join('\n\n'),
   });
 
-  const findings = sanitizeFindings(verified.findings, evidenceIndex).map((finding) => {
+  const findings = sanitizeFindings(verified.findings, evidenceIndex)
+    .filter((finding) => !getSectionPolicy(finding.sectionKey).derivedOnly)
+    .map((finding) => {
     const assessment = getEvidenceRuleAssessment(finding.evidence, ruleSourceIndex);
     const failed = !assessment.passes;
 
@@ -178,7 +181,7 @@ export async function runVerificationNode(state: ResearchGraphState) {
           ]
         : finding.gaps,
     };
-  });
+    });
 
   await replaceResearchFindings(state.runId, findings);
   await appendResearchEvent(

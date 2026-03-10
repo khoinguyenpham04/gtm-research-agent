@@ -3,13 +3,18 @@ import { createSupabaseServerClient } from '@/lib/supabase';
 import {
   appendResearchEvent,
   clearResearchEvidence,
+  clearResearchRetrievalCandidates,
   clearResearchSources,
   hasStageCompleted,
   listResearchEvidence,
+  listResearchRetrievalCandidates,
   saveResearchEvidence,
+  saveResearchRetrievalCandidates,
   saveResearchSources,
   setRunStage,
 } from '@/lib/research/repository';
+import { buildLexicalQuery, buildSectionQuery, reciprocalRankFuse } from '@/lib/research/retrieval';
+import { getSectionPolicy } from '@/lib/research/section-policy';
 import type { DocumentContext, ResearchGraphState } from '@/lib/research/schemas';
 
 const openai = new OpenAI();
@@ -59,6 +64,20 @@ interface DocumentMatchRow {
   similarity: number;
 }
 
+interface LexicalMatchRow {
+  id: number;
+  content: string;
+  metadata: Record<string, unknown> | null;
+  rank_score: number;
+}
+
+interface LaneCandidate {
+  id: string;
+  score: number;
+  rank: number;
+  match: DocumentMatchRow | LexicalMatchRow;
+}
+
 function buildRetrievalPrompt(state: ResearchGraphState, section: (typeof retrievalSections)[number]) {
   return [
     `Topic: ${state.topic}`,
@@ -90,12 +109,16 @@ export async function runDocumentRetrievalNode(state: ResearchGraphState) {
   console.info(`[research:${state.runId}] stage_start`, { stage: 'document_retrieval' });
 
   if (await hasStageCompleted(state.runId, 'document_retrieval')) {
-    const evidence = await listResearchEvidence(state.runId);
+    const [evidence, retrievalCandidates] = await Promise.all([
+      listResearchEvidence(state.runId),
+      listResearchRetrievalCandidates(state.runId),
+    ]);
 
     return {
       status: state.status,
       currentStage: state.currentStage,
       evidenceRecords: evidence,
+      retrievalCandidates,
       documentContext: toDocumentContext(evidence),
     };
   }
@@ -110,6 +133,7 @@ export async function runDocumentRetrievalNode(state: ResearchGraphState) {
 
   await clearResearchSources(state.runId, 'document');
   await clearResearchEvidence(state.runId, 'document');
+  await clearResearchRetrievalCandidates(state.runId, { sourceType: 'document' });
 
   if (state.linkedDocuments.length === 0) {
     await appendResearchEvent(
@@ -128,6 +152,7 @@ export async function runDocumentRetrievalNode(state: ResearchGraphState) {
       currentStage: 'document_retrieval',
       documentContext: [],
       evidenceRecords: state.evidenceRecords.filter((record) => record.sourceType !== 'document'),
+      retrievalCandidates: state.retrievalCandidates.filter((candidate) => candidate.sourceType !== 'document'),
     };
   }
 
@@ -155,26 +180,137 @@ export async function runDocumentRetrievalNode(state: ResearchGraphState) {
 
   const supabase = createSupabaseServerClient();
   const evidenceInputs: Parameters<typeof saveResearchEvidence>[1] = [];
+  const retrievalCandidateInputs: Parameters<typeof saveResearchRetrievalCandidates>[1] = [];
 
   for (const section of retrievalSections) {
-    const embedding = await openai.embeddings.create({
-      model: 'text-embedding-3-small',
-      input: buildRetrievalPrompt(state, section),
-    });
-
-    const { data, error } = await supabase.rpc('match_run_documents', {
-      query_embedding: JSON.stringify(embedding.data[0].embedding),
-      match_count: 3,
-      document_ids: state.selectedDocumentIds,
-    });
-
-    if (error) {
-      throw new Error(error.message);
+    if (getSectionPolicy(section.key).derivedOnly) {
+      continue;
     }
 
-    const matches = (data ?? []) as DocumentMatchRow[];
+    const denseQuery = buildSectionQuery(state, section.key);
+    const lexicalQuery = buildLexicalQuery(state, section.key);
+    const embedding = await openai.embeddings.create({
+      model: 'text-embedding-3-small',
+      input: `${buildRetrievalPrompt(state, section)}\nDense query: ${denseQuery}`,
+    });
 
-    for (const match of matches) {
+    const [denseResponse, lexicalResponse] = await Promise.all([
+      supabase.rpc('match_run_documents', {
+        query_embedding: JSON.stringify(embedding.data[0].embedding),
+        match_count: 6,
+        document_ids: state.selectedDocumentIds,
+      }),
+      supabase.rpc('match_run_documents_lexical', {
+        search_query: lexicalQuery,
+        match_count: 6,
+        document_ids: state.selectedDocumentIds,
+      }),
+    ]);
+
+    if (denseResponse.error) {
+      throw new Error(denseResponse.error.message);
+    }
+
+    if (lexicalResponse.error) {
+      throw new Error(lexicalResponse.error.message);
+    }
+
+    const denseMatches = (denseResponse.data ?? []) as DocumentMatchRow[];
+    const lexicalMatches = (lexicalResponse.data ?? []) as LexicalMatchRow[];
+    const denseLane: LaneCandidate[] = denseMatches.map((match, index) => ({
+      id: String(match.id),
+      score: Number((match.similarity ?? 0).toFixed(6)),
+      rank: index + 1,
+      match,
+    }));
+    const lexicalLane: LaneCandidate[] = lexicalMatches.map((match, index) => ({
+      id: String(match.id),
+      score: Number((match.rank_score ?? 0).toFixed(6)),
+      rank: index + 1,
+      match,
+    }));
+    const fused = reciprocalRankFuse([...denseLane, ...lexicalLane].length === 0 ? [] : [denseLane, lexicalLane]);
+    const selectedIds = new Set(fused.slice(0, 4).map((item) => item.candidate.id));
+
+    retrievalCandidateInputs.push(
+      ...denseLane.map(({ id, score, match }) => {
+        const denseMatch = match as DocumentMatchRow;
+        const metadata = match.metadata ?? {};
+        return {
+          sourceType: 'document' as const,
+          retrieverType: 'dense' as const,
+          sectionKey: section.key,
+          query: denseQuery,
+          documentExternalId:
+            typeof metadata.document_id === 'string' ? metadata.document_id : null,
+          documentChunkId: match.id,
+          title: typeof metadata.file_name === 'string' ? metadata.file_name : `Document chunk ${match.id}`,
+          url: typeof metadata.file_url === 'string' ? metadata.file_url : null,
+          rawScore: score,
+          fusedScore: fused.find((entry) => entry.candidate.id === id)?.fusedScore ?? null,
+          selected: selectedIds.has(id),
+          metadataJson: {
+            lane: 'dense',
+            similarity: Number((denseMatch.similarity ?? 0).toFixed(6)),
+          },
+        };
+      }),
+      ...lexicalLane.map(({ id, score, match }) => {
+        const lexicalMatch = match as LexicalMatchRow;
+        const metadata = match.metadata ?? {};
+        return {
+          sourceType: 'document' as const,
+          retrieverType: 'lexical' as const,
+          sectionKey: section.key,
+          query: lexicalQuery,
+          documentExternalId:
+            typeof metadata.document_id === 'string' ? metadata.document_id : null,
+          documentChunkId: match.id,
+          title: typeof metadata.file_name === 'string' ? metadata.file_name : `Document chunk ${match.id}`,
+          url: typeof metadata.file_url === 'string' ? metadata.file_url : null,
+          rawScore: score,
+          fusedScore: fused.find((entry) => entry.candidate.id === id)?.fusedScore ?? null,
+          selected: selectedIds.has(id),
+          metadataJson: {
+            lane: 'lexical',
+            rankScore: Number((lexicalMatch.rank_score ?? 0).toFixed(6)),
+          },
+        };
+      }),
+      ...fused.slice(0, 4).map(({ candidate, fusedScore }) => {
+        const denseMatch = denseLane.find((entry) => entry.id === candidate.id)?.match;
+        const lexicalMatch = lexicalLane.find((entry) => entry.id === candidate.id)?.match;
+        const match = denseMatch ?? lexicalMatch;
+        const metadata = match?.metadata ?? {};
+        return {
+          sourceType: 'document' as const,
+          retrieverType: 'fusion' as const,
+          sectionKey: section.key,
+          query: `${denseQuery} || ${lexicalQuery}`,
+          documentExternalId:
+            typeof metadata.document_id === 'string' ? metadata.document_id : null,
+          documentChunkId: match?.id ?? null,
+          title: typeof metadata.file_name === 'string' ? metadata.file_name : `Document chunk ${match?.id ?? candidate.id}`,
+          url: typeof metadata.file_url === 'string' ? metadata.file_url : null,
+          rawScore: candidate.score,
+          fusedScore,
+          selected: true,
+          metadataJson: {
+            lane: 'fusion',
+            denseMatched: Boolean(denseMatch),
+            lexicalMatched: Boolean(lexicalMatch),
+          },
+        };
+      }),
+    );
+
+    for (const { candidate, fusedScore } of fused.slice(0, 4)) {
+      const match = denseLane.find((entry) => entry.id === candidate.id)?.match
+        ?? lexicalLane.find((entry) => entry.id === candidate.id)?.match;
+      if (!match) {
+        continue;
+      }
+
       const metadata = match.metadata ?? {};
       const documentExternalId =
         typeof metadata.document_id === 'string' ? metadata.document_id : null;
@@ -192,15 +328,18 @@ export async function runDocumentRetrievalNode(state: ResearchGraphState) {
         metadataJson: {
           fileName,
           chunkIndex: typeof metadata.chunk_index === 'number' ? metadata.chunk_index : null,
-          similarity: Number(match.similarity.toFixed(4)),
+          similarity: 'similarity' in match ? Number((match.similarity ?? 0).toFixed(4)) : null,
+          lexicalRankScore: 'rank_score' in match ? Number((match.rank_score ?? 0).toFixed(4)) : null,
           qualityScore: 0.84,
           sourceCategory: 'research',
           usedInSynthesis: true,
+          fusedScore,
         },
       });
     }
   }
 
+  const persistedCandidates = await saveResearchRetrievalCandidates(state.runId, retrievalCandidateInputs);
   const persistedEvidence = await saveResearchEvidence(state.runId, evidenceInputs);
   const allEvidence = await listResearchEvidence(state.runId);
   const documentContext = toDocumentContext(allEvidence);
@@ -223,8 +362,12 @@ export async function runDocumentRetrievalNode(state: ResearchGraphState) {
 
   return {
     status: 'retrieving' as const,
-    currentStage: 'document_retrieval',
-    evidenceRecords: allEvidence,
-    documentContext,
+      currentStage: 'document_retrieval',
+      evidenceRecords: allEvidence,
+      retrievalCandidates: [
+        ...state.retrievalCandidates.filter((candidate) => candidate.sourceType !== 'document'),
+        ...persistedCandidates,
+      ],
+      documentContext,
   };
 }

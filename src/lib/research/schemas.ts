@@ -22,10 +22,13 @@ export const researchStageValues = [
 
 export const confidenceValues = ['high', 'medium', 'low'] as const;
 export const findingStatusValues = ['draft', 'verified', 'needs-review'] as const;
+export const sectionStatusValues = ['ready', 'needs-review', 'insufficient_evidence'] as const;
 export const sourceCategoryValues = ['official', 'research', 'vendor', 'media', 'blog', 'community'] as const;
 export const sourceQualityLabelValues = ['high', 'medium', 'low'] as const;
 export const sourceRecencyValues = ['current', 'recent', 'dated', 'historical', 'unknown'] as const;
 export const evidenceSourceTypeValues = ['web', 'document'] as const;
+export const retrievalCandidateSourceTypeValues = ['web', 'document'] as const;
+export const retrieverTypeValues = ['web_search', 'dense', 'lexical', 'fusion'] as const;
 export const searchIntentValues = [
   'market-size',
   'adoption',
@@ -134,6 +137,25 @@ export const researchEvidenceSchema = z.object({
   createdAt: z.string(),
 });
 
+export const retrievalCandidateSchema = z.object({
+  id: z.string(),
+  sourceType: z.enum(retrievalCandidateSourceTypeValues),
+  retrieverType: z.enum(retrieverTypeValues),
+  sectionKey: z.enum(finalReportSectionKeyValues),
+  query: z.string().trim().min(1),
+  sourceId: z.string().nullable(),
+  title: z.string().trim().min(1),
+  url: z.string().trim().nullable(),
+  documentExternalId: z.string().nullable(),
+  documentChunkId: z.number().int().nullable(),
+  rawScore: z.number(),
+  fusedScore: z.number().nullable(),
+  rerankScore: z.number().nullable(),
+  selected: z.boolean(),
+  metadataJson: z.record(z.string(), z.unknown()),
+  createdAt: z.string(),
+});
+
 export const researchFindingSchema = z.object({
   sectionKey: finalReportSectionKeySchema,
   claim: z.string().trim().min(1),
@@ -150,6 +172,8 @@ export const draftReportSectionSchema = z.object({
   title: z.string().trim().min(1),
   contentMarkdown: z.string().trim().min(1),
   citations: z.array(z.string()),
+  status: z.enum(sectionStatusValues).default('ready'),
+  statusNotes: z.array(z.string()).default([]),
 });
 
 export const finalReportSectionSchema = z.object({
@@ -190,6 +214,7 @@ export const researchGraphStateSchema = z.object({
   linkedDocuments: z.array(linkedDocumentSchema).default([]),
   plan: researchPlanSchema.nullable().default(null),
   webSources: z.array(scoredSourceSchema).default([]),
+  retrievalCandidates: z.array(retrievalCandidateSchema).default([]),
   evidenceRecords: z.array(researchEvidenceSchema).default([]),
   documentContext: z.array(documentContextSchema).default([]),
   findings: z.array(researchFindingSchema).default([]),
@@ -209,10 +234,12 @@ export type SearchIntent = z.infer<typeof searchIntentSchema>;
 export type PlannedSearchQuery = z.infer<typeof plannedSearchQuerySchema>;
 export type NormalizedWebSource = z.infer<typeof normalizedWebSourceSchema>;
 export type ScoredSource = z.infer<typeof scoredSourceSchema>;
+export type SectionStatus = (typeof sectionStatusValues)[number];
 export type LinkedDocument = z.infer<typeof linkedDocumentSchema>;
 export type DocumentContext = z.infer<typeof documentContextSchema>;
 export type Citation = z.infer<typeof citationSchema>;
 export type ResearchEvidence = z.infer<typeof researchEvidenceSchema>;
+export type RetrievalCandidate = z.infer<typeof retrievalCandidateSchema>;
 export type ResearchFinding = z.infer<typeof researchFindingSchema>;
 export type DraftReportSection = z.infer<typeof draftReportSectionSchema>;
 export type DraftReport = z.infer<typeof draftReportSchema>;
@@ -257,12 +284,15 @@ export interface ResearchRunSnapshot {
     createdAt: string;
   }>;
   evidence: ResearchEvidence[];
+  retrievalCandidates: RetrievalCandidate[];
   reportSections: Array<{
     id: string;
     sectionKey: string;
     title: string;
     contentMarkdown: string;
     citationsJson: string[];
+    status: SectionStatus;
+    statusNotesJson: string[];
     createdAt: string;
   }>;
 }

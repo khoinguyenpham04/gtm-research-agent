@@ -4,6 +4,12 @@ import {
   hasStageCompleted,
   replaceResearchReportSections,
 } from '@/lib/research/repository';
+import {
+  assessSectionStatus,
+  buildInsufficientEvidenceSection,
+  filterCandidatesForSection,
+  getSectionPolicy,
+} from '@/lib/research/section-policy';
 import type {
   Citation,
   CompetitorMatrixEntry,
@@ -96,14 +102,82 @@ function buildSectionMarkdown(sectionKey: ResearchFinding['sectionKey'], finding
   return lines.join('\n');
 }
 
-function buildReportSections(findings: ResearchFinding[], competitorMatrix: CompetitorMatrixEntry[]) {
+function buildRecommendationSection(findings: ResearchFinding[]) {
+  const dependencies = getSectionPolicy('recommendation').recommendationDependencies ?? [];
+  const upstreamClaims = findings.filter(
+    (finding) => finding.status === 'verified' && dependencies.includes(finding.sectionKey),
+  );
+
+  if (upstreamClaims.length < 2) {
+    return {
+      contentMarkdown: '### Insufficient evidence\n- Not enough verified upstream findings to derive a recommendation safely.',
+      status: 'insufficient_evidence' as const,
+      statusNotes: ['Not enough verified upstream findings to derive a recommendation safely.'],
+      citations: [],
+    };
+  }
+
+  const lines = [
+    '### Derived recommendation',
+    `- Target the segment suggested by the strongest verified buyer and market evidence.`,
+    `- Use the GTM motion and risk findings below as operating constraints rather than assumptions.`,
+    `- Avoid pricing or competitor differentiation claims that remain in needs-review state.`,
+    '',
+    '### Verified inputs used',
+    ...upstreamClaims.slice(0, 5).map((finding) => `- [${finding.sectionKey}] ${finding.claim}`),
+  ];
+
+  return {
+    contentMarkdown: lines.join('\n'),
+    status: 'ready' as const,
+    statusNotes: [] as string[],
+    citations: uniqueCitations(upstreamClaims).map((citation) => citation.evidenceId),
+  };
+}
+
+function buildReportSections(
+  findings: ResearchFinding[],
+  competitorMatrix: CompetitorMatrixEntry[],
+  evidenceRecords: ResearchGraphState['evidenceRecords'],
+  retrievalCandidates: ResearchGraphState['retrievalCandidates'],
+) {
   return sectionDefinitions.map((section) => {
+    if (section.key === 'recommendation') {
+      const recommendation = buildRecommendationSection(findings);
+      return {
+        sectionKey: section.key,
+        title: section.title,
+        contentMarkdown: recommendation.contentMarkdown,
+        citations: recommendation.citations,
+        status: recommendation.status,
+        statusNotes: recommendation.statusNotes,
+      } satisfies DraftReportSection;
+    }
+
     const sectionFindings = findings.filter((finding) => finding.sectionKey === section.key);
+    const sectionStatus = assessSectionStatus(section.key, evidenceRecords, findings);
+    const selectedCandidates = filterCandidatesForSection(section.key, retrievalCandidates).filter(
+      (candidate) => candidate.selected,
+    );
+
+    if (selectedCandidates.length === 0) {
+      sectionStatus.notes.push('No selected retrieval candidates met the section policy.');
+    }
+
+    if (sectionStatus.status === 'insufficient_evidence') {
+      return buildInsufficientEvidenceSection(
+        { sectionKey: section.key, title: section.title },
+        sectionStatus.notes,
+      );
+    }
+
     return {
       sectionKey: section.key,
       title: section.title,
       contentMarkdown: buildSectionMarkdown(section.key, sectionFindings, competitorMatrix),
       citations: uniqueCitations(sectionFindings).map((citation) => citation.evidenceId),
+      status: sectionStatus.status,
+      statusNotes: sectionStatus.notes,
     } satisfies DraftReportSection;
   });
 }
@@ -181,7 +255,12 @@ export async function runFinalizeNode(state: ResearchGraphState) {
       } satisfies Citation,
     ]),
   );
-  const sections = buildReportSections(state.findings, state.competitorMatrix);
+  const sections = buildReportSections(
+    state.findings,
+    state.competitorMatrix,
+    state.evidenceRecords,
+    state.retrievalCandidates,
+  );
   const executiveSummary = buildExecutiveSummary(state.findings);
   const finalReportMarkdown = buildFinalMarkdown(
     state.keyTakeaways,

@@ -4,6 +4,7 @@ import {
   listLinkedDocuments,
   listResearchFindings,
   listResearchReportSections,
+  listResearchRetrievalCandidates,
   listResearchSources,
 } from '@/lib/research/repository';
 import { runDraftReportNode } from '@/lib/research/nodes/draft-report';
@@ -81,11 +82,12 @@ export async function buildInitialGraphState(runId: string, base: {
   planJson: ResearchGraphState['plan'];
   finalReportMarkdown: string | null;
 }) {
-  const [linkedDocuments, sources, findings, evidence, sections] = await Promise.all([
+  const [linkedDocuments, sources, findings, evidence, retrievalCandidates, sections] = await Promise.all([
     listLinkedDocuments(runId),
     listResearchSources(runId),
     listResearchFindings(runId),
     listResearchEvidence(runId),
+    listResearchRetrievalCandidates(runId),
     listResearchReportSections(runId),
   ]);
 
@@ -97,6 +99,7 @@ export async function buildInitialGraphState(runId: string, base: {
     linkedDocuments,
     plan: base.planJson,
     webSources: sources.filter((source) => source.sourceType === 'web').map(toWebSource),
+    retrievalCandidates,
     evidenceRecords: evidence,
     documentContext: evidence
       .filter((record) => record.sourceType === 'document')
@@ -126,6 +129,8 @@ export async function buildInitialGraphState(runId: string, base: {
       title: section.title,
       contentMarkdown: section.contentMarkdown,
       citations: section.citationsJson,
+      status: section.status,
+      statusNotes: section.statusNotesJson,
     })),
     keyTakeaways: [],
     competitorMatrix: [],

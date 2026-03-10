@@ -6,6 +6,7 @@ import type {
   ResearchEvidence,
   LinkedDocument,
   DraftReportSection,
+  RetrievalCandidate,
   ResearchPlan,
   ResearchRunSnapshot,
   ResearchRunStatus,
@@ -72,6 +73,8 @@ interface ResearchReportSectionRow {
   title: string;
   content_markdown: string;
   citations_json: string[];
+  status: DraftReportSection['status'];
+  status_notes_json: string[];
   created_at: string;
 }
 
@@ -85,6 +88,25 @@ interface ResearchEvidenceRow {
   title: string;
   url: string | null;
   excerpt: string;
+  metadata_json: JsonRecord;
+  created_at: string;
+}
+
+interface ResearchRetrievalCandidateRow {
+  id: string;
+  source_type: RetrievalCandidate['sourceType'];
+  retriever_type: RetrievalCandidate['retrieverType'];
+  section_key: string;
+  query_text: string;
+  source_id: string | null;
+  document_external_id: string | null;
+  document_chunk_id: number | null;
+  title: string;
+  url: string | null;
+  raw_score: number;
+  fused_score: number | null;
+  rerank_score: number | null;
+  selected: boolean;
   metadata_json: JsonRecord;
   created_at: string;
 }
@@ -125,6 +147,23 @@ interface InsertEvidenceInput {
   title: string;
   url: string | null;
   excerpt: string;
+  metadataJson: JsonRecord;
+}
+
+interface InsertRetrievalCandidateInput {
+  sourceType: RetrievalCandidate['sourceType'];
+  retrieverType: RetrievalCandidate['retrieverType'];
+  sectionKey: RetrievalCandidate['sectionKey'];
+  query: string;
+  sourceId?: string | null;
+  documentExternalId?: string | null;
+  documentChunkId?: number | null;
+  title: string;
+  url: string | null;
+  rawScore: number;
+  fusedScore?: number | null;
+  rerankScore?: number | null;
+  selected?: boolean;
   metadataJson: JsonRecord;
 }
 
@@ -417,6 +456,27 @@ export async function clearResearchEvidence(runId: string, sourceType?: 'web' | 
   }
 }
 
+export async function clearResearchRetrievalCandidates(
+  runId: string,
+  filters?: { sectionKey?: string; sourceType?: RetrievalCandidate['sourceType'] },
+) {
+  const supabase = createSupabaseServerClient();
+  let query = supabase.from('research_retrieval_candidates').delete().eq('run_id', runId);
+
+  if (filters?.sectionKey) {
+    query = query.eq('section_key', filters.sectionKey);
+  }
+
+  if (filters?.sourceType) {
+    query = query.eq('source_type', filters.sourceType);
+  }
+
+  const { error } = await query;
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
 export async function saveResearchSources(runId: string, sources: InsertSourceInput[]) {
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
@@ -515,6 +575,95 @@ export async function saveResearchEvidence(runId: string, evidence: InsertEviden
     sectionKey: row.section_key as ResearchEvidence['sectionKey'],
     documentExternalId: row.document_external_id,
     documentChunkId: row.document_chunk_id,
+    metadataJson: row.metadata_json ?? {},
+    createdAt: row.created_at,
+  }));
+}
+
+export async function saveResearchRetrievalCandidates(runId: string, candidates: InsertRetrievalCandidateInput[]) {
+  const supabase = createSupabaseServerClient();
+
+  if (candidates.length === 0) {
+    return [] as RetrievalCandidate[];
+  }
+
+  const { data, error } = await supabase
+    .from('research_retrieval_candidates')
+    .insert(
+      candidates.map((candidate) => ({
+        run_id: runId,
+        source_type: candidate.sourceType,
+        retriever_type: candidate.retrieverType,
+        section_key: candidate.sectionKey,
+        query_text: candidate.query,
+        source_id: candidate.sourceId ?? null,
+        document_external_id: candidate.documentExternalId ?? null,
+        document_chunk_id: candidate.documentChunkId ?? null,
+        title: candidate.title,
+        url: candidate.url,
+        raw_score: candidate.rawScore,
+        fused_score: candidate.fusedScore ?? null,
+        rerank_score: candidate.rerankScore ?? null,
+        selected: candidate.selected ?? false,
+        metadata_json: candidate.metadataJson,
+        created_at: getNowIso(),
+      })),
+    )
+    .select('*')
+    .returns<ResearchRetrievalCandidateRow[]>();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []).map((row) => ({
+    id: row.id,
+    sourceType: row.source_type,
+    retrieverType: row.retriever_type,
+    sectionKey: row.section_key as RetrievalCandidate['sectionKey'],
+    query: row.query_text,
+    sourceId: row.source_id,
+    title: row.title,
+    url: row.url,
+    documentExternalId: row.document_external_id,
+    documentChunkId: row.document_chunk_id,
+    rawScore: row.raw_score,
+    fusedScore: row.fused_score,
+    rerankScore: row.rerank_score,
+    selected: row.selected,
+    metadataJson: row.metadata_json ?? {},
+    createdAt: row.created_at,
+  }));
+}
+
+export async function listResearchRetrievalCandidates(runId: string) {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from('research_retrieval_candidates')
+    .select('*')
+    .eq('run_id', runId)
+    .order('created_at', { ascending: true })
+    .returns<ResearchRetrievalCandidateRow[]>();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []).map((row) => ({
+    id: row.id,
+    sourceType: row.source_type,
+    retrieverType: row.retriever_type,
+    sectionKey: row.section_key as RetrievalCandidate['sectionKey'],
+    query: row.query_text,
+    sourceId: row.source_id,
+    title: row.title,
+    url: row.url,
+    documentExternalId: row.document_external_id,
+    documentChunkId: row.document_chunk_id,
+    rawScore: row.raw_score,
+    fusedScore: row.fused_score,
+    rerankScore: row.rerank_score,
+    selected: row.selected,
     metadataJson: row.metadata_json ?? {},
     createdAt: row.created_at,
   }));
@@ -626,6 +775,8 @@ export async function replaceResearchReportSections(runId: string, sections: Dra
       title: section.title,
       content_markdown: section.contentMarkdown,
       citations_json: section.citations,
+      status: section.status,
+      status_notes_json: section.statusNotes,
       created_at: getNowIso(),
     })),
   );
@@ -654,17 +805,20 @@ export async function listResearchReportSections(runId: string) {
     title: row.title,
     contentMarkdown: row.content_markdown,
     citationsJson: row.citations_json ?? [],
+    status: row.status,
+    statusNotesJson: row.status_notes_json ?? [],
     createdAt: row.created_at,
   }));
 }
 
 export async function getResearchRunSnapshot(runId: string): Promise<ResearchRunSnapshot> {
-  const [run, linkedDocuments, sources, findings, evidence, reportSections] = await Promise.all([
+  const [run, linkedDocuments, sources, findings, evidence, retrievalCandidates, reportSections] = await Promise.all([
     getResearchRun(runId),
     listLinkedDocuments(runId),
     listResearchSources(runId),
     listResearchFindings(runId),
     listResearchEvidence(runId),
+    listResearchRetrievalCandidates(runId),
     listResearchReportSections(runId),
   ]);
 
@@ -674,6 +828,7 @@ export async function getResearchRunSnapshot(runId: string): Promise<ResearchRun
     sources,
     findings,
     evidence,
+    retrievalCandidates,
     reportSections,
   };
 }

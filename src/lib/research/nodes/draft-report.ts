@@ -8,12 +8,14 @@ import {
 } from '@/lib/research/repository';
 import {
   draftReportSchema,
+  finalReportSectionKeyValues,
   type Citation,
   type DraftReport,
   type ResearchEvidence,
   type ResearchFinding,
   type ResearchGraphState,
 } from '@/lib/research/schemas';
+import { getSectionPolicy, selectEvidenceForSection } from '@/lib/research/section-policy';
 
 function buildEvidenceIndex(evidenceRecords: ResearchEvidence[]) {
   return new Map(
@@ -86,19 +88,29 @@ export async function runDraftReportNode(state: ResearchGraphState) {
 
   const synthesisEvidence = state.evidenceRecords.filter(isEvidenceUsedInSynthesis);
   const evidenceIndex = buildEvidenceIndex(synthesisEvidence);
-  const evidenceSummary = synthesisEvidence
-    .map((record) =>
-      [
-        `Evidence ID: ${record.id}`,
-        `Source type: ${record.sourceType}`,
-        `Section: ${record.sectionKey ?? 'unassigned'}`,
-        `Title: ${record.title}`,
-        `URL: ${record.url ?? 'n/a'}`,
-        `Excerpt: ${record.excerpt}`,
-        `Metadata: ${JSON.stringify(record.metadataJson)}`,
-      ].join('\n'),
-    )
-    .join('\n\n---\n\n');
+  const evidenceSummary = finalReportSectionKeyValues
+    .filter((sectionKey) => !getSectionPolicy(sectionKey).derivedOnly)
+    .map((sectionKey) => {
+      const sectionEvidence = selectEvidenceForSection(sectionKey, synthesisEvidence);
+      return [
+        `Section: ${sectionKey}`,
+        sectionEvidence.length === 0
+          ? 'No policy-matched evidence.'
+          : sectionEvidence
+              .map((record) =>
+                [
+                  `Evidence ID: ${record.id}`,
+                  `Source type: ${record.sourceType}`,
+                  `Title: ${record.title}`,
+                  `URL: ${record.url ?? 'n/a'}`,
+                  `Excerpt: ${record.excerpt}`,
+                  `Metadata: ${JSON.stringify(record.metadataJson)}`,
+                ].join('\n'),
+              )
+              .join('\n\n---\n\n'),
+      ].join('\n');
+    })
+    .join('\n\n====\n\n');
 
   const draft = await generateStructuredOutput<DraftReport>({
     schema: draftReportSchema,
@@ -114,10 +126,10 @@ export async function runDraftReportNode(state: ResearchGraphState) {
       '- pricing-and-packaging',
       '- gtm-motion',
       '- risks-and-unknowns',
-      '- recommendation',
+      'Do not generate direct recommendation claims from raw evidence. Recommendation will be derived later from verified claims.',
       `Research questions:\n- ${state.plan.researchQuestions.join('\n- ')}`,
       `Search intents:\n- ${state.plan.searchQueries.map((query) => `${query.intent}: ${query.query}`).join('\n- ')}`,
-      `Evidence ledger:\n${evidenceSummary || 'No qualifying evidence records available.'}`,
+      `Section-scoped evidence ledger:\n${evidenceSummary || 'No qualifying evidence records available.'}`,
       'Return 1-2 concise claims per section where evidence exists.',
       'For each finding:',
       '- use status "draft"',

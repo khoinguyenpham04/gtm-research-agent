@@ -84,12 +84,25 @@ interface Snapshot {
     metadataJson: Record<string, unknown>;
     createdAt: string;
   }>;
+  retrievalCandidates: Array<{
+    id: string;
+    sourceType: string;
+    retrieverType: string;
+    sectionKey: string;
+    query: string;
+    title: string;
+    rawScore: number;
+    fusedScore: number | null;
+    selected: boolean;
+  }>;
   reportSections: Array<{
     id: string;
     sectionKey: string;
     title: string;
     contentMarkdown: string;
     citationsJson: string[];
+    status: string;
+    statusNotesJson: string[];
     createdAt: string;
   }>;
   error?: string;
@@ -382,6 +395,46 @@ export default function ResearchRunDetailPage() {
                             {document.fileName ?? `Document ${document.documentExternalId}`}
                           </p>
                           <p className="text-xs text-slate-500">{document.documentExternalId}</p>
+                        </div>
+                      ))
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Section quality</CardTitle>
+                    <CardDescription>Section policy outcomes after retrieval and verification.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {snapshot.reportSections.length === 0 ? (
+                      <p className="text-sm text-slate-500">No section statuses yet.</p>
+                    ) : (
+                      snapshot.reportSections.map((section) => (
+                        <div key={section.id} className="rounded-lg border border-slate-200 p-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="font-medium text-slate-900">{section.title}</p>
+                            <Badge
+                              variant={
+                                section.status === 'ready'
+                                  ? 'success'
+                                  : section.status === 'needs-review'
+                                    ? 'secondary'
+                                    : 'destructive'
+                              }
+                            >
+                              {section.status}
+                            </Badge>
+                          </div>
+                          {section.statusNotesJson.length > 0 && (
+                            <div className="mt-2 space-y-1">
+                              {section.statusNotesJson.map((note) => (
+                                <p key={`${section.id}-${note}`} className="text-xs text-slate-500">
+                                  {note}
+                                </p>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       ))
                     )}
