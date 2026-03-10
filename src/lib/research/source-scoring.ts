@@ -1,9 +1,14 @@
 import {
+  claimTypeValues,
+  evidenceModeValues,
+  finalReportSectionKeyValues,
   searchIntentValues,
   sourceCategoryValues,
   sourceQualityLabelValues,
   sourceRecencyValues,
   type Citation,
+  type ClaimType,
+  type EvidenceMode,
   type ScoredSource,
 } from '@/lib/research/schemas';
 
@@ -143,6 +148,58 @@ function getQualityLabel(score: number): ScoredSource['qualityLabel'] {
   return 'low';
 }
 
+function hasProductSpecificTerms(input: string) {
+  const normalized = input.toLowerCase();
+  return (
+    normalized.includes('meeting assistant') ||
+    normalized.includes('meeting note') ||
+    normalized.includes('transcription') ||
+    normalized.includes('conversation intelligence') ||
+    normalized.includes('meeting recap') ||
+    normalized.includes('sales call')
+  );
+}
+
+function getClaimType(intent: ScoredSource['queryIntent']): ClaimType {
+  switch (intent) {
+    case 'market-size':
+      return 'market-sizing';
+    case 'adoption':
+      return 'adoption-signal';
+    case 'competitor-features':
+      return 'competitor-feature';
+    case 'pricing':
+      return 'pricing';
+    case 'gtm-channels':
+      return 'gtm-channel';
+    case 'buyer-pain':
+    default:
+      return 'buyer-pain';
+  }
+}
+
+function getEvidenceMode(
+  sourceCategory: ScoredSource['sourceCategory'],
+  queryIntent: ScoredSource['queryIntent'],
+  combinedText: string,
+): EvidenceMode {
+  if (queryIntent === 'competitor-features' || queryIntent === 'pricing') {
+    return sourceCategory === 'vendor' ? 'vendor-primary' : 'independent-validation';
+  }
+
+  if (hasProductSpecificTerms(combinedText)) {
+    return 'product-specific';
+  }
+
+  if (queryIntent === 'buyer-pain' || queryIntent === 'gtm-channels') {
+    return sourceCategory === 'official' || sourceCategory === 'research' || sourceCategory === 'media'
+      ? 'independent-validation'
+      : 'market-adjacent';
+  }
+
+  return 'market-adjacent';
+}
+
 export function coerceSourceCategory(value: unknown): ScoredSource['sourceCategory'] {
   return typeof value === 'string' && (sourceCategoryValues as readonly string[]).includes(value)
     ? (value as ScoredSource['sourceCategory'])
@@ -153,6 +210,24 @@ export function coerceSearchIntent(value: unknown): ScoredSource['queryIntent'] 
   return typeof value === 'string' && (searchIntentValues as readonly string[]).includes(value)
     ? (value as ScoredSource['queryIntent'])
     : 'buyer-pain';
+}
+
+export function coerceSectionKey(value: unknown): ScoredSource['sectionKey'] {
+  return typeof value === 'string' && (finalReportSectionKeyValues as readonly string[]).includes(value)
+    ? (value as ScoredSource['sectionKey'])
+    : 'icp-and-buyer';
+}
+
+export function coerceClaimType(value: unknown): ClaimType {
+  return typeof value === 'string' && (claimTypeValues as readonly string[]).includes(value)
+    ? (value as ClaimType)
+    : 'buyer-pain';
+}
+
+export function coerceEvidenceMode(value: unknown): EvidenceMode {
+  return typeof value === 'string' && (evidenceModeValues as readonly string[]).includes(value)
+    ? (value as EvidenceMode)
+    : 'market-adjacent';
 }
 
 export function coerceSourceQualityLabel(value: unknown): ScoredSource['qualityLabel'] {
@@ -198,9 +273,13 @@ export function scoreWebSource(input: Omit<ScoredSource, 'sourceCategory' | 'qua
   const sourceCategory = getSourceCategory(input.url, input.domain, input.title);
   const qualityScore = Number(applyRecencyAdjustment(getBaseScore(sourceCategory), recency).toFixed(2));
   const qualityLabel = getQualityLabel(qualityScore);
+  const claimType = getClaimType(input.queryIntent);
+  const evidenceMode = getEvidenceMode(sourceCategory, input.queryIntent, combinedText);
 
   return {
     ...input,
+    claimType,
+    evidenceMode,
     sourceCategory,
     qualityScore,
     qualityLabel,

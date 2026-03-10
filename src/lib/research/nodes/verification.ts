@@ -1,4 +1,5 @@
 import { generateStructuredOutput } from '@/lib/research/ai';
+import { buildEvidenceByCitation, getDefaultClaimType, inferFindingSpecificity } from '@/lib/research/claim-specificity';
 import {
   appendResearchEvent,
   hasStageCompleted,
@@ -63,17 +64,36 @@ function buildEvidenceRuleSourceIndex(evidenceRecords: ResearchEvidence[]) {
   );
 }
 
-function sanitizeFindings(findings: ResearchFinding[], evidenceIndex: Map<string, Citation>) {
+function buildEvidenceRecordIndex(evidenceRecords: ResearchEvidence[]) {
+  return new Map(evidenceRecords.map((record) => [record.id, record]));
+}
+
+function sanitizeFindings(
+  findings: ResearchFinding[],
+  evidenceIndex: Map<string, Citation>,
+  evidenceRecordIndex: Map<string, ResearchEvidence>,
+) {
   return findings
-    .map((finding) => ({
-      ...finding,
-      evidence: finding.evidence
+    .map((finding) => {
+      const evidence = finding.evidence
         .map((citation) => evidenceIndex.get(citation.evidenceId))
-        .filter((citation): citation is Citation => Boolean(citation)),
-      verificationNotes: finding.verificationNotes ?? '',
-      gaps: finding.gaps ?? [],
-      contradictions: finding.contradictions ?? [],
-    }))
+        .filter((citation): citation is Citation => Boolean(citation));
+      const specificity = inferFindingSpecificity(
+        finding.sectionKey,
+        buildEvidenceByCitation(evidence, evidenceRecordIndex),
+      );
+
+      return {
+        ...finding,
+        claimType: getDefaultClaimType(finding.sectionKey),
+        evidence,
+        evidenceMode: specificity.evidenceMode,
+        inferenceLabel: specificity.inferenceLabel,
+        verificationNotes: [finding.verificationNotes ?? '', ...specificity.notes].filter(Boolean).join(' '),
+        gaps: finding.gaps ?? [],
+        contradictions: finding.contradictions ?? [],
+      };
+    })
     .filter((finding) => finding.evidence.length > 0);
 }
 
@@ -96,8 +116,11 @@ export async function runVerificationNode(state: ResearchGraphState) {
       currentStage: state.currentStage,
       findings: findings.map((finding) => ({
         sectionKey: finding.sectionKey,
+        claimType: finding.claimType,
         claim: finding.claim,
         evidence: finding.evidenceJson,
+        evidenceMode: finding.evidenceMode,
+        inferenceLabel: finding.inferenceLabel,
         confidence: finding.confidence,
         status: finding.status as ResearchFinding['status'],
         verificationNotes: finding.verificationNotes,
@@ -112,6 +135,7 @@ export async function runVerificationNode(state: ResearchGraphState) {
 
   const synthesisEvidence = state.evidenceRecords.filter(isEvidenceUsedInSynthesis);
   const evidenceIndex = buildEvidenceIndex(synthesisEvidence);
+  const evidenceRecordIndex = buildEvidenceRecordIndex(synthesisEvidence);
   const ruleSourceIndex = buildEvidenceRuleSourceIndex(synthesisEvidence);
   const evidenceSummary = synthesisEvidence
     .map((record) =>
@@ -132,7 +156,10 @@ export async function runVerificationNode(state: ResearchGraphState) {
       const evidenceIds = finding.evidence.map((citation) => citation.evidenceId).join(', ');
       return [
         `Section: ${finding.sectionKey}`,
+        `Claim type: ${finding.claimType}`,
         `Claim: ${finding.claim}`,
+        `Evidence mode: ${finding.evidenceMode}`,
+        `Inference label: ${finding.inferenceLabel}`,
         `Confidence: ${finding.confidence}`,
         `Evidence IDs: ${evidenceIds}`,
         `Notes: ${finding.verificationNotes || 'n/a'}`,
@@ -152,6 +179,8 @@ export async function runVerificationNode(state: ResearchGraphState) {
       '- claims should remain verified only if evidence is sufficiently strong',
       '- competitorMatrix rows must stay close to the cited evidence and should be sparse if evidence is thin',
       '- do not invent pricing, integrations, or positioning details that are not grounded in the evidence',
+      '- downgrade broad AI market evidence to inferred unless it directly supports the claim about meeting assistants, buyer workflow, or the product category',
+      '- competitor and pricing claims require vendor-primary evidence to remain direct',
       `Evidence ledger:\n${evidenceSummary || 'No evidence available.'}`,
       `Draft claims:\n${draftFindingsSummary || 'No draft claims available.'}`,
       'For every finding object, always include status, verificationNotes, gaps, and contradictions.',
@@ -159,28 +188,42 @@ export async function runVerificationNode(state: ResearchGraphState) {
     ].join('\n\n'),
   });
 
-  const findings = sanitizeFindings(verified.findings, evidenceIndex)
+  const findings = sanitizeFindings(verified.findings, evidenceIndex, evidenceRecordIndex)
     .filter((finding) => !getSectionPolicy(finding.sectionKey).derivedOnly)
     .map((finding) => {
-    const assessment = getEvidenceRuleAssessment(finding.evidence, ruleSourceIndex);
-    const failed = !assessment.passes;
+      const assessment = getEvidenceRuleAssessment(finding.evidence, ruleSourceIndex);
+      const failed = !assessment.passes;
+      const specificityFailed = finding.inferenceLabel === 'speculative';
+      const inferredPenalty = finding.inferenceLabel === 'inferred';
 
-    return {
-      ...finding,
-      confidence: failed ? 'low' : finding.confidence,
-      status: failed ? 'needs-review' : finding.status,
-      verificationNotes: failed
-        ? [finding.verificationNotes, 'Evidence rule failed: requires one strong primary/research source or two independent medium-quality sources.']
-            .filter(Boolean)
-            .join(' ')
-        : finding.verificationNotes,
-      gaps: failed
-        ? [
-            ...finding.gaps,
-            'Add one strong official/research source or two independent medium-quality sources to verify this claim.',
-          ]
-        : finding.gaps,
-    };
+      return {
+        ...finding,
+        confidence:
+          failed || specificityFailed
+            ? 'low'
+            : inferredPenalty && finding.confidence === 'high'
+              ? 'medium'
+              : finding.confidence,
+        status: failed || specificityFailed ? 'needs-review' : finding.status,
+        verificationNotes: failed
+          ? [
+              finding.verificationNotes,
+              'Evidence rule failed: requires one strong primary/research source or two independent medium-quality sources.',
+            ]
+              .filter(Boolean)
+              .join(' ')
+          : finding.verificationNotes,
+        gaps:
+          failed || specificityFailed
+            ? [
+                ...finding.gaps,
+                ...(specificityFailed
+                  ? ['Evidence remains speculative for this section and needs more section-specific support.']
+                  : []),
+                'Add one strong official/research source or two independent medium-quality sources to verify this claim.',
+              ]
+            : finding.gaps,
+      };
     });
 
   await replaceResearchFindings(state.runId, findings);

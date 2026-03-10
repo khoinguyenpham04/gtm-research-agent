@@ -13,9 +13,11 @@ interface SectionPolicy {
   minEvidence: number;
   minVerifiedFindings: number;
   minStrongEvidence: number;
+  minVendorPrimaryEvidence: number;
   maxWeakEvidence: number;
   allowedSourceTypes: Array<ResearchEvidence['sourceType']>;
   allowedCategories: string[];
+  allowedEvidenceModes: string[];
   derivedOnly?: boolean;
   recommendationDependencies?: SectionKey[];
 }
@@ -34,57 +36,71 @@ const sectionPolicyByKey: Record<SectionKey, SectionPolicy> = {
     minEvidence: 2,
     minVerifiedFindings: 1,
     minStrongEvidence: 1,
+    minVendorPrimaryEvidence: 0,
     maxWeakEvidence: 1,
     allowedSourceTypes: ['web', 'document'],
     allowedCategories: ['official', 'research', 'media'],
+    allowedEvidenceModes: ['market-adjacent', 'product-specific', 'independent-validation', 'document-internal'],
   },
   'icp-and-buyer': {
     minEvidence: 2,
     minVerifiedFindings: 1,
     minStrongEvidence: 1,
+    minVendorPrimaryEvidence: 0,
     maxWeakEvidence: 1,
     allowedSourceTypes: ['web', 'document'],
     allowedCategories: ['official', 'research', 'media'],
+    allowedEvidenceModes: ['market-adjacent', 'product-specific', 'independent-validation', 'document-internal'],
   },
   'competitor-landscape': {
     minEvidence: 2,
     minVerifiedFindings: 1,
     minStrongEvidence: 0,
+    minVendorPrimaryEvidence: 1,
     maxWeakEvidence: 2,
     allowedSourceTypes: ['web', 'document'],
     allowedCategories: ['vendor', 'media', 'research'],
+    allowedEvidenceModes: ['vendor-primary', 'independent-validation', 'document-internal'],
   },
   'pricing-and-packaging': {
     minEvidence: 2,
     minVerifiedFindings: 1,
     minStrongEvidence: 0,
+    minVendorPrimaryEvidence: 1,
     maxWeakEvidence: 1,
     allowedSourceTypes: ['web', 'document'],
     allowedCategories: ['vendor', 'media', 'research'],
+    allowedEvidenceModes: ['vendor-primary', 'independent-validation', 'document-internal'],
   },
   'gtm-motion': {
     minEvidence: 2,
     minVerifiedFindings: 1,
     minStrongEvidence: 1,
+    minVendorPrimaryEvidence: 0,
     maxWeakEvidence: 1,
     allowedSourceTypes: ['web', 'document'],
     allowedCategories: ['official', 'research', 'media'],
+    allowedEvidenceModes: ['independent-validation', 'document-internal'],
   },
   'risks-and-unknowns': {
     minEvidence: 1,
     minVerifiedFindings: 1,
     minStrongEvidence: 1,
+    minVendorPrimaryEvidence: 0,
     maxWeakEvidence: 1,
     allowedSourceTypes: ['web', 'document'],
     allowedCategories: ['official', 'research', 'media'],
+    allowedEvidenceModes: ['independent-validation', 'document-internal'],
   },
   recommendation: {
     minEvidence: 0,
     minVerifiedFindings: 2,
     minStrongEvidence: 0,
+    minVendorPrimaryEvidence: 0,
     maxWeakEvidence: 0,
     allowedSourceTypes: [],
     allowedCategories: [],
+    allowedEvidenceModes: [],
     derivedOnly: true,
     recommendationDependencies: [
       'market-landscape',
@@ -116,6 +132,14 @@ function getEvidenceStrength(record: ResearchEvidence) {
       : 0;
 }
 
+function getEvidenceMode(record: ResearchEvidence) {
+  return typeof record.metadataJson.evidenceMode === 'string'
+    ? record.metadataJson.evidenceMode
+    : record.sourceType === 'document'
+      ? 'document-internal'
+      : 'market-adjacent';
+}
+
 function getEvidenceSection(record: ResearchEvidence) {
   if (record.sectionKey) {
     return record.sectionKey;
@@ -141,6 +165,10 @@ export function evidenceMatchesSectionPolicy(sectionKey: SectionKey, record: Res
 
   const category = getEvidenceCategory(record);
   if (!policy.allowedCategories.includes(category)) {
+    return false;
+  }
+
+  if (!policy.allowedEvidenceModes.includes(getEvidenceMode(record))) {
     return false;
   }
 
@@ -185,6 +213,9 @@ export function assessSectionStatus(
   const selectedEvidence = selectEvidenceForSection(sectionKey, evidenceRecords);
   const strongEvidenceCount = selectedEvidence.filter((record) => getEvidenceStrength(record) >= 0.8).length;
   const weakEvidenceCount = selectedEvidence.filter((record) => getEvidenceStrength(record) < 0.58).length;
+  const vendorPrimaryCount = selectedEvidence.filter(
+    (record) => getEvidenceMode(record) === 'vendor-primary',
+  ).length;
   const verifiedFindings = findings.filter(
     (finding) => finding.sectionKey === sectionKey && finding.status === 'verified',
   );
@@ -195,6 +226,10 @@ export function assessSectionStatus(
 
   if (strongEvidenceCount < policy.minStrongEvidence) {
     notes.push(`Section requires at least ${policy.minStrongEvidence} strong evidence record${policy.minStrongEvidence === 1 ? '' : 's'}.`);
+  }
+
+  if (vendorPrimaryCount < policy.minVendorPrimaryEvidence) {
+    notes.push(`Section requires at least ${policy.minVendorPrimaryEvidence} vendor-primary evidence record${policy.minVendorPrimaryEvidence === 1 ? '' : 's'}.`);
   }
 
   if (weakEvidenceCount > policy.maxWeakEvidence) {

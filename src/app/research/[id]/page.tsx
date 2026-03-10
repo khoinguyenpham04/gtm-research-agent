@@ -26,8 +26,13 @@ interface Snapshot {
       researchQuestions: string[];
       searchQueries: Array<{
         intent: string;
+        sectionKey: string;
+        subtopic: string;
         query: string;
         sourcePreference: string;
+        claimType: string;
+        evidenceMode: string;
+        vendorTarget: string | null;
       }>;
       sections: Array<{ key: string; title: string; description: string }>;
     } | null;
@@ -53,6 +58,7 @@ interface Snapshot {
   findings: Array<{
     id: string;
     sectionKey: string;
+    claimType: string;
     claim: string;
     evidenceJson: Array<{
       evidenceId: string;
@@ -64,6 +70,8 @@ interface Snapshot {
       documentExternalId?: string | null;
       documentChunkId?: number | null;
     }>;
+    evidenceMode: string;
+    inferenceLabel: string;
     confidence: string;
     status: string;
     verificationNotes: string;
@@ -91,6 +99,9 @@ interface Snapshot {
     sectionKey: string;
     query: string;
     title: string;
+    claimType: string;
+    evidenceMode: string;
+    vendorTarget: string | null;
     rawScore: number;
     fusedScore: number | null;
     selected: boolean;
@@ -487,6 +498,15 @@ export default function ResearchRunDetailPage() {
                           </div>
                           <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-500">
                             {record.sectionKey && <span>section: {record.sectionKey}</span>}
+                            {typeof record.metadataJson.claimType === 'string' && (
+                              <span>claim type: {String(record.metadataJson.claimType)}</span>
+                            )}
+                            {typeof record.metadataJson.evidenceMode === 'string' && (
+                              <span>evidence mode: {String(record.metadataJson.evidenceMode)}</span>
+                            )}
+                            {typeof record.metadataJson.vendorTarget === 'string' && (
+                              <span>vendor: {String(record.metadataJson.vendorTarget)}</span>
+                            )}
                             {typeof record.metadataJson.queryIntent === 'string' && (
                               <span>intent: {String(record.metadataJson.queryIntent)}</span>
                             )}
@@ -540,6 +560,19 @@ export default function ResearchRunDetailPage() {
                               {finding.sectionKey}
                             </p>
                             <div className="flex items-center gap-2">
+                              <Badge variant="outline">{finding.claimType}</Badge>
+                              <Badge variant="outline">{finding.evidenceMode}</Badge>
+                              <Badge
+                                variant={
+                                  finding.inferenceLabel === 'direct'
+                                    ? 'success'
+                                    : finding.inferenceLabel === 'inferred'
+                                      ? 'secondary'
+                                      : 'destructive'
+                                }
+                              >
+                                {finding.inferenceLabel}
+                              </Badge>
                               <Badge variant="secondary">{finding.confidence}</Badge>
                               <Badge variant={finding.status === 'verified' ? 'success' : finding.status === 'needs-review' ? 'destructive' : 'outline'}>
                                 {finding.status}

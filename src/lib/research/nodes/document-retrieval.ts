@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { createSupabaseServerClient } from '@/lib/supabase';
+import { getDefaultClaimType } from '@/lib/research/claim-specificity';
 import {
   appendResearchEvent,
   clearResearchEvidence,
@@ -246,6 +247,9 @@ export async function runDocumentRetrievalNode(state: ResearchGraphState) {
           documentChunkId: match.id,
           title: typeof metadata.file_name === 'string' ? metadata.file_name : `Document chunk ${match.id}`,
           url: typeof metadata.file_url === 'string' ? metadata.file_url : null,
+          claimType: getDefaultClaimType(section.key),
+          evidenceMode: 'document-internal' as const,
+          vendorTarget: null,
           rawScore: score,
           fusedScore: fused.find((entry) => entry.candidate.id === id)?.fusedScore ?? null,
           selected: selectedIds.has(id),
@@ -268,6 +272,9 @@ export async function runDocumentRetrievalNode(state: ResearchGraphState) {
           documentChunkId: match.id,
           title: typeof metadata.file_name === 'string' ? metadata.file_name : `Document chunk ${match.id}`,
           url: typeof metadata.file_url === 'string' ? metadata.file_url : null,
+          claimType: getDefaultClaimType(section.key),
+          evidenceMode: 'document-internal' as const,
+          vendorTarget: null,
           rawScore: score,
           fusedScore: fused.find((entry) => entry.candidate.id === id)?.fusedScore ?? null,
           selected: selectedIds.has(id),
@@ -292,6 +299,9 @@ export async function runDocumentRetrievalNode(state: ResearchGraphState) {
           documentChunkId: match?.id ?? null,
           title: typeof metadata.file_name === 'string' ? metadata.file_name : `Document chunk ${match?.id ?? candidate.id}`,
           url: typeof metadata.file_url === 'string' ? metadata.file_url : null,
+          claimType: getDefaultClaimType(section.key),
+          evidenceMode: 'document-internal' as const,
+          vendorTarget: null,
           rawScore: candidate.score,
           fusedScore,
           selected: true,
@@ -332,6 +342,8 @@ export async function runDocumentRetrievalNode(state: ResearchGraphState) {
           lexicalRankScore: 'rank_score' in match ? Number((match.rank_score ?? 0).toFixed(4)) : null,
           qualityScore: 0.84,
           sourceCategory: 'research',
+          claimType: getDefaultClaimType(section.key),
+          evidenceMode: 'document-internal',
           usedInSynthesis: true,
           fusedScore,
         },

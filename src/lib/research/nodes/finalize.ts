@@ -69,6 +69,9 @@ function buildSectionMarkdown(sectionKey: ResearchFinding['sectionKey'], finding
     lines.push('### Verified claims');
     for (const finding of verified) {
       lines.push(`- ${finding.claim}`);
+      lines.push(
+        `  Type: ${finding.claimType} | Evidence mode: ${finding.evidenceMode} | Inference: ${finding.inferenceLabel}`,
+      );
       if (finding.verificationNotes) {
         lines.push(`  Note: ${finding.verificationNotes}`);
       }
@@ -83,6 +86,9 @@ function buildSectionMarkdown(sectionKey: ResearchFinding['sectionKey'], finding
     lines.push('', '### Needs review');
     for (const finding of needsReview) {
       lines.push(`- ${finding.claim}`);
+      lines.push(
+        `  Type: ${finding.claimType} | Evidence mode: ${finding.evidenceMode} | Inference: ${finding.inferenceLabel}`,
+      );
       if (finding.verificationNotes) {
         lines.push(`  Note: ${finding.verificationNotes}`);
       }
@@ -105,7 +111,10 @@ function buildSectionMarkdown(sectionKey: ResearchFinding['sectionKey'], finding
 function buildRecommendationSection(findings: ResearchFinding[]) {
   const dependencies = getSectionPolicy('recommendation').recommendationDependencies ?? [];
   const upstreamClaims = findings.filter(
-    (finding) => finding.status === 'verified' && dependencies.includes(finding.sectionKey),
+    (finding) =>
+      finding.status === 'verified' &&
+      finding.inferenceLabel !== 'speculative' &&
+      dependencies.includes(finding.sectionKey),
   );
 
   if (upstreamClaims.length < 2) {
@@ -120,6 +129,7 @@ function buildRecommendationSection(findings: ResearchFinding[]) {
   const lines = [
     '### Derived recommendation',
     `- Target the segment suggested by the strongest verified buyer and market evidence.`,
+    `- Treat inferred claims as directional and direct claims as the operating baseline.`,
     `- Use the GTM motion and risk findings below as operating constraints rather than assumptions.`,
     `- Avoid pricing or competitor differentiation claims that remain in needs-review state.`,
     '',

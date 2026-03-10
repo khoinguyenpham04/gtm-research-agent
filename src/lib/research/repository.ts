@@ -57,8 +57,11 @@ interface ResearchSourceRow {
 interface ResearchFindingRow {
   id: string;
   section_key: string;
+  claim_type: ResearchFinding['claimType'];
   claim: string;
   evidence_json: Citation[];
+  evidence_mode: ResearchFinding['evidenceMode'];
+  inference_label: ResearchFinding['inferenceLabel'];
   confidence: ResearchFinding['confidence'];
   status: string;
   verification_notes: string | null;
@@ -160,6 +163,9 @@ interface InsertRetrievalCandidateInput {
   documentChunkId?: number | null;
   title: string;
   url: string | null;
+  claimType: RetrievalCandidate['claimType'];
+  evidenceMode: RetrievalCandidate['evidenceMode'];
+  vendorTarget?: RetrievalCandidate['vendorTarget'];
   rawScore: number;
   fusedScore?: number | null;
   rerankScore?: number | null;
@@ -605,7 +611,12 @@ export async function saveResearchRetrievalCandidates(runId: string, candidates:
         fused_score: candidate.fusedScore ?? null,
         rerank_score: candidate.rerankScore ?? null,
         selected: candidate.selected ?? false,
-        metadata_json: candidate.metadataJson,
+        metadata_json: {
+          ...candidate.metadataJson,
+          claimType: candidate.claimType,
+          evidenceMode: candidate.evidenceMode,
+          vendorTarget: candidate.vendorTarget ?? null,
+        },
         created_at: getNowIso(),
       })),
     )
@@ -627,6 +638,16 @@ export async function saveResearchRetrievalCandidates(runId: string, candidates:
     url: row.url,
     documentExternalId: row.document_external_id,
     documentChunkId: row.document_chunk_id,
+    claimType:
+      typeof row.metadata_json.claimType === 'string'
+        ? (row.metadata_json.claimType as RetrievalCandidate['claimType'])
+        : 'buyer-pain',
+    evidenceMode:
+      typeof row.metadata_json.evidenceMode === 'string'
+        ? (row.metadata_json.evidenceMode as RetrievalCandidate['evidenceMode'])
+        : 'market-adjacent',
+    vendorTarget:
+      typeof row.metadata_json.vendorTarget === 'string' ? row.metadata_json.vendorTarget : null,
     rawScore: row.raw_score,
     fusedScore: row.fused_score,
     rerankScore: row.rerank_score,
@@ -660,6 +681,16 @@ export async function listResearchRetrievalCandidates(runId: string) {
     url: row.url,
     documentExternalId: row.document_external_id,
     documentChunkId: row.document_chunk_id,
+    claimType:
+      typeof row.metadata_json.claimType === 'string'
+        ? (row.metadata_json.claimType as RetrievalCandidate['claimType'])
+        : 'buyer-pain',
+    evidenceMode:
+      typeof row.metadata_json.evidenceMode === 'string'
+        ? (row.metadata_json.evidenceMode as RetrievalCandidate['evidenceMode'])
+        : 'market-adjacent',
+    vendorTarget:
+      typeof row.metadata_json.vendorTarget === 'string' ? row.metadata_json.vendorTarget : null,
     rawScore: row.raw_score,
     fusedScore: row.fused_score,
     rerankScore: row.rerank_score,
@@ -713,8 +744,11 @@ export async function replaceResearchFindings(runId: string, findings: ResearchF
     findings.map((finding) => ({
       run_id: runId,
       section_key: finding.sectionKey,
+      claim_type: finding.claimType,
       claim: finding.claim,
       evidence_json: finding.evidence,
+      evidence_mode: finding.evidenceMode,
+      inference_label: finding.inferenceLabel,
       confidence: finding.confidence,
       status: finding.status,
       verification_notes: finding.verificationNotes,
@@ -745,8 +779,11 @@ export async function listResearchFindings(runId: string) {
   return (data ?? []).map((row) => ({
     id: row.id,
     sectionKey: row.section_key,
+    claimType: row.claim_type,
     claim: row.claim,
     evidenceJson: row.evidence_json ?? [],
+    evidenceMode: row.evidence_mode,
+    inferenceLabel: row.inference_label,
     confidence: row.confidence,
     status: row.status,
     verificationNotes: row.verification_notes ?? '',

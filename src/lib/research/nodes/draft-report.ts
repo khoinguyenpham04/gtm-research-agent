@@ -1,4 +1,5 @@
 import { generateStructuredOutput } from '@/lib/research/ai';
+import { buildEvidenceByCitation, getDefaultClaimType, inferFindingSpecificity } from '@/lib/research/claim-specificity';
 import {
   appendResearchEvent,
   hasStageCompleted,
@@ -35,17 +36,36 @@ function buildEvidenceIndex(evidenceRecords: ResearchEvidence[]) {
   );
 }
 
-function sanitizeFindings(findings: ResearchFinding[], evidenceIndex: Map<string, Citation>) {
+function buildEvidenceRecordIndex(evidenceRecords: ResearchEvidence[]) {
+  return new Map(evidenceRecords.map((record) => [record.id, record]));
+}
+
+function sanitizeFindings(
+  findings: ResearchFinding[],
+  evidenceIndex: Map<string, Citation>,
+  evidenceRecordIndex: Map<string, ResearchEvidence>,
+) {
   return findings
-    .map((finding) => ({
-      ...finding,
-      evidence: finding.evidence
+    .map((finding) => {
+      const evidence = finding.evidence
         .map((citation) => evidenceIndex.get(citation.evidenceId))
-        .filter((citation): citation is Citation => Boolean(citation)),
-      verificationNotes: finding.verificationNotes ?? '',
-      gaps: finding.gaps ?? [],
-      contradictions: finding.contradictions ?? [],
-    }))
+        .filter((citation): citation is Citation => Boolean(citation));
+      const specificity = inferFindingSpecificity(
+        finding.sectionKey,
+        buildEvidenceByCitation(evidence, evidenceRecordIndex),
+      );
+
+      return {
+        ...finding,
+        claimType: getDefaultClaimType(finding.sectionKey),
+        evidence,
+        evidenceMode: specificity.evidenceMode,
+        inferenceLabel: specificity.inferenceLabel,
+        verificationNotes: [finding.verificationNotes ?? '', ...specificity.notes].filter(Boolean).join(' '),
+        gaps: finding.gaps ?? [],
+        contradictions: finding.contradictions ?? [],
+      };
+    })
     .filter((finding) => finding.evidence.length > 0);
 }
 
@@ -72,8 +92,11 @@ export async function runDraftReportNode(state: ResearchGraphState) {
       currentStage: state.currentStage,
       findings: findings.map((finding) => ({
         sectionKey: finding.sectionKey,
+        claimType: finding.claimType,
         claim: finding.claim,
         evidence: finding.evidenceJson,
+        evidenceMode: finding.evidenceMode,
+        inferenceLabel: finding.inferenceLabel,
         confidence: finding.confidence,
         status: finding.status as ResearchFinding['status'],
         verificationNotes: finding.verificationNotes,
@@ -88,6 +111,7 @@ export async function runDraftReportNode(state: ResearchGraphState) {
 
   const synthesisEvidence = state.evidenceRecords.filter(isEvidenceUsedInSynthesis);
   const evidenceIndex = buildEvidenceIndex(synthesisEvidence);
+  const evidenceRecordIndex = buildEvidenceRecordIndex(synthesisEvidence);
   const evidenceSummary = finalReportSectionKeyValues
     .filter((sectionKey) => !getSectionPolicy(sectionKey).derivedOnly)
     .map((sectionKey) => {
@@ -101,6 +125,7 @@ export async function runDraftReportNode(state: ResearchGraphState) {
                 [
                   `Evidence ID: ${record.id}`,
                   `Source type: ${record.sourceType}`,
+                  `Evidence mode: ${record.metadataJson.evidenceMode ?? (record.sourceType === 'document' ? 'document-internal' : 'market-adjacent')}`,
                   `Title: ${record.title}`,
                   `URL: ${record.url ?? 'n/a'}`,
                   `Excerpt: ${record.excerpt}`,
@@ -127,6 +152,10 @@ export async function runDraftReportNode(state: ResearchGraphState) {
       '- gtm-motion',
       '- risks-and-unknowns',
       'Do not generate direct recommendation claims from raw evidence. Recommendation will be derived later from verified claims.',
+      'For every finding include:',
+      '- claimType that matches the section',
+      '- evidenceMode based on the strongest cited evidence',
+      '- inferenceLabel set to direct when the evidence states the point directly, inferred when the claim connects adjacent evidence to the target market, and speculative only if the evidence is weak',
       `Research questions:\n- ${state.plan.researchQuestions.join('\n- ')}`,
       `Search intents:\n- ${state.plan.searchQueries.map((query) => `${query.intent}: ${query.query}`).join('\n- ')}`,
       `Section-scoped evidence ledger:\n${evidenceSummary || 'No qualifying evidence records available.'}`,
@@ -140,7 +169,7 @@ export async function runDraftReportNode(state: ResearchGraphState) {
     ].join('\n\n'),
   });
 
-  const findings = sanitizeFindings(draft.findings, evidenceIndex);
+  const findings = sanitizeFindings(draft.findings, evidenceIndex, evidenceRecordIndex);
 
   await replaceResearchFindings(state.runId, findings);
   await appendResearchEvent(state.runId, 'draft_report', 'stage_completed', 'Draft claims saved.', {

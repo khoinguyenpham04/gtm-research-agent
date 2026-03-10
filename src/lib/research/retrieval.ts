@@ -1,5 +1,4 @@
 import type { ResearchGraphState, RetrievalCandidate } from '@/lib/research/schemas';
-import { searchIntentToSectionKey } from '@/lib/research/section-policy';
 
 type SectionKey = RetrievalCandidate['sectionKey'];
 
@@ -9,9 +8,10 @@ interface FuseableCandidate {
 }
 
 export function buildSectionQuery(state: ResearchGraphState, sectionKey: SectionKey) {
-  const intentQuery = state.plan?.searchQueries.find(
-    (query) => searchIntentToSectionKey[query.intent] === sectionKey,
-  )?.query;
+  const intentQuery = state.plan?.searchQueries
+    .filter((query) => query.sectionKey === sectionKey)
+    .map((query) => query.query)
+    .join(' ');
 
   return [state.topic, state.objective ?? '', intentQuery ?? '', sectionKey.replaceAll('-', ' ')]
     .filter(Boolean)
@@ -20,9 +20,10 @@ export function buildSectionQuery(state: ResearchGraphState, sectionKey: Section
 }
 
 export function buildLexicalQuery(state: ResearchGraphState, sectionKey: SectionKey) {
-  const intentQuery = state.plan?.searchQueries.find(
-    (query) => searchIntentToSectionKey[query.intent] === sectionKey,
-  )?.query;
+  const intentQuery = state.plan?.searchQueries
+    .filter((query) => query.sectionKey === sectionKey)
+    .map((query) => query.query)
+    .join(' ');
 
   const terms = [state.topic, intentQuery ?? '', state.objective ?? '']
     .join(' ')

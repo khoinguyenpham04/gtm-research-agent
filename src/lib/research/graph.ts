@@ -20,6 +20,8 @@ import {
 } from '@/lib/research/schemas';
 import {
   coerceSearchIntent,
+  coerceClaimType,
+  coerceEvidenceMode,
   coerceSourceCategory,
   coerceSourceQualityLabel,
   coerceSourceRecency,
@@ -37,6 +39,13 @@ function toWebSource(
     snippet: source.snippet ?? '',
     query: typeof source.metadataJson.query === 'string' ? source.metadataJson.query : 'unknown',
     queryIntent: coerceSearchIntent(source.metadataJson.queryIntent),
+    sectionKey:
+      typeof source.metadataJson.sectionKey === 'string'
+        ? coerceSectionKey(source.metadataJson.sectionKey)
+        : 'icp-and-buyer',
+    claimType: coerceClaimType(source.metadataJson.claimType),
+    evidenceMode: coerceEvidenceMode(source.metadataJson.evidenceMode),
+    vendorTarget: typeof source.metadataJson.vendorTarget === 'string' ? source.metadataJson.vendorTarget : null,
     domain: typeof source.metadataJson.domain === 'string' ? source.metadataJson.domain : null,
     sourceCategory: coerceSourceCategory(source.metadataJson.sourceCategory),
     qualityScore:
@@ -116,8 +125,11 @@ export async function buildInitialGraphState(runId: string, base: {
       })),
     findings: findings.map((finding) => ({
       sectionKey: coerceSectionKey(finding.sectionKey),
+      claimType: finding.claimType,
       claim: finding.claim,
       evidence: finding.evidenceJson,
+      evidenceMode: finding.evidenceMode,
+      inferenceLabel: finding.inferenceLabel,
       confidence: finding.confidence,
       status: finding.status as ResearchGraphState['findings'][number]['status'],
       verificationNotes: finding.verificationNotes,

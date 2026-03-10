@@ -29,14 +29,24 @@ export const sourceRecencyValues = ['current', 'recent', 'dated', 'historical', 
 export const evidenceSourceTypeValues = ['web', 'document'] as const;
 export const retrievalCandidateSourceTypeValues = ['web', 'document'] as const;
 export const retrieverTypeValues = ['web_search', 'dense', 'lexical', 'fusion'] as const;
-export const searchIntentValues = [
-  'market-size',
-  'adoption',
-  'competitor-features',
-  'pricing',
+export const claimTypeValues = [
+  'market-sizing',
+  'adoption-signal',
   'buyer-pain',
-  'gtm-channels',
+  'competitor-feature',
+  'pricing',
+  'gtm-channel',
+  'risk',
+  'recommendation-input',
 ] as const;
+export const evidenceModeValues = [
+  'market-adjacent',
+  'product-specific',
+  'vendor-primary',
+  'independent-validation',
+  'document-internal',
+] as const;
+export const inferenceLabelValues = ['direct', 'inferred', 'speculative'] as const;
 export const finalReportSectionKeyValues = [
   'market-landscape',
   'icp-and-buyer',
@@ -46,6 +56,18 @@ export const finalReportSectionKeyValues = [
   'risks-and-unknowns',
   'recommendation',
 ] as const;
+export const searchIntentValues = [
+  'market-size',
+  'adoption',
+  'competitor-features',
+  'pricing',
+  'buyer-pain',
+  'gtm-channels',
+] as const;
+export const finalReportSectionKeySchema = z.enum(finalReportSectionKeyValues);
+export const claimTypeSchema = z.enum(claimTypeValues);
+export const evidenceModeSchema = z.enum(evidenceModeValues);
+export const inferenceLabelSchema = z.enum(inferenceLabelValues);
 
 export const createResearchRunInputSchema = z.object({
   topic: z.string().trim().min(3, 'Topic must be at least 3 characters long.'),
@@ -63,13 +85,18 @@ export const searchIntentSchema = z.enum(searchIntentValues);
 
 export const plannedSearchQuerySchema = z.object({
   intent: searchIntentSchema,
+  sectionKey: finalReportSectionKeySchema,
+  subtopic: z.string().trim().min(1),
   query: z.string().trim().min(1),
   sourcePreference: z.enum(['primary', 'mixed', 'commercial']),
+  claimType: claimTypeSchema,
+  evidenceMode: evidenceModeSchema,
+  vendorTarget: z.string().trim().min(1).nullable(),
 });
 
 export const researchPlanSchema = z.object({
   researchQuestions: z.array(z.string().trim().min(1)).min(3).max(5),
-  searchQueries: z.array(plannedSearchQuerySchema).length(6),
+  searchQueries: z.array(plannedSearchQuerySchema).min(6).max(14),
   sections: z.array(plannedSectionSchema).length(4),
 });
 
@@ -79,6 +106,10 @@ export const normalizedWebSourceSchema = z.object({
   snippet: z.string().trim().min(1),
   query: z.string().trim().min(1),
   queryIntent: searchIntentSchema,
+  sectionKey: finalReportSectionKeySchema,
+  claimType: claimTypeSchema,
+  evidenceMode: evidenceModeSchema,
+  vendorTarget: z.string().trim().min(1).nullable(),
   domain: z.string().trim().nullable(),
 });
 
@@ -99,8 +130,6 @@ export const linkedDocumentSchema = z.object({
   documentExternalId: z.string(),
   fileName: z.string().nullable(),
 });
-
-export const finalReportSectionKeySchema = z.enum(finalReportSectionKeyValues);
 
 export const documentContextSchema = z.object({
   evidenceId: z.string(),
@@ -148,6 +177,9 @@ export const retrievalCandidateSchema = z.object({
   url: z.string().trim().nullable(),
   documentExternalId: z.string().nullable(),
   documentChunkId: z.number().int().nullable(),
+  claimType: claimTypeSchema,
+  evidenceMode: evidenceModeSchema,
+  vendorTarget: z.string().trim().min(1).nullable(),
   rawScore: z.number(),
   fusedScore: z.number().nullable(),
   rerankScore: z.number().nullable(),
@@ -158,8 +190,11 @@ export const retrievalCandidateSchema = z.object({
 
 export const researchFindingSchema = z.object({
   sectionKey: finalReportSectionKeySchema,
+  claimType: claimTypeSchema,
   claim: z.string().trim().min(1),
   evidence: z.array(citationSchema).min(1),
+  evidenceMode: evidenceModeSchema,
+  inferenceLabel: inferenceLabelSchema,
   confidence: z.enum(confidenceValues),
   status: z.enum(findingStatusValues),
   verificationNotes: z.string().trim(),
@@ -234,6 +269,9 @@ export type SearchIntent = z.infer<typeof searchIntentSchema>;
 export type PlannedSearchQuery = z.infer<typeof plannedSearchQuerySchema>;
 export type NormalizedWebSource = z.infer<typeof normalizedWebSourceSchema>;
 export type ScoredSource = z.infer<typeof scoredSourceSchema>;
+export type ClaimType = z.infer<typeof claimTypeSchema>;
+export type EvidenceMode = z.infer<typeof evidenceModeSchema>;
+export type InferenceLabel = z.infer<typeof inferenceLabelSchema>;
 export type SectionStatus = (typeof sectionStatusValues)[number];
 export type LinkedDocument = z.infer<typeof linkedDocumentSchema>;
 export type DocumentContext = z.infer<typeof documentContextSchema>;
@@ -274,8 +312,11 @@ export interface ResearchRunSnapshot {
   findings: Array<{
     id: string;
     sectionKey: string;
+    claimType: ClaimType;
     claim: string;
     evidenceJson: Citation[];
+    evidenceMode: EvidenceMode;
+    inferenceLabel: InferenceLabel;
     confidence: ResearchFinding['confidence'];
     status: string;
     verificationNotes: string;

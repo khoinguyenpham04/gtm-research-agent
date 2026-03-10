@@ -1,5 +1,8 @@
 import {
+  coerceClaimType,
+  coerceEvidenceMode,
   coerceSearchIntent,
+  coerceSectionKey,
   coerceSourceCategory,
   coerceSourceQualityLabel,
   coerceSourceRecency,
@@ -47,6 +50,11 @@ export function createWebSearchNode(searchService: WebSearchService) {
           snippet: source.snippet ?? '',
           query: typeof source.metadataJson.query === 'string' ? source.metadataJson.query : 'unknown',
           queryIntent: coerceSearchIntent(source.metadataJson.queryIntent),
+          sectionKey: coerceSectionKey(source.metadataJson.sectionKey),
+          claimType: coerceClaimType(source.metadataJson.claimType),
+          evidenceMode: coerceEvidenceMode(source.metadataJson.evidenceMode),
+          vendorTarget:
+            typeof source.metadataJson.vendorTarget === 'string' ? source.metadataJson.vendorTarget : null,
           domain: typeof source.metadataJson.domain === 'string' ? source.metadataJson.domain : null,
           sourceCategory: coerceSourceCategory(source.metadataJson.sourceCategory),
           qualityScore:
@@ -102,6 +110,10 @@ export function createWebSearchNode(searchService: WebSearchService) {
         metadataJson: {
           query: source.query,
           queryIntent: source.queryIntent,
+          sectionKey: source.sectionKey,
+          claimType: source.claimType,
+          evidenceMode: source.evidenceMode,
+          vendorTarget: source.vendorTarget,
           domain: source.domain,
           sourceCategory: source.sourceCategory,
           qualityScore: source.qualityScore,
@@ -119,7 +131,10 @@ export function createWebSearchNode(searchService: WebSearchService) {
       persistedSources.map((source) => ({
         sourceType: 'web',
         sourceId: source.id,
-        sectionKey: searchIntentToSectionKey[source.metadataJson.queryIntent as keyof typeof searchIntentToSectionKey] ?? null,
+        sectionKey:
+          typeof source.metadataJson.sectionKey === 'string'
+            ? coerceSectionKey(source.metadataJson.sectionKey)
+            : searchIntentToSectionKey[source.metadataJson.queryIntent as keyof typeof searchIntentToSectionKey] ?? null,
         title: source.title,
         url: source.url,
         excerpt: source.snippet ?? '',
@@ -132,15 +147,21 @@ export function createWebSearchNode(searchService: WebSearchService) {
         sourceType: 'web',
         retrieverType: 'web_search',
         sectionKey:
-          searchIntentToSectionKey[
-            (typeof source.metadataJson.queryIntent === 'string'
-              ? source.metadataJson.queryIntent
-              : 'buyer-pain') as keyof typeof searchIntentToSectionKey
-          ],
+          typeof source.metadataJson.sectionKey === 'string'
+            ? coerceSectionKey(source.metadataJson.sectionKey)
+            : searchIntentToSectionKey[
+                (typeof source.metadataJson.queryIntent === 'string'
+                  ? source.metadataJson.queryIntent
+                  : 'buyer-pain') as keyof typeof searchIntentToSectionKey
+              ],
         query: typeof source.metadataJson.query === 'string' ? source.metadataJson.query : 'unknown',
         sourceId: source.id,
         title: source.title,
         url: source.url,
+        claimType: coerceClaimType(source.metadataJson.claimType),
+        evidenceMode: coerceEvidenceMode(source.metadataJson.evidenceMode),
+        vendorTarget:
+          typeof source.metadataJson.vendorTarget === 'string' ? source.metadataJson.vendorTarget : null,
         rawScore:
           typeof source.metadataJson.qualityScore === 'number' ? source.metadataJson.qualityScore : 0,
         fusedScore:
@@ -184,6 +205,11 @@ export function createWebSearchNode(searchService: WebSearchService) {
         snippet: source.snippet ?? '',
         query: typeof source.metadataJson.query === 'string' ? source.metadataJson.query : 'unknown',
         queryIntent: coerceSearchIntent(source.metadataJson.queryIntent),
+        sectionKey: coerceSectionKey(source.metadataJson.sectionKey),
+        claimType: coerceClaimType(source.metadataJson.claimType),
+        evidenceMode: coerceEvidenceMode(source.metadataJson.evidenceMode),
+        vendorTarget:
+          typeof source.metadataJson.vendorTarget === 'string' ? source.metadataJson.vendorTarget : null,
         domain: typeof source.metadataJson.domain === 'string' ? source.metadataJson.domain : null,
         sourceCategory: coerceSourceCategory(source.metadataJson.sourceCategory),
         qualityScore:
