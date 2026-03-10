@@ -16,6 +16,7 @@ import {
   type ResearchGraphState,
 } from '@/lib/research/schemas';
 import {
+  coerceSearchIntent,
   coerceSourceCategory,
   coerceSourceQualityLabel,
   coerceSourceRecency,
@@ -32,6 +33,7 @@ function toWebSource(
     url: source.url,
     snippet: source.snippet ?? '',
     query: typeof source.metadataJson.query === 'string' ? source.metadataJson.query : 'unknown',
+    queryIntent: coerceSearchIntent(source.metadataJson.queryIntent),
     domain: typeof source.metadataJson.domain === 'string' ? source.metadataJson.domain : null,
     sourceCategory: coerceSourceCategory(source.metadataJson.sourceCategory),
     qualityScore:

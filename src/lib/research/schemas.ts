@@ -25,6 +25,14 @@ export const findingStatusValues = ['draft', 'verified', 'needs-review'] as cons
 export const sourceCategoryValues = ['official', 'research', 'vendor', 'media', 'blog', 'community'] as const;
 export const sourceQualityLabelValues = ['high', 'medium', 'low'] as const;
 export const sourceRecencyValues = ['current', 'recent', 'dated', 'historical', 'unknown'] as const;
+export const searchIntentValues = [
+  'market-size',
+  'adoption',
+  'competitor-features',
+  'pricing',
+  'buyer-pain',
+  'gtm-channels',
+] as const;
 export const finalReportSectionKeyValues = [
   'market-landscape',
   'icp-and-buyer',
@@ -47,9 +55,17 @@ export const plannedSectionSchema = z.object({
   description: z.string().trim().min(1),
 });
 
+export const searchIntentSchema = z.enum(searchIntentValues);
+
+export const plannedSearchQuerySchema = z.object({
+  intent: searchIntentSchema,
+  query: z.string().trim().min(1),
+  sourcePreference: z.enum(['primary', 'mixed', 'commercial']),
+});
+
 export const researchPlanSchema = z.object({
   researchQuestions: z.array(z.string().trim().min(1)).min(3).max(5),
-  searchQueries: z.array(z.string().trim().min(1)).min(3).max(5),
+  searchQueries: z.array(plannedSearchQuerySchema).length(6),
   sections: z.array(plannedSectionSchema).length(4),
 });
 
@@ -58,6 +74,7 @@ export const normalizedWebSourceSchema = z.object({
   url: z.string().trim().url().nullable(),
   snippet: z.string().trim().min(1),
   query: z.string().trim().min(1),
+  queryIntent: searchIntentSchema,
   domain: z.string().trim().nullable(),
 });
 
@@ -122,6 +139,16 @@ export const finalReportSectionSchema = z.object({
   citations: z.array(z.string()),
 });
 
+export const competitorMatrixEntrySchema = z.object({
+  vendor: z.string().trim().min(1),
+  icp: z.string().trim().min(1),
+  coreFeatures: z.array(z.string().trim().min(1)).min(1),
+  crmIntegrations: z.array(z.string().trim().min(1)),
+  pricingEvidence: z.string().trim().min(1),
+  targetSegment: z.string().trim().min(1),
+  confidence: z.enum(confidenceValues),
+});
+
 export const verifiedFindingSchema = researchFindingSchema.extend({
   sectionKey: finalReportSectionKeySchema,
   status: z.enum(['verified', 'needs-review']),
@@ -131,6 +158,7 @@ export const verifiedReportSchema = z.object({
   executiveSummary: z.string().trim().min(1),
   keyTakeaways: z.array(z.string().trim().min(1)).min(3).max(5),
   findings: z.array(verifiedFindingSchema).min(4),
+  competitorMatrix: z.array(competitorMatrixEntrySchema).min(2).max(6),
   sections: z.object({
     marketLandscape: finalReportSectionSchema,
     icpAndBuyer: finalReportSectionSchema,
@@ -162,6 +190,8 @@ export type CreateResearchRunInput = z.infer<typeof createResearchRunInputSchema
 export type ResearchRunStatus = (typeof researchRunStatusValues)[number];
 export type ResearchStage = (typeof researchStageValues)[number];
 export type ResearchPlan = z.infer<typeof researchPlanSchema>;
+export type SearchIntent = z.infer<typeof searchIntentSchema>;
+export type PlannedSearchQuery = z.infer<typeof plannedSearchQuerySchema>;
 export type NormalizedWebSource = z.infer<typeof normalizedWebSourceSchema>;
 export type ScoredSource = z.infer<typeof scoredSourceSchema>;
 export type LinkedDocument = z.infer<typeof linkedDocumentSchema>;
@@ -171,6 +201,7 @@ export type ResearchFinding = z.infer<typeof researchFindingSchema>;
 export type DraftReportSection = z.infer<typeof draftReportSectionSchema>;
 export type DraftReport = z.infer<typeof draftReportSchema>;
 export type VerifiedFinding = z.infer<typeof verifiedFindingSchema>;
+export type CompetitorMatrixEntry = z.infer<typeof competitorMatrixEntrySchema>;
 export type VerifiedReport = z.infer<typeof verifiedReportSchema>;
 export type ResearchGraphState = z.infer<typeof researchGraphStateSchema>;
 

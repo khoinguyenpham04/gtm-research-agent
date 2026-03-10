@@ -1,7 +1,9 @@
 import {
+  coerceSearchIntent,
   coerceSourceCategory,
   coerceSourceQualityLabel,
   coerceSourceRecency,
+  shouldUseSourceInSynthesis,
 } from '@/lib/research/source-scoring';
 import {
   appendResearchEvent,
@@ -33,7 +35,20 @@ export function createWebSearchNode(searchService: WebSearchService) {
           url: source.url,
           snippet: source.snippet ?? '',
           query: typeof source.metadataJson.query === 'string' ? source.metadataJson.query : 'unknown',
+          queryIntent: coerceSearchIntent(source.metadataJson.queryIntent),
           domain: typeof source.metadataJson.domain === 'string' ? source.metadataJson.domain : null,
+          sourceCategory: coerceSourceCategory(source.metadataJson.sourceCategory),
+          qualityScore:
+            typeof source.metadataJson.qualityScore === 'number' ? source.metadataJson.qualityScore : 0,
+          qualityLabel: coerceSourceQualityLabel(source.metadataJson.qualityLabel),
+          recency: coerceSourceRecency(source.metadataJson.recency),
+          publishedYear:
+            typeof source.metadataJson.publishedYear === 'number' ? source.metadataJson.publishedYear : null,
+          rationale:
+            typeof source.metadataJson.rationale === 'string'
+              ? source.metadataJson.rationale
+              : 'Unscored source.',
+          isPrimary: Boolean(source.metadataJson.isPrimary),
         }));
 
       return {
@@ -47,9 +62,17 @@ export function createWebSearchNode(searchService: WebSearchService) {
     await appendResearchEvent(state.runId, 'web_search', 'stage_started', 'Searching the web.');
 
     for (const query of state.plan.searchQueries) {
-      await appendResearchEvent(state.runId, 'web_search', 'query_started', `Searching for "${query}".`, {
-        query,
-      });
+      await appendResearchEvent(
+        state.runId,
+        'web_search',
+        'query_started',
+        `Searching for "${query.query}".`,
+        {
+          query: query.query,
+          intent: query.intent,
+          sourcePreference: query.sourcePreference,
+        },
+      );
     }
 
     await clearResearchSources(state.runId, 'web');
@@ -63,6 +86,7 @@ export function createWebSearchNode(searchService: WebSearchService) {
         snippet: source.snippet,
         metadataJson: {
           query: source.query,
+          queryIntent: source.queryIntent,
           domain: source.domain,
           sourceCategory: source.sourceCategory,
           qualityScore: source.qualityScore,
@@ -71,20 +95,24 @@ export function createWebSearchNode(searchService: WebSearchService) {
           publishedYear: source.publishedYear,
           rationale: source.rationale,
           isPrimary: source.isPrimary,
+          usedInSynthesis: shouldUseSourceInSynthesis(source),
         },
       })),
     );
 
     const highQualityCount = searchResults.filter((source) => source.qualityLabel === 'high').length;
+    const gatedCount = searchResults.filter((source) => shouldUseSourceInSynthesis(source)).length;
 
     await appendResearchEvent(state.runId, 'web_search', 'stage_completed', 'Web search completed.', {
       sourceCount: persistedSources.length,
       highQualityCount,
+      gatedCount,
     });
     console.info(`[research:${state.runId}] stage_complete`, {
       stage: 'web_search',
       sourceCount: persistedSources.length,
       highQualityCount,
+      gatedCount,
     });
 
     return {
@@ -97,6 +125,7 @@ export function createWebSearchNode(searchService: WebSearchService) {
         url: source.url,
         snippet: source.snippet ?? '',
         query: typeof source.metadataJson.query === 'string' ? source.metadataJson.query : 'unknown',
+        queryIntent: coerceSearchIntent(source.metadataJson.queryIntent),
         domain: typeof source.metadataJson.domain === 'string' ? source.metadataJson.domain : null,
         sourceCategory: coerceSourceCategory(source.metadataJson.sourceCategory),
         qualityScore:

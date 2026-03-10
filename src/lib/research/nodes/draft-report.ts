@@ -17,7 +17,14 @@ import {
   type ResearchFinding,
   type ResearchGraphState,
 } from '@/lib/research/schemas';
-import { sortSourcesByQuality } from '@/lib/research/source-scoring';
+import {
+  coerceSearchIntent,
+  coerceSourceCategory,
+  coerceSourceQualityLabel,
+  coerceSourceRecency,
+  gateSourcesForSynthesis,
+  sortSourcesByQuality,
+} from '@/lib/research/source-scoring';
 
 function buildCitationIndex(
   sources: Awaited<ReturnType<typeof listResearchSources>>,
@@ -115,26 +122,37 @@ export async function runDraftReportNode(state: ResearchGraphState) {
   await appendResearchEvent(state.runId, 'draft_report', 'stage_started', 'Drafting findings and report.');
 
   const persistedSources = await listResearchSources(state.runId);
-  const citationIndex = buildCitationIndex(persistedSources);
   const rankedSources = sortSourcesByQuality(
     persistedSources
       .filter((source) => source.sourceType === 'web')
       .map((source) => ({
-        ...source,
+        id: source.id,
+        sourceType: 'web' as const,
+        title: source.title,
+        url: source.url,
+        snippet: source.snippet ?? '',
+        query: typeof source.metadataJson.query === 'string' ? source.metadataJson.query : 'n/a',
+        queryIntent: coerceSearchIntent(source.metadataJson.queryIntent),
+        domain: typeof source.metadataJson.domain === 'string' ? source.metadataJson.domain : null,
         qualityScore: typeof source.metadataJson.qualityScore === 'number' ? source.metadataJson.qualityScore : 0,
-        qualityLabel: typeof source.metadataJson.qualityLabel === 'string' ? source.metadataJson.qualityLabel : 'low',
-        sourceCategory:
-          typeof source.metadataJson.sourceCategory === 'string' ? source.metadataJson.sourceCategory : 'blog',
-        recency: typeof source.metadataJson.recency === 'string' ? source.metadataJson.recency : 'unknown',
+        qualityLabel: coerceSourceQualityLabel(source.metadataJson.qualityLabel),
+        sourceCategory: coerceSourceCategory(source.metadataJson.sourceCategory),
+        recency: coerceSourceRecency(source.metadataJson.recency),
         publishedYear:
           typeof source.metadataJson.publishedYear === 'number' ? source.metadataJson.publishedYear : null,
+        rationale:
+          typeof source.metadataJson.rationale === 'string' ? source.metadataJson.rationale : 'Unscored source.',
+        isPrimary: Boolean(source.metadataJson.isPrimary),
       })),
   );
+  const gatedSources = gateSourcesForSynthesis(rankedSources);
+  const citationIndex = buildCitationIndex(
+    persistedSources.filter((source) => gatedSources.some((candidate) => candidate.id === source.id)),
+  );
 
-  const sourceSummary = rankedSources
+  const sourceSummary = gatedSources
     .slice(0, 12)
     .map((source) => {
-      const query = typeof source.metadataJson.query === 'string' ? source.metadataJson.query : 'n/a';
       return [
         `Source ID: ${source.id}`,
         `Type: ${source.sourceType}`,
@@ -142,9 +160,10 @@ export async function runDraftReportNode(state: ResearchGraphState) {
         `URL: ${source.url ?? 'n/a'}`,
         `Quality: ${source.qualityLabel} (${source.qualityScore})`,
         `Category: ${source.sourceCategory}`,
+        `Intent: ${source.queryIntent}`,
         `Recency: ${source.recency}${source.publishedYear ? ` (${source.publishedYear})` : ''}`,
         `Snippet: ${source.snippet ?? 'n/a'}`,
-        `Query: ${query}`,
+        `Query: ${source.query}`,
       ].join('\n');
     })
     .join('\n\n---\n\n');
@@ -162,10 +181,12 @@ export async function runDraftReportNode(state: ResearchGraphState) {
       `Objective: ${state.objective ?? 'Not provided.'}`,
       `Research questions:\n- ${state.plan.researchQuestions.join('\n- ')}`,
       `Planned sections:\n- ${state.plan.sections.map((section) => `${section.key}: ${section.title} (${section.description})`).join('\n- ')}`,
+      `Planned search intents:\n- ${state.plan.searchQueries.map((query) => `${query.intent}: ${query.query}`).join('\n- ')}`,
       `Linked document context:\n${documentContext || 'No linked documents.'}`,
-      `Available evidence:\n${sourceSummary || 'No external sources were found.'}`,
+      `Gated evidence for synthesis:\n${sourceSummary || 'No qualifying external sources were found.'}`,
       'For every section object, always include a citations array. Use an empty array when a section has no supporting citations.',
       'For every finding object, always include status, verificationNotes, and gaps. Use status "draft", an empty string for verificationNotes when needed, and an empty array for gaps when there are none.',
+      'Use official and research sources first for factual claims. Vendor and blog sources should only support competitor or pricing context when stronger evidence is unavailable.',
       'Return a preliminary report with evidence-backed findings. If evidence is thin, say so, lower confidence, and include explicit gaps.',
     ].join('\n\n'),
   });
@@ -179,11 +200,13 @@ export async function runDraftReportNode(state: ResearchGraphState) {
   await appendResearchEvent(state.runId, 'draft_report', 'stage_completed', 'Draft report saved.', {
     findingCount: findings.length,
     sectionCount: sections.length,
+    gatedSourceCount: gatedSources.length,
   });
   console.info(`[research:${state.runId}] stage_complete`, {
     stage: 'draft_report',
     findingCount: findings.length,
     sectionCount: sections.length,
+    gatedSourceCount: gatedSources.length,
   });
 
   return {

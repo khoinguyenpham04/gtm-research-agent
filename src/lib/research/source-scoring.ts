@@ -1,11 +1,15 @@
 import {
+  searchIntentValues,
   sourceCategoryValues,
   sourceQualityLabelValues,
   sourceRecencyValues,
+  type Citation,
   type ScoredSource,
 } from '@/lib/research/schemas';
 
 const CURRENT_YEAR = new Date().getUTCFullYear();
+const STRONG_PRIMARY_THRESHOLD = 0.82;
+const MEDIUM_QUALITY_THRESHOLD = 0.62;
 
 function extractPublishedYear(input: string) {
   const matches = input.match(/\b20\d{2}\b/g);
@@ -145,6 +149,12 @@ export function coerceSourceCategory(value: unknown): ScoredSource['sourceCatego
     : 'blog';
 }
 
+export function coerceSearchIntent(value: unknown): ScoredSource['queryIntent'] {
+  return typeof value === 'string' && (searchIntentValues as readonly string[]).includes(value)
+    ? (value as ScoredSource['queryIntent'])
+    : 'buyer-pain';
+}
+
 export function coerceSourceQualityLabel(value: unknown): ScoredSource['qualityLabel'] {
   return typeof value === 'string' && (sourceQualityLabelValues as readonly string[]).includes(value)
     ? (value as ScoredSource['qualityLabel'])
@@ -209,4 +219,77 @@ export function sortSourcesByQuality<T extends Pick<ScoredSource, 'qualityScore'
 
     return (right.publishedYear ?? 0) - (left.publishedYear ?? 0);
   });
+}
+
+function isCommercialIntent(intent: ScoredSource['queryIntent']) {
+  return intent === 'competitor-features' || intent === 'pricing';
+}
+
+export function shouldUseSourceInSynthesis(source: Pick<ScoredSource, 'sourceCategory' | 'qualityScore' | 'queryIntent'>) {
+  if (source.sourceCategory === 'official' || source.sourceCategory === 'research') {
+    return source.qualityScore >= 0.74;
+  }
+
+  if (source.sourceCategory === 'media') {
+    return source.qualityScore >= MEDIUM_QUALITY_THRESHOLD;
+  }
+
+  if (source.sourceCategory === 'vendor') {
+    return isCommercialIntent(source.queryIntent) && source.qualityScore >= 0.54;
+  }
+
+  if (source.sourceCategory === 'blog' || source.sourceCategory === 'community') {
+    return isCommercialIntent(source.queryIntent) && source.qualityScore >= 0.5;
+  }
+
+  return false;
+}
+
+export function gateSourcesForSynthesis<T extends ScoredSource>(sources: T[]) {
+  return sortSourcesByQuality(sources).filter((source) => shouldUseSourceInSynthesis(source));
+}
+
+function getDomainKey(source: Pick<ScoredSource, 'domain' | 'url'>) {
+  if (source.domain) {
+    return source.domain.toLowerCase();
+  }
+
+  if (source.url) {
+    try {
+      return new URL(source.url).hostname.toLowerCase();
+    } catch {
+      return source.url.toLowerCase();
+    }
+  }
+
+  return null;
+}
+
+export function getEvidenceRuleAssessment(
+  evidence: Citation[],
+  sourceIndex: Map<string, Pick<ScoredSource, 'sourceCategory' | 'qualityScore' | 'domain' | 'url'>>,
+) {
+  const matchedSources = evidence
+    .map((citation) => sourceIndex.get(citation.sourceId))
+    .filter((source): source is NonNullable<typeof source> => Boolean(source));
+
+  const hasStrongPrimary = matchedSources.some(
+    (source) =>
+      (source.sourceCategory === 'official' || source.sourceCategory === 'research') &&
+      source.qualityScore >= STRONG_PRIMARY_THRESHOLD,
+  );
+
+  const mediumIndependentDomains = new Set(
+    matchedSources
+      .filter((source) => source.qualityScore >= MEDIUM_QUALITY_THRESHOLD)
+      .map((source) => getDomainKey(source))
+      .filter((domain): domain is string => Boolean(domain)),
+  );
+
+  return {
+    matchedSourceCount: matchedSources.length,
+    hasStrongPrimary,
+    independentMediumSourceCount: mediumIndependentDomains.size,
+    passes: hasStrongPrimary || mediumIndependentDomains.size >= 2,
+  };
 }

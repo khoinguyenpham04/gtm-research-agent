@@ -1,8 +1,8 @@
-import type { ScoredSource } from '@/lib/research/schemas';
+import type { PlannedSearchQuery, ScoredSource } from '@/lib/research/schemas';
 import { scoreWebSource } from '@/lib/research/source-scoring';
 
 export interface WebSearchService {
-  searchMany(queries: string[]): Promise<ScoredSource[]>;
+  searchMany(queries: PlannedSearchQuery[]): Promise<ScoredSource[]>;
 }
 
 interface TavilyResult {
@@ -30,7 +30,7 @@ function parseDomain(url: string | undefined) {
 export class TavilySearchService implements WebSearchService {
   constructor(private readonly apiKey = process.env.TAVILY_API_KEY?.trim()) {}
 
-  async searchMany(queries: string[]) {
+  async searchMany(queries: PlannedSearchQuery[]) {
     if (!this.apiKey) {
       throw new Error('Missing TAVILY_API_KEY.');
     }
@@ -50,7 +50,7 @@ export class TavilySearchService implements WebSearchService {
     return Array.from(deduped.values());
   }
 
-  private async searchOne(query: string) {
+  private async searchOne(queryPlan: PlannedSearchQuery) {
     const response = await fetch('https://api.tavily.com/search', {
       method: 'POST',
       headers: {
@@ -58,7 +58,7 @@ export class TavilySearchService implements WebSearchService {
       },
       body: JSON.stringify({
         api_key: this.apiKey,
-        query,
+        query: queryPlan.query,
         topic: 'general',
         search_depth: 'advanced',
         max_results: 5,
@@ -80,12 +80,13 @@ export class TavilySearchService implements WebSearchService {
       .filter((result) => result.url && result.title && result.content)
       .map((result, index) =>
         scoreWebSource({
-          id: `${query}-${index}-${result.url!.trim()}`,
+          id: `${queryPlan.intent}-${index}-${result.url!.trim()}`,
           sourceType: 'web',
           title: result.title!.trim(),
           url: result.url!.trim(),
           snippet: result.content!.trim().slice(0, 500),
-          query,
+          query: queryPlan.query,
+          queryIntent: queryPlan.intent,
           domain: parseDomain(result.url),
         }),
       );

@@ -24,7 +24,11 @@ interface Snapshot {
     currentStage: string;
     planJson: {
       researchQuestions: string[];
-      searchQueries: string[];
+      searchQueries: Array<{
+        intent: string;
+        query: string;
+        sourcePreference: string;
+      }>;
       sections: Array<{ key: string; title: string; description: string }>;
     } | null;
     finalReportMarkdown: string | null;
@@ -400,6 +404,9 @@ export default function ResearchRunDetailPage() {
                             </div>
                           </div>
                           <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-500">
+                            {typeof source.metadataJson.queryIntent === 'string' && (
+                              <span>intent: {String(source.metadataJson.queryIntent)}</span>
+                            )}
                             {typeof source.metadataJson.sourceCategory === 'string' && (
                               <span>category: {String(source.metadataJson.sourceCategory)}</span>
                             )}
@@ -411,6 +418,11 @@ export default function ResearchRunDetailPage() {
                             )}
                             {typeof source.metadataJson.publishedYear === 'number' && (
                               <span>year: {String(source.metadataJson.publishedYear)}</span>
+                            )}
+                            {typeof source.metadataJson.usedInSynthesis === 'boolean' && (
+                              <span>
+                                synthesis: {source.metadataJson.usedInSynthesis ? 'included' : 'excluded'}
+                              </span>
                             )}
                           </div>
                           {source.snippet && (
