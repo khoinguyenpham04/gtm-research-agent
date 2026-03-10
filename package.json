@@ -9,16 +9,26 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@ai-sdk/openai": "^3.0.41",
+    "@langchain/core": "^1.1.31",
+    "@langchain/langgraph": "^1.2.1",
     "@langchain/openai": "^1.2.3",
     "@langchain/textsplitters": "^1.0.1",
+    "@radix-ui/react-scroll-area": "^1.2.10",
     "@supabase/supabase-js": "^2.91.1",
+    "ai": "^6.0.116",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "langchain": "^1.2.13",
+    "lucide-react": "^0.577.0",
     "mammoth": "^1.11.0",
     "next": "16.1.4",
     "openai": "^6.16.0",
     "pdf2json": "^4.0.2",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "tailwind-merge": "^3.5.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

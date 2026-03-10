@@ -50,3 +50,9 @@ export function createSupabaseClients() {
     supabaseStorage: createClient(url, serviceRoleKey ?? publishableKey),
   };
 }
+
+export function createSupabaseServerClient() {
+  const { url, publishableKey, serviceRoleKey } = getSupabaseConfig();
+
+  return createClient(url, serviceRoleKey ?? publishableKey);
+}

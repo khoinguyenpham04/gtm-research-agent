@@ -14,6 +14,7 @@ Set at least these variables in `.env.local`:
 NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-supabase-publishable-key
 OPENAI_API_KEY=your-openai-api-key
+TAVILY_API_KEY=your-tavily-api-key
 ```
 
 For uploads and deletes against Supabase Storage, also set:
