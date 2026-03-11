@@ -18,6 +18,11 @@ import type {
   ResearchGraphState,
 } from '@/lib/research/schemas';
 import { structuredRecommendationSchema, type StructuredRecommendation } from '@/lib/research/schemas';
+import {
+  compactClaimSentence,
+  deriveTopicAudiencePhrase,
+  deriveTopicSearchPhrase,
+} from '@/lib/research/topic-utils';
 
 const sectionDefinitions = [
   { key: 'market-landscape', title: 'Market Landscape' },
@@ -68,7 +73,7 @@ function buildCompetitorMatrixMarkdown(entries: CompetitorMatrixEntry[]) {
 
   const lines = [
     '### Competitor Matrix',
-    '| Vendor | ICP | Core features | CRM integrations | Pricing evidence | Target segment | Confidence |',
+    '| Vendor | ICP | Core features | Integrations / ecosystem | Pricing evidence | Target segment | Confidence |',
     '| --- | --- | --- | --- | --- | --- | --- |',
   ];
 
@@ -129,40 +134,49 @@ function buildSectionMarkdown(sectionKey: ResearchFinding['sectionKey'], finding
   return lines.join('\n');
 }
 
-function buildIcpSummary(findings: ResearchFinding[], competitorMatrix: CompetitorMatrixEntry[]) {
-  const combined = [
-    ...findings.map((finding) => finding.claim.toLowerCase()),
-    ...competitorMatrix.map((entry) => `${entry.icp} ${entry.targetSegment}`.toLowerCase()),
-  ].join(' ');
-
-  if (combined.includes('sales') && (combined.includes('small') || combined.includes('smb'))) {
-    return 'UK SMB sales teams already using cloud CRM and meeting software.';
+function buildIcpSummary(
+  topic: string,
+  objective: string | undefined,
+  findings: ResearchFinding[],
+  competitorMatrix: CompetitorMatrixEntry[],
+) {
+  const directBuyerClaim = findings.find((finding) => finding.claimType === 'buyer-pain')?.claim;
+  if (directBuyerClaim) {
+    return compactClaimSentence(directBuyerClaim);
   }
 
-  if (combined.includes('sales')) {
-    return 'UK sales teams with recurring meeting follow-up and CRM admin work.';
+  const directAdoptionClaim = findings.find((finding) => finding.claimType === 'adoption-signal')?.claim;
+  if (directAdoptionClaim) {
+    return compactClaimSentence(directAdoptionClaim);
   }
 
-  if (combined.includes('small') || combined.includes('smb')) {
-    return 'UK SMB teams with repeat meeting documentation and follow-up workflows.';
+  const audience = deriveTopicAudiencePhrase(topic, objective);
+  if (audience) {
+    return `${audience} appear to be the primary buyer segment for this topic.`;
   }
 
-  return 'UK SMB sales teams with repeat meeting and CRM follow-up workflows.';
+  const matrixAudience = competitorMatrix
+    .map((entry) => entry.icp)
+    .find((value) => !/^target segment not explicit$/i.test(value));
+  if (matrixAudience) {
+    return compactClaimSentence(matrixAudience);
+  }
+
+  return `Primary buyer segment for ${deriveTopicSearchPhrase(topic)} still needs sharper direct evidence.`;
 }
 
 function buildTriggerProblemSummary(findings: ResearchFinding[]) {
-  const combined = findings.map((finding) => finding.claim.toLowerCase()).join(' ');
-
-  if (
-    combined.includes('crm') ||
-    combined.includes('follow-up') ||
-    combined.includes('notes') ||
-    combined.includes('admin')
-  ) {
-    return 'Manual meeting notes, CRM updates, and follow-up admin reduce time spent selling.';
+  const buyerPainClaim = findings.find((finding) => finding.claimType === 'buyer-pain')?.claim;
+  if (buyerPainClaim) {
+    return compactClaimSentence(buyerPainClaim);
   }
 
-  return 'Post-meeting admin and fragmented follow-up slow sales execution and CRM hygiene.';
+  const riskClaim = findings.find((finding) => finding.claimType === 'risk')?.claim;
+  if (riskClaim) {
+    return compactClaimSentence(riskClaim);
+  }
+
+  return 'The primary workflow pain or purchase trigger still needs direct evidence.';
 }
 
 function buildPricingThesis(
@@ -170,7 +184,7 @@ function buildPricingThesis(
   competitorMatrix: CompetitorMatrixEntry[],
 ) {
   if (pricingClaims.length === 0 && competitorMatrix.length === 0) {
-    return 'Use transparent self-serve per-seat pricing before adding enterprise sales assist or custom packaging.';
+    return 'Pricing evidence is still limited; validate whether buyers expect transparent published pricing, installer quotes, or sales-assisted packaging.';
   }
 
   const pricingText = [
@@ -179,10 +193,14 @@ function buildPricingThesis(
   ].join(' ');
 
   if (pricingText.includes('enterprise') || pricingText.includes('contact')) {
-    return 'Lead with transparent self-serve per-seat pricing and keep an enterprise/contact tier for larger deployments.';
+    return 'Use transparent published pricing where possible and keep a sales-assisted or quote-led path for larger or more customized deployments.';
   }
 
-  return 'Lead with transparent self-serve per-seat pricing and a low-friction team tier for expansion.';
+  if (pricingText.includes('installed') || pricingText.includes('configuration') || pricingText.includes('quote')) {
+    return 'Treat pricing as configuration- and installation-dependent, with clear quote ranges and ROI framing rather than one flat list price.';
+  }
+
+  return 'Lead with the simplest pricing structure supported by evidence, then add heavier commercial packaging only where complexity or customization requires it.';
 }
 
 function buildGtmChannelSummary(
@@ -190,13 +208,15 @@ function buildGtmChannelSummary(
   gtmClaims: ResearchFinding[],
 ) {
   if (!readySectionKeys.has('gtm-motion') || gtmClaims.length === 0) {
-    return 'Insufficient direct GTM evidence to choose between direct, partner, MSP, or marketplace-led acquisition yet; validate the buying path before scaling channel spend.';
+    return 'Insufficient direct GTM evidence to choose the dominant acquisition path yet; validate buying process, channel preference, and purchase friction before scaling spend.';
   }
 
-  return gtmClaims[0]?.claim ?? 'Validate the strongest direct and channel route from verified GTM evidence before scaling spend.';
+  return compactClaimSentence(gtmClaims[0]?.claim ?? 'Validate the strongest direct and channel route from verified GTM evidence before scaling spend.');
 }
 
 function buildRecommendationSection(
+  topic: string,
+  objective: string | undefined,
   findings: ResearchFinding[],
   readySectionKeys: Set<ResearchFinding['sectionKey']>,
   baseSections: SectionBuildResult[],
@@ -247,17 +267,17 @@ function buildRecommendationSection(
   const directClaimCount = upstreamClaims.filter((finding) => finding.inferenceLabel === 'direct').length;
 
   const recommendationInput: StructuredRecommendation = {
-    icp: buildIcpSummary(buyerClaims, competitorMatrix),
+    icp: buildIcpSummary(topic, objective, buyerClaims, competitorMatrix),
     triggerProblem: buildTriggerProblemSummary(buyerClaims),
     positionAgainstIncumbentWorkflow:
       competitorCount > 0
-        ? 'Position as a lightweight layer on top of existing meeting and CRM workflows, replacing manual note capture and CRM writeback rather than forcing a platform switch.'
-        : 'Position against manual note-taking, fragmented follow-up, and incomplete CRM updates rather than against a single incumbent vendor.',
+        ? 'Position against incumbent approaches by emphasizing the clearest documented implementation, workflow, and ROI advantages surfaced in the verified competitor set.'
+        : `Position against the current default workflow for ${deriveTopicSearchPhrase(topic)} rather than assuming a single incumbent vendor.`,
     pricingHypothesis: buildPricingThesis(pricingClaims, competitorMatrix),
     gtmChannelHypothesis: buildGtmChannelSummary(readySectionKeys, gtmClaims),
     implementationRisk:
-      riskClaims[0]?.claim ||
-      'UK deployment still needs explicit handling for consent, privacy, data protection, and CRM integration friction before broader rollout.',
+      compactClaimSentence(riskClaims[0]?.claim ?? '') ||
+      'Implementation risks still need direct evidence on adoption barriers, trust, rollout friction, and commercial viability.',
     confidence:
       readySectionKeys.has('gtm-motion') &&
       readySectionKeys.has('risks-and-unknowns') &&
@@ -310,6 +330,8 @@ function buildRecommendationSection(
 }
 
 function buildReportSections(
+  topic: string,
+  objective: string | undefined,
   findings: ResearchFinding[],
   competitorMatrix: CompetitorMatrixEntry[],
   evidenceRecords: ResearchGraphState['evidenceRecords'],
@@ -354,6 +376,8 @@ function buildReportSections(
       .map((section) => section.sectionKey as ResearchFinding['sectionKey']),
   );
   const recommendation = buildRecommendationSection(
+    topic,
+    objective,
     findings,
     readySectionKeys,
     baseSections,
@@ -480,6 +504,8 @@ export async function runFinalizeNode(state: ResearchGraphState) {
     ]),
   );
   const sections = buildReportSections(
+    state.topic,
+    state.objective,
     state.findings,
     state.competitorMatrix,
     state.evidenceRecords,

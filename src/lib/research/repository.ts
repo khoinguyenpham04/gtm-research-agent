@@ -15,6 +15,43 @@ import type {
 
 type JsonRecord = Record<string, unknown>;
 
+function sanitizeDatabaseText(value: string | null | undefined) {
+  if (value == null) {
+    return value ?? null;
+  }
+
+  const wellFormed =
+    typeof value.toWellFormed === 'function' ? value.toWellFormed() : value;
+
+  return wellFormed.replace(/\u0000/g, '');
+}
+
+function sanitizeJsonValue(value: unknown): unknown {
+  if (value == null) {
+    return value ?? null;
+  }
+
+  if (typeof value === 'string') {
+    return sanitizeDatabaseText(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeJsonValue(item));
+  }
+
+  if (typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entryValue]) => [key, sanitizeJsonValue(entryValue)]),
+    );
+  }
+
+  return value;
+}
+
+function sanitizeJsonRecord(value: JsonRecord = {}) {
+  return sanitizeJsonValue(value) as JsonRecord;
+}
+
 interface ResearchRunRow {
   id: string;
   topic: string;
@@ -344,8 +381,8 @@ export async function appendResearchEvent(
     run_id: runId,
     stage,
     event_type: eventType,
-    message,
-    payload_json: payloadJson,
+    message: sanitizeDatabaseText(message),
+    payload_json: sanitizeJsonRecord(payloadJson),
     created_at: getNowIso(),
   });
 
@@ -491,10 +528,10 @@ export async function saveResearchSources(runId: string, sources: InsertSourceIn
       sources.map((source) => ({
         run_id: runId,
         source_type: source.sourceType,
-        title: source.title,
-        url: source.url,
-        snippet: source.snippet,
-        metadata_json: source.metadataJson,
+        title: sanitizeDatabaseText(source.title),
+        url: sanitizeDatabaseText(source.url),
+        snippet: sanitizeDatabaseText(source.snippet),
+        metadata_json: sanitizeJsonRecord(source.metadataJson),
         created_at: getNowIso(),
       })),
     )
@@ -557,10 +594,10 @@ export async function saveResearchEvidence(runId: string, evidence: InsertEviden
         document_chunk_id: item.documentChunkId ?? null,
         document_external_id: item.documentExternalId ?? null,
         section_key: item.sectionKey ?? null,
-        title: item.title,
-        url: item.url,
-        excerpt: item.excerpt,
-        metadata_json: item.metadataJson,
+        title: sanitizeDatabaseText(item.title),
+        url: sanitizeDatabaseText(item.url),
+        excerpt: sanitizeDatabaseText(item.excerpt),
+        metadata_json: sanitizeJsonRecord(item.metadataJson),
         created_at: getNowIso(),
       })),
     )
@@ -601,22 +638,22 @@ export async function saveResearchRetrievalCandidates(runId: string, candidates:
         source_type: candidate.sourceType,
         retriever_type: candidate.retrieverType,
         section_key: candidate.sectionKey,
-        query_text: candidate.query,
+        query_text: sanitizeDatabaseText(candidate.query),
         source_id: candidate.sourceId ?? null,
         document_external_id: candidate.documentExternalId ?? null,
         document_chunk_id: candidate.documentChunkId ?? null,
-        title: candidate.title,
-        url: candidate.url,
+        title: sanitizeDatabaseText(candidate.title),
+        url: sanitizeDatabaseText(candidate.url),
         raw_score: candidate.rawScore,
         fused_score: candidate.fusedScore ?? null,
         rerank_score: candidate.rerankScore ?? null,
         selected: candidate.selected ?? false,
-        metadata_json: {
+        metadata_json: sanitizeJsonRecord({
           ...candidate.metadataJson,
           claimType: candidate.claimType,
           evidenceMode: candidate.evidenceMode,
           vendorTarget: candidate.vendorTarget ?? null,
-        },
+        }),
         created_at: getNowIso(),
       })),
     )

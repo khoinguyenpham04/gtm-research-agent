@@ -4,6 +4,11 @@ import type {
   ResearchEvidence,
   ResearchFinding,
 } from '@/lib/research/schemas';
+import {
+  extractGenericCapabilityPhrases,
+  extractGenericEcosystemSignals,
+  normalizeResearchText,
+} from '@/lib/research/topic-utils';
 
 export interface DeterministicCompetitorProfile extends CompetitorMatrixEntry {
   evidenceIds: string[];
@@ -11,70 +16,58 @@ export interface DeterministicCompetitorProfile extends CompetitorMatrixEntry {
   hasPricingEvidence: boolean;
 }
 
-const vendorAliases: Array<{ label: string; aliases: string[] }> = [
-  { label: 'Gong', aliases: ['gong.io', 'gong'] },
-  { label: 'Otter.ai', aliases: ['otter.ai', 'otter ai', 'otter'] },
-  { label: 'Fireflies.ai', aliases: ['fireflies.ai', 'fireflies ai', 'fireflies'] },
-  { label: 'Avoma', aliases: ['avoma.com', 'avoma'] },
-  { label: 'Microsoft Teams + Microsoft 365 Copilot', aliases: ['microsoft teams', 'microsoft 365 copilot', 'teams', 'microsoft'] },
-  { label: 'Zoom AI Companion', aliases: ['zoom ai companion', 'zoom'] },
-  { label: 'Fathom', aliases: ['fathom.video', 'fathom'] },
-];
-
-const featureSignals: Array<[string, string[]]> = [
-  ['transcription', ['transcription', 'transcribe', 'transcripts']],
-  ['meeting recording', ['recording', 'record meetings', 'record meetings']],
-  ['ai summaries', ['summary', 'summaries', 'recap', 'recaps']],
-  ['action items', ['action items', 'next steps', 'follow-ups']],
-  ['crm sync', ['crm sync', 'crm writeback', 'sync meeting notes', 'sync notes to crm']],
-  ['conversation intelligence', ['conversation intelligence', 'sentiment', 'talk-to-listen', 'topic trackers', 'call analytics']],
-  ['coaching workflows', ['coaching', 'scorecards', 'playlists', 'call analytics']],
-];
-
-const crmSignals = ['salesforce', 'hubspot', 'pipedrive', 'zoho', 'freshsales', 'close', 'dynamics'];
+const vendorDisplayOverrides: Record<string, string> = {
+  gong: 'Gong',
+  otter: 'Otter.ai',
+  'otter ai': 'Otter.ai',
+  fireflies: 'Fireflies.ai',
+  'fireflies ai': 'Fireflies.ai',
+  avoma: 'Avoma',
+  fathom: 'Fathom',
+  microsoft: 'Microsoft',
+  'microsoft teams': 'Microsoft Teams',
+  zoom: 'Zoom',
+  tesla: 'Tesla',
+  powervault: 'Powervault',
+};
 const canonicalVendorPageUrls = new Set(
   listCanonicalVendorPages().map((page) => page.url.toLowerCase()),
 );
 
 function normalizeText(input: string | null | undefined) {
-  return (input ?? '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim();
+  return normalizeResearchText(input ?? '');
 }
 
 function getVendorLabel(record: ResearchEvidence) {
-  const candidates = [
-    typeof record.metadataJson.vendorTarget === 'string' ? record.metadataJson.vendorTarget : '',
-    typeof record.metadataJson.productName === 'string' ? record.metadataJson.productName : '',
-    record.title,
-    record.url ?? '',
-  ].map(normalizeText);
+  const vendorTarget =
+    typeof record.metadataJson.vendorTarget === 'string' ? record.metadataJson.vendorTarget.trim() : '';
+  if (vendorTarget) {
+    return vendorDisplayOverrides[normalizeText(vendorTarget)] ?? vendorTarget;
+  }
 
-  for (const candidate of candidates) {
-    if (!candidate) {
-      continue;
-    }
+  const productName =
+    typeof record.metadataJson.productName === 'string' ? record.metadataJson.productName.trim() : '';
+  if (productName) {
+    return vendorDisplayOverrides[normalizeText(productName)] ?? productName;
+  }
 
-    const matched = vendorAliases.find(({ aliases }) =>
-      aliases.some((alias) => {
-        const normalizedAlias = normalizeText(alias);
+  if (record.url) {
+    try {
+      const hostname = new URL(record.url).hostname.replace(/^www\./, '');
+      const domainStem = hostname.split('.').slice(0, -1).join(' ').trim();
+      if (domainStem) {
         return (
-          candidate === normalizedAlias ||
-          candidate.includes(normalizedAlias) ||
-          normalizedAlias.includes(candidate)
+          vendorDisplayOverrides[normalizeText(domainStem)] ??
+          domainStem.replace(/\b\w/g, (char) => char.toUpperCase())
         );
-      }),
-    );
-
-    if (matched) {
-      return matched.label;
+      }
+    } catch {
+      // Ignore malformed URL and fall back to title parsing.
     }
   }
 
-  return typeof record.metadataJson.vendorTarget === 'string'
-    ? record.metadataJson.vendorTarget
-    : record.title.split('|')[0]?.trim() || record.title;
+  const titleStem = record.title.split('|')[0]?.trim() || record.title;
+  return vendorDisplayOverrides[normalizeText(titleStem)] ?? titleStem;
 }
 
 export function getCompetitorVendorLabel(record: ResearchEvidence) {
@@ -126,7 +119,28 @@ function isCanonicalCompetitorRecord(record: ResearchEvidence) {
     return false;
   }
 
-  return canonicalVendorPageUrls.has(normalizedUrl);
+  if (canonicalVendorPageUrls.has(normalizedUrl)) {
+    return true;
+  }
+
+  const vendorTarget =
+    typeof record.metadataJson.vendorTarget === 'string' ? normalizeText(record.metadataJson.vendorTarget) : '';
+  const combined = normalizeText(
+    [
+      record.url,
+      record.title,
+      typeof record.metadataJson.productName === 'string' ? record.metadataJson.productName : '',
+      typeof record.metadataJson.vendorTarget === 'string' ? record.metadataJson.vendorTarget : '',
+    ].join(' '),
+  );
+
+  return Boolean(
+    vendorTarget &&
+      vendorTarget
+        .split(' ')
+        .filter((token) => token.length >= 3)
+        .some((token) => combined.includes(token)),
+  );
 }
 
 export function isPricingRecord(record: ResearchEvidence) {
@@ -245,6 +259,12 @@ function inferIcp(records: ResearchEvidence[]) {
   }
 
   const combined = records.map(getCombinedText).join(' ');
+  if (combined.includes('homeowner') || combined.includes('owner occupied') || combined.includes('household')) {
+    return 'Homeowners';
+  }
+  if (combined.includes('installer')) {
+    return 'Installers';
+  }
   if (combined.includes('sales') && (combined.includes('small') || combined.includes('smb'))) {
     return 'SMB sales teams';
   }
@@ -254,7 +274,11 @@ function inferIcp(records: ResearchEvidence[]) {
   if (combined.includes('small teams') || combined.includes('small business')) {
     return 'SMB teams';
   }
-  return 'Business teams';
+  if (combined.includes('enterprise')) {
+    return 'Enterprise buyers';
+  }
+
+  return 'Target segment not explicit';
 }
 
 function inferCoreFeatures(records: ResearchEvidence[]) {
@@ -266,10 +290,9 @@ function inferCoreFeatures(records: ResearchEvidence[]) {
       : [],
   );
 
-  const combined = records.map(getCombinedText).join(' ');
-  const inferredFeatures = featureSignals
-    .filter(([, keywords]) => keywords.some((keyword) => combined.includes(keyword)))
-    .map(([label]) => normalizeFeatureLabel(label));
+  const inferredFeatures = records.flatMap((record) =>
+    extractGenericCapabilityPhrases(getCombinedText(record), 6).map(normalizeFeatureLabel),
+  );
 
   return uniqueStrings([...explicitFeatures, ...inferredFeatures]).slice(0, 6);
 }
@@ -281,28 +304,11 @@ function inferCrmIntegrations(records: ResearchEvidence[]) {
       : [],
   );
 
-  const combined = records.map(getCombinedText).join(' ');
-  const inferred = crmSignals.filter((crm) => combined.includes(crm));
+  const inferred = records.flatMap((record) =>
+    extractGenericEcosystemSignals(getCombinedText(record), 5),
+  );
 
-  return uniqueStrings(
-    [...explicit, ...inferred].map((value) =>
-      value === 'hubspot'
-        ? 'HubSpot'
-        : value === 'salesforce'
-          ? 'Salesforce'
-          : value === 'pipedrive'
-            ? 'Pipedrive'
-            : value === 'zoho'
-              ? 'Zoho'
-              : value === 'freshsales'
-                ? 'Freshsales'
-                : value === 'close'
-                  ? 'Close'
-                  : value === 'dynamics'
-                    ? 'Microsoft Dynamics'
-                    : value,
-    ),
-  ).slice(0, 6);
+  return uniqueStrings([...explicit, ...inferred]).slice(0, 6);
 }
 
 function trimEvidenceText(input: string) {
@@ -419,6 +425,12 @@ function inferPricingEvidence(records: ResearchEvidence[]) {
 function inferTargetSegment(records: ResearchEvidence[]) {
   const combined = records.map(getCombinedText).join(' ');
 
+  if (combined.includes('homeowner') || combined.includes('owner occupied') || combined.includes('household')) {
+    return 'Homeowners';
+  }
+  if (combined.includes('installer') || combined.includes('dealer') || combined.includes('reseller')) {
+    return 'Installer / channel-led buyers';
+  }
   if (combined.includes('sales') && (combined.includes('small') || combined.includes('smb'))) {
     return 'SMB sales teams';
   }
@@ -437,7 +449,7 @@ function inferTargetSegment(records: ResearchEvidence[]) {
     return 'Sales teams';
   }
 
-  return 'Business teams';
+  return 'Category buyers';
 }
 
 function inferConfidence(records: ResearchEvidence[], hasFeatureEvidence: boolean, hasPricingEvidence: boolean) {
@@ -518,7 +530,7 @@ export function buildCompetitorProfileSummary(evidenceRecords: ResearchEvidence[
         `Vendor: ${profile.vendor}`,
         `ICP: ${profile.icp}`,
         `Core features: ${profile.coreFeatures.join(', ')}`,
-        `CRM integrations: ${profile.crmIntegrations.join(', ') || 'Not established'}`,
+        `Integrations / ecosystem: ${profile.crmIntegrations.join(', ') || 'Not established'}`,
         `Pricing evidence: ${profile.pricingEvidence}`,
         `Target segment: ${profile.targetSegment}`,
         `Confidence: ${profile.confidence}`,

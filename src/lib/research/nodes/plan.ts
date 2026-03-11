@@ -12,8 +12,7 @@ import {
   type ResearchPlan,
 } from '@/lib/research/schemas';
 import { resolvePlannedSearchQuery } from '@/lib/research/section-routing';
-
-const defaultVendorTargets = ['Otter.ai', 'Fireflies.ai', 'Fathom', 'Zoom AI Companion'];
+import { deriveTopicSearchPhrase } from '@/lib/research/topic-utils';
 
 interface CoverageBucket {
   key: string;
@@ -36,13 +35,87 @@ function getQueryKey(query: PlannedSearchQuery) {
   return `${query.sectionKey}:${query.query.toLowerCase()}`;
 }
 
-function buildFallbackQueries(topic: string): PlannedSearchQuery[] {
+function uniqueVendorTargets(queries: PlannedSearchQuery[]) {
+  const seen = new Set<string>();
+  const vendors: string[] = [];
+
+  for (const query of queries) {
+    if (!query.vendorTarget) {
+      continue;
+    }
+
+    const key = query.vendorTarget.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    vendors.push(query.vendorTarget);
+  }
+
+  return vendors;
+}
+
+function withUkContext(topic: string) {
+  return /\buk\b|united kingdom|britain|british/i.test(topic) ? topic : `${topic} UK`;
+}
+
+function joinTerms(...parts: Array<string | null | undefined>) {
+  return parts
+    .map((part) => part?.trim())
+    .filter((part): part is string => Boolean(part))
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function deriveAudienceTerms(topic: string) {
+  const normalized = topic.toLowerCase();
+  const terms: string[] = [];
+
+  if (/(household|homeowner|owner-occupied|residential|domestic|consumer|home\b)/.test(normalized)) {
+    terms.push('household', 'homeowner', 'consumer');
+  }
+
+  if (/\b(smb|sme|small business|small and medium)/.test(normalized)) {
+    terms.push('SMB', 'SME', '"small business"');
+  }
+
+  if (/(sales|sales team|revenue team|sales ops|account executive)/.test(normalized)) {
+    terms.push('"sales team"', '"revenue team"', 'buyer');
+  }
+
+  return [...new Set(terms)].join(' ') || 'buyer';
+}
+
+function deriveBuyerBarrierTerms(topic: string) {
+  const normalized = topic.toLowerCase();
+  const terms = ['barriers', 'friction', 'trust', 'cost'];
+
+  if (/(battery|solar|energy|storage|utility|tariff|grid)/.test(normalized)) {
+    terms.push('installation', 'financing', 'approval', 'payback');
+  } else if (/(software|saas|platform|crm|ai|assistant|automation)/.test(normalized)) {
+    terms.push('integration', 'security', 'workflow', 'approval');
+  } else {
+    terms.push('integration', 'approval', 'reliability', 'adoption');
+  }
+
+  return [...new Set(terms)].join(' ');
+}
+
+function buildFallbackQueries(topic: string, plannedQueries: PlannedSearchQuery[]): PlannedSearchQuery[] {
+  const topicSearchPhrase = deriveTopicSearchPhrase(topic);
+  const topicWithRegion = withUkContext(topicSearchPhrase);
+  const vendorTargets = uniqueVendorTargets(plannedQueries).slice(0, 4);
+  const audienceTerms = deriveAudienceTerms(topic);
+  const buyerBarrierTerms = deriveBuyerBarrierTerms(topic);
+
   return [
     {
       intent: 'market-size',
       sectionKey: 'market-landscape',
       subtopic: 'uk-market-growth',
-      query: `${topic} market size and growth UK site:gov.uk OR site:oecd.org OR filetype:pdf`,
+      query: `${topicWithRegion} market size and growth site:gov.uk OR site:oecd.org OR filetype:pdf OR report`,
       sourcePreference: 'primary',
       claimType: 'market-sizing',
       evidenceMode: 'market-adjacent',
@@ -52,7 +125,7 @@ function buildFallbackQueries(topic: string): PlannedSearchQuery[] {
       intent: 'market-size',
       sectionKey: 'market-landscape',
       subtopic: 'product-category-demand',
-      query: `${topic} meeting transcription conversation intelligence market report UK`,
+      query: `${topicWithRegion} market report forecast demand filetype:pdf OR analyst OR industry report`,
       sourcePreference: 'mixed',
       claimType: 'market-sizing',
       evidenceMode: 'product-specific',
@@ -61,8 +134,8 @@ function buildFallbackQueries(topic: string): PlannedSearchQuery[] {
     {
       intent: 'adoption',
       sectionKey: 'icp-and-buyer',
-      subtopic: 'sme-ai-adoption',
-      query: `UK SMEs AI adoption sales workflow survey site:gov.uk OR site:ons.gov.uk OR site:oecd.org`,
+      subtopic: 'target-adoption-readiness',
+      query: `${joinTerms(topicWithRegion, audienceTerms, 'adoption demand readiness survey')} site:gov.uk OR site:ons.gov.uk OR site:oecd.org OR filetype:pdf`,
       sourcePreference: 'primary',
       claimType: 'adoption-signal',
       evidenceMode: 'market-adjacent',
@@ -71,19 +144,19 @@ function buildFallbackQueries(topic: string): PlannedSearchQuery[] {
     {
       intent: 'buyer-pain',
       sectionKey: 'icp-and-buyer',
-      subtopic: 'sales-admin-burden',
-      query: `UK SMB sales teams meeting notes CRM admin burden research report`,
+      subtopic: 'buyer-barriers-and-pain',
+      query: `${joinTerms(topicWithRegion, 'buyer pain', buyerBarrierTerms, 'survey report')}`,
       sourcePreference: 'mixed',
       claimType: 'buyer-pain',
       evidenceMode: 'independent-validation',
       vendorTarget: null,
     },
-    ...defaultVendorTargets.flatMap((vendor) => [
+    ...vendorTargets.flatMap((vendor) => [
       {
         intent: 'competitor-features' as const,
         sectionKey: 'competitor-landscape' as const,
         subtopic: `${vendor.toLowerCase()}-features`,
-        query: `${vendor} AI meeting assistant features CRM integrations sales teams`,
+        query: `${joinTerms(vendor, topicSearchPhrase, 'features specifications official')}`,
         sourcePreference: 'commercial' as const,
         claimType: 'competitor-feature' as const,
         evidenceMode: 'vendor-primary' as const,
@@ -93,7 +166,7 @@ function buildFallbackQueries(topic: string): PlannedSearchQuery[] {
         intent: 'pricing' as const,
         sectionKey: 'pricing-and-packaging' as const,
         subtopic: `${vendor.toLowerCase()}-pricing`,
-        query: `${vendor} pricing AI meeting assistant sales teams`,
+        query: `${joinTerms(vendor, topicSearchPhrase, 'pricing plans finance official UK')}`,
         sourcePreference: 'commercial' as const,
         claimType: 'pricing' as const,
         evidenceMode: 'vendor-primary' as const,
@@ -104,7 +177,7 @@ function buildFallbackQueries(topic: string): PlannedSearchQuery[] {
       intent: 'gtm-channels',
       sectionKey: 'gtm-motion',
       subtopic: 'buying-process',
-      query: `UK SMB SaaS buying process evaluation shortlist procurement survey report`,
+      query: `${joinTerms(topicWithRegion, 'buyer journey shortlist evaluation purchase process survey report')}`,
       sourcePreference: 'primary',
       claimType: 'gtm-channel',
       evidenceMode: 'independent-validation',
@@ -114,7 +187,7 @@ function buildFallbackQueries(topic: string): PlannedSearchQuery[] {
       intent: 'gtm-channels',
       sectionKey: 'gtm-motion',
       subtopic: 'channel-preference',
-      query: `UK SMB software buying channels direct purchase marketplace review sites report`,
+      query: `${joinTerms(topicWithRegion, 'buying channels direct marketplace installer dealer survey report')}`,
       sourcePreference: 'mixed',
       claimType: 'gtm-channel',
       evidenceMode: 'independent-validation',
@@ -124,7 +197,7 @@ function buildFallbackQueries(topic: string): PlannedSearchQuery[] {
       intent: 'gtm-channels',
       sectionKey: 'gtm-motion',
       subtopic: 'partner-msp-direct',
-      query: `UK SMB software purchase MSP reseller partner marketplace direct survey report`,
+      query: `${joinTerms(topicWithRegion, 'partner installer reseller dealer direct purchase survey report')}`,
       sourcePreference: 'mixed',
       claimType: 'gtm-channel',
       evidenceMode: 'independent-validation',
@@ -134,7 +207,7 @@ function buildFallbackQueries(topic: string): PlannedSearchQuery[] {
       intent: 'gtm-channels',
       sectionKey: 'gtm-motion',
       subtopic: 'purchase-friction',
-      query: `UK SMB software buying barriers security privacy integration approval SaaS survey report`,
+      query: `${joinTerms(topicWithRegion, 'purchase barriers', buyerBarrierTerms, 'survey report')}`,
       sourcePreference: 'primary',
       claimType: 'gtm-channel',
       evidenceMode: 'independent-validation',
@@ -144,7 +217,7 @@ function buildFallbackQueries(topic: string): PlannedSearchQuery[] {
       intent: 'buyer-pain',
       sectionKey: 'risks-and-unknowns',
       subtopic: 'adoption-barriers',
-      query: `UK SME AI adoption barriers trust integration skills site:gov.uk OR site:oecd.org OR report`,
+      query: `${joinTerms(topicWithRegion, 'adoption barriers', buyerBarrierTerms, 'compliance privacy skills')} site:gov.uk OR site:oecd.org OR report`,
       sourcePreference: 'primary',
       claimType: 'risk',
       evidenceMode: 'independent-validation',
@@ -257,7 +330,9 @@ function takeNextMatchingQuery(
 
 function normalizePlan(plan: ResearchPlan, topic: string): ResearchPlan {
   const plannedQueries = withUniqueQueries(plan.searchQueries.map(resolvePlannedSearchQuery));
-  const fallbackQueries = withUniqueQueries(buildFallbackQueries(topic).map(resolvePlannedSearchQuery));
+  const fallbackQueries = withUniqueQueries(
+    buildFallbackQueries(topic, plannedQueries).map(resolvePlannedSearchQuery),
+  );
   const mergedQueries = withUniqueQueries([...plannedQueries, ...fallbackQueries]);
   const selectedQueries: PlannedSearchQuery[] = [];
   const selectedKeys = new Set<string>();
@@ -339,21 +414,22 @@ export async function runPlanNode(state: ResearchGraphState) {
       '- mixed for analyst or trade coverage',
       '- commercial for vendor pricing, competitor pages, or comparison pages',
       'Evidence mode rules:',
-      '- market-adjacent for broad AI/SME market evidence',
-      '- product-specific for independent evidence directly about meeting assistants, conversation intelligence, or meeting-note products',
+      '- market-adjacent for broad category, buyer-segment, regulatory, or adoption evidence adjacent to the target offer',
+      '- product-specific for independent evidence directly about the product category or solution class named in the topic',
       '- vendor-primary for vendor product or pricing pages',
       '- independent-validation for independent buyer, workflow, channel, or product validation evidence',
       'Query-writing rules:',
       '- market-landscape should have at least 2 queries: one broad market/adoption query and one product-category query',
       '- icp-and-buyer should have at least 2 queries: one adoption query and one workflow pain query',
-      '- competitor-landscape should include vendor-targeted queries for likely competitors',
-      '- pricing-and-packaging should include vendor-targeted pricing queries for likely competitors',
+      '- competitor-landscape should include vendor-targeted queries for likely competitors in the topic category',
+      '- pricing-and-packaging should include vendor-targeted pricing queries for likely competitors in the topic category',
       '- gtm-motion should target buying process, channel preference, partner or MSP or marketplace preference, and purchase friction',
       '- risks-and-unknowns should target trust, integration, skills, or adoption barriers',
       '- market-size and adoption queries should explicitly target primary evidence with terms like site:gov.uk, site:ons.gov.uk, site:oecd.org, filetype:pdf, report, survey, or statistics',
       '- competitor-features and pricing queries should name likely vendors and prefer official vendor domains or pricing pages',
-      '- buyer-pain and gtm-channels queries should target sales-team workflow pain, software buying behavior, channel strategy, and purchase friction',
+      '- buyer-pain and gtm-channels queries should target topic-relevant workflow pain, purchase drivers, channel behavior, and deployment friction',
       '- gtm-motion should include at least one query each for buying process, channel evidence, partner or direct preference, and purchase-friction evidence',
+      '- do not assume AI meeting assistants, CRM, sales teams, or software buyers unless they are explicitly part of the topic or objective',
       '- queries must be specific, evidence-oriented, and optimized for March 10, 2026 context',
     ].join('\n'),
   });

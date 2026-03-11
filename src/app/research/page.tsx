@@ -183,7 +183,7 @@ export default function ResearchPage() {
                   </label>
                   <Input
                     id="topic"
-                    placeholder="e.g. GTM strategy for AI meeting assistants in UK SMB sales"
+                    placeholder="e.g. GTM strategy for home battery storage systems targeting owner-occupied UK households"
                     value={topic}
                     onChange={(event) => setTopic(event.target.value)}
                     required

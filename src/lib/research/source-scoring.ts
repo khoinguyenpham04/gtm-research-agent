@@ -13,6 +13,7 @@ import {
   type ScoredSource,
   type VendorPageType,
 } from '@/lib/research/schemas';
+import { hasTopicSignal, normalizeResearchText } from '@/lib/research/topic-utils';
 
 const CURRENT_YEAR = new Date().getUTCFullYear();
 const STRONG_PRIMARY_THRESHOLD = 0.82;
@@ -32,6 +33,8 @@ const vendorDomainPatterns = [
   'read.ai',
   'meetjamie.ai',
   'jiminny.com',
+  'tesla.com',
+  'powervault.co.uk',
 ];
 
 function extractPublishedYear(input: string) {
@@ -69,8 +72,23 @@ function startsWithAny(input: string, prefixes: string[]) {
   return prefixes.some((prefix) => input.startsWith(prefix));
 }
 
-function isVendorDomain(domain: string) {
-  return vendorDomainPatterns.some((pattern) => domain === pattern || domain.endsWith(`.${pattern}`));
+function isVendorDomain(domain: string, vendorTarget?: string | null) {
+  const normalizedDomain = domain.toLowerCase();
+  const normalizedVendor = normalizeResearchText(vendorTarget ?? '');
+
+  if (
+    normalizedVendor &&
+    normalizedVendor
+      .split(' ')
+      .filter((token) => token.length >= 3)
+      .some((token) => normalizedDomain.includes(token))
+  ) {
+    return true;
+  }
+
+  return vendorDomainPatterns.some(
+    (pattern) => normalizedDomain === pattern || normalizedDomain.endsWith(`.${pattern}`),
+  );
 }
 
 function detectVendorPageType(url: string | null, title: string, vendorTarget: string | null): VendorPageType | null {
@@ -118,8 +136,12 @@ function detectVendorPageType(url: string | null, title: string, vendorTarget: s
     haystack.includes('/product') ||
     haystack.includes('/products') ||
     haystack.includes('/features') ||
-    haystack.includes('ai companion') ||
-    haystack.includes('meeting assistant')
+    haystack.includes('feature') ||
+    haystack.includes('overview') ||
+    haystack.includes('specification') ||
+    haystack.includes('specifications') ||
+    haystack.includes('datasheet') ||
+    haystack.includes('manual')
   ) {
     return 'product';
   }
@@ -127,7 +149,12 @@ function detectVendorPageType(url: string | null, title: string, vendorTarget: s
   return null;
 }
 
-function getSourceCategory(url: string | null, domain: string | null, title: string): ScoredSource['sourceCategory'] {
+function getSourceCategory(
+  url: string | null,
+  domain: string | null,
+  title: string,
+  vendorTarget?: string | null,
+): ScoredSource['sourceCategory'] {
   const normalizedDomain = (domain ?? '').toLowerCase();
   const normalizedTitle = title.toLowerCase();
   const normalizedUrl = (url ?? '').toLowerCase();
@@ -143,16 +170,16 @@ function getSourceCategory(url: string | null, domain: string | null, title: str
     return 'official';
   }
 
+  if (isVendorDomain(normalizedDomain, vendorTarget)) {
+    return 'vendor';
+  }
+
   if (
     normalizedDomain.includes('oecd.org') ||
     normalizedDomain.includes('analysysmason.com') ||
     normalizedUrl.endsWith('.pdf')
   ) {
     return 'research';
-  }
-
-  if (isVendorDomain(normalizedDomain)) {
-    return 'vendor';
   }
 
   if (
@@ -219,16 +246,8 @@ function getQualityLabel(score: number): ScoredSource['qualityLabel'] {
   return 'low';
 }
 
-function hasProductSpecificTerms(input: string) {
-  const normalized = input.toLowerCase();
-  return (
-    normalized.includes('meeting assistant') ||
-    normalized.includes('meeting note') ||
-    normalized.includes('transcription') ||
-    normalized.includes('conversation intelligence') ||
-    normalized.includes('meeting recap') ||
-    normalized.includes('sales call')
-  );
+function hasProductSpecificTerms(input: string, query: string, vendorTarget?: string | null) {
+  return hasTopicSignal(input, query, vendorTarget);
 }
 
 function hasRiskSpecificTerms(input: string) {
@@ -245,8 +264,7 @@ function hasRiskSpecificTerms(input: string) {
     normalized.includes('compliance') ||
     normalized.includes('rollout') ||
     normalized.includes('deployment') ||
-    normalized.includes('retention') ||
-    normalized.includes('transcription')
+    normalized.includes('retention')
   );
 }
 
@@ -287,7 +305,7 @@ function getEvidenceMode(
     return 'independent-validation';
   }
 
-  if (hasProductSpecificTerms(combinedText)) {
+  if (hasProductSpecificTerms(combinedText, combinedText, undefined)) {
     return 'product-specific';
   }
 
@@ -376,7 +394,7 @@ export function scoreWebSource(input: Omit<ScoredSource, 'sourceCategory' | 'qua
   const combinedText = [input.title, input.snippet, input.url ?? '', input.query].join(' ');
   const publishedYear = extractPublishedYear(combinedText);
   const recency = getRecency(publishedYear);
-  const sourceCategory = getSourceCategory(input.url, input.domain, input.title);
+  const sourceCategory = getSourceCategory(input.url, input.domain, input.title, input.vendorTarget);
   const qualityScore = Number(applyRecencyAdjustment(getBaseScore(sourceCategory), recency).toFixed(2));
   const qualityLabel = getQualityLabel(qualityScore);
   const claimType = input.claimType ?? getClaimType(input.queryIntent);
@@ -387,13 +405,18 @@ export function scoreWebSource(input: Omit<ScoredSource, 'sourceCategory' | 'qua
     claimType,
     input.sectionKey,
   );
+  const resolvedEvidenceMode =
+    evidenceMode === 'market-adjacent' &&
+    hasProductSpecificTerms(combinedText, input.query, input.vendorTarget)
+      ? 'product-specific'
+      : evidenceMode;
   const vendorPageType =
     input.vendorPageType ?? detectVendorPageType(input.url, input.title, input.vendorTarget);
 
   return {
     ...input,
     claimType,
-    evidenceMode,
+    evidenceMode: resolvedEvidenceMode,
     vendorPageType,
     sourceCategory,
     qualityScore,

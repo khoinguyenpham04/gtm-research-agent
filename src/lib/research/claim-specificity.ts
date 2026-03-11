@@ -101,19 +101,6 @@ function hasBuyingBehaviorSignals(record: ResearchEvidence) {
   );
 }
 
-function hasProductCategorySignals(record: ResearchEvidence) {
-  const combined = getCombinedEvidenceText(record);
-  return (
-    combined.includes('meeting assistant') ||
-    combined.includes('meeting assistants') ||
-    combined.includes('conversation intelligence') ||
-    combined.includes('ai note taker') ||
-    combined.includes('meeting notes') ||
-    combined.includes('call summaries') ||
-    combined.includes('sales agent')
-  );
-}
-
 function hasBarrierSignals(record: ResearchEvidence) {
   const combined = getCombinedEvidenceText(record);
   return (
@@ -132,16 +119,6 @@ function hasBarrierSignals(record: ResearchEvidence) {
     combined.includes('reliability') ||
     combined.includes('uncertain') ||
     combined.includes('scam')
-  );
-}
-
-function claimTargetsMeetingAssistantDemand(claim: string) {
-  const normalized = claim.toLowerCase();
-  return (
-    normalized.includes('meeting assistant') ||
-    normalized.includes('meeting assistants') ||
-    normalized.includes('conversation intelligence') ||
-    normalized.includes('meeting note')
   );
 }
 
@@ -179,7 +156,6 @@ export function getDefaultClaimType(sectionKey: ResearchFinding['sectionKey']): 
 export function inferFindingSpecificity(
   sectionKey: ResearchFinding['sectionKey'],
   evidenceRecords: ResearchEvidence[],
-  claim?: string,
 ): {
   claimType: ClaimType;
   evidenceMode: EvidenceMode;
@@ -271,24 +247,6 @@ export function inferFindingSpecificity(
     }
 
     notes.push('Claim relies on adjacent evidence rather than direct risk or adoption-barrier evidence.');
-    return { claimType, evidenceMode, inferenceLabel: 'inferred', notes };
-  }
-
-  if (
-    sectionKey === 'market-landscape' &&
-    claim &&
-    claimTargetsMeetingAssistantDemand(claim) &&
-    !evidenceRecords.some((record) => {
-      const mode = getEvidenceMode(record);
-      return (
-        mode === 'product-specific' ||
-        mode === 'vendor-primary' ||
-        mode === 'document-internal' ||
-        hasProductCategorySignals(record)
-      );
-    })
-  ) {
-    notes.push('General AI adoption evidence only supports meeting-assistant demand as an inference.');
     return { claimType, evidenceMode, inferenceLabel: 'inferred', notes };
   }
 

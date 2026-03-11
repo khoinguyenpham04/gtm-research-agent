@@ -24,7 +24,7 @@ import {
 } from '@/lib/research/repository';
 import { resolveSectionKey } from '@/lib/research/section-routing';
 import type { ResearchGraphState } from '@/lib/research/schemas';
-import type { WebSearchService } from '@/lib/research/search';
+import { sanitizeOutboundQuery, type WebSearchService } from '@/lib/research/search';
 
 function getCanonicalSectionKey(metadata: Record<string, unknown>) {
   const intent =
@@ -113,13 +113,14 @@ export function createWebSearchNode(searchService: WebSearchService) {
     await appendResearchEvent(state.runId, 'web_search', 'stage_started', 'Searching the web.');
 
     for (const query of state.plan.searchQueries) {
+      const sanitizedQuery = sanitizeOutboundQuery(query.query);
       await appendResearchEvent(
         state.runId,
         'web_search',
         'query_started',
-        `Searching for "${query.query}".`,
+        `Searching for "${sanitizedQuery}".`,
         {
-          query: query.query,
+          query: sanitizedQuery,
           intent: query.intent,
           sourcePreference: query.sourcePreference,
         },

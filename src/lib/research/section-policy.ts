@@ -7,6 +7,7 @@ import type {
   SectionStatus,
 } from '@/lib/research/schemas';
 import { deriveSectionKeyFromIntent, resolveEvidenceSectionKey, resolveSectionKey } from '@/lib/research/section-routing';
+import { hasTopicSignal } from '@/lib/research/topic-utils';
 
 type SectionKey = ResearchFinding['sectionKey'];
 
@@ -230,15 +231,11 @@ function hasProductCategorySignals(record: ResearchEvidence) {
   }
 
   const combined = getEvidenceText(record);
-  return (
-    combined.includes('meeting assistant') ||
-    combined.includes('meeting assistants') ||
-    combined.includes('conversation intelligence') ||
-    combined.includes('ai note taker') ||
-    combined.includes('meeting notes') ||
-    combined.includes('call summaries') ||
-    combined.includes('sales agent')
-  );
+  const query = typeof record.metadataJson.query === 'string' ? record.metadataJson.query : '';
+  const vendorTarget =
+    typeof record.metadataJson.vendorTarget === 'string' ? record.metadataJson.vendorTarget : null;
+
+  return hasTopicSignal(combined, query, vendorTarget);
 }
 
 function hasBarrierSignals(record: ResearchEvidence) {

@@ -20,6 +20,7 @@ import {
 } from '@/lib/research/schemas';
 import { resolveFindingSectionKey, resolveSectionKey } from '@/lib/research/section-routing';
 import { selectEvidenceForSection } from '@/lib/research/section-policy';
+import { compactClaimSentence, deriveTopicSearchPhrase } from '@/lib/research/topic-utils';
 import { z } from 'zod';
 
 const sectionWorkerSchema = z.object({
@@ -63,7 +64,6 @@ function sanitizeFindings(
       const specificity = inferFindingSpecificity(
         resolveFindingSectionKey(finding, evidenceRecordIndex),
         buildEvidenceByCitation(evidence, evidenceRecordIndex),
-        finding.claim,
       );
       const sectionKey = resolveFindingSectionKey(finding, evidenceRecordIndex);
 
@@ -174,7 +174,12 @@ function isSelfServePricing(profile: DeterministicCompetitorProfile) {
 
 function isCustomPricing(profile: DeterministicCompetitorProfile) {
   const pricingText = profile.pricingEvidence.toLowerCase();
-  return pricingText.includes('custom') || pricingText.includes('contact') || pricingText.includes('proposal');
+  return (
+    pricingText.includes('custom') ||
+    pricingText.includes('contact') ||
+    pricingText.includes('proposal') ||
+    pricingText.includes('quote')
+  );
 }
 
 function buildDeterministicCommercialFindings(
@@ -192,27 +197,18 @@ function buildDeterministicCommercialFindings(
       evidenceIndex,
     );
 
-    const gongProfile = competitorProfiles.find((profile) => profile.vendor === 'Gong');
-    const selfServeProfiles = competitorProfiles.filter(
-      (profile) =>
-        ['Otter.ai', 'Fireflies.ai', 'Avoma', 'Fathom', 'Zoom AI Companion'].includes(profile.vendor),
-    );
-
-    const deltaSummary =
-      gongProfile && selfServeProfiles.length > 0
-        ? `Competitor delta summary: ${gongProfile.vendor} positions around revenue intelligence, coaching, and sales-led packaging, while ${selfServeProfiles
-            .slice(0, 3)
-            .map((profile) => profile.vendor)
-            .join(', ')} emphasize meeting capture, summaries, and CRM-connected follow-up with lower-friction team deployment.`
-        : `Competitor delta summary: ${competitorProfiles
-            .slice(0, 3)
-            .map((profile) => `${profile.vendor} focuses on ${profile.coreFeatures.slice(0, 3).join(', ')}`)
-            .join('; ')}.`;
+    const deltaSummary = `Competitor delta summary: ${competitorProfiles
+      .slice(0, 3)
+      .map(
+        (profile) =>
+          `${profile.vendor} emphasizes ${profile.coreFeatures.slice(0, 3).join(', ')}${profile.pricingEvidence ? ` with ${profile.pricingEvidence}` : ''}`,
+      )
+      .join('; ')}.`;
 
     findings.push({
       sectionKey: 'competitor-landscape',
       claimType: 'competitor-feature',
-      claim: deltaSummary,
+      claim: compactClaimSentence(deltaSummary, 260),
       evidence: competitorEvidence,
       evidenceMode: 'vendor-primary',
       inferenceLabel: 'inferred',
@@ -220,7 +216,7 @@ function buildDeterministicCommercialFindings(
       status: 'draft',
       verificationNotes: '',
       gaps: [
-        'No independent head-to-head benchmark for CRM-sync fidelity, transcript accuracy, or SMB sales outcomes in the evidence set.',
+        'No independent head-to-head benchmark, share data, or standardized cross-vendor performance evidence in the current set.',
       ],
       contradictions: [],
     });
@@ -235,14 +231,18 @@ function buildDeterministicCommercialFindings(
     );
     const selfServeVendors = pricingProfiles.filter(isSelfServePricing).map((profile) => profile.vendor);
     const customPricingVendors = pricingProfiles.filter(isCustomPricing).map((profile) => profile.vendor);
+    const publishedVendorsLabel =
+      selfServeVendors.length > 0 ? selfServeVendors.join(', ') : 'some vendors';
+    const customVendorsLabel =
+      customPricingVendors.length > 0 ? customPricingVendors.join(', ') : 'other vendors';
 
     findings.push({
       sectionKey: 'pricing-and-packaging',
       claimType: 'pricing',
       claim:
         customPricingVendors.length > 0
-          ? `Public vendor pricing pages show a split between self-serve per-seat pricing from ${selfServeVendors.join(', ')} and sales-led custom pricing from ${customPricingVendors.join(', ')}.`
-          : `Public vendor pricing pages show a per-seat SaaS model with free-to-paid or business-tier progression across ${selfServeVendors.join(', ')}.`,
+          ? `Public vendor pricing evidence shows a split between published or lighter-weight pricing from ${publishedVendorsLabel} and quote-led or custom packaging from ${customVendorsLabel}.`
+          : `Public vendor pricing evidence shows published pricing across ${publishedVendorsLabel}, but packaging depth and buyer path still vary by vendor.`,
       evidence: pricingEvidence,
       evidenceMode: 'vendor-primary',
       inferenceLabel: 'direct',
@@ -250,7 +250,7 @@ function buildDeterministicCommercialFindings(
       status: 'draft',
       verificationNotes: '',
       gaps: [
-        'No UK-specific GBP/VAT price sheet or reseller-discount evidence in the current pricing set.',
+        'No channel-specific discounting, regional pricing, or reseller pricing evidence in the current set.',
       ],
       contradictions: [],
     });
@@ -304,8 +304,8 @@ export async function runDraftReportNode(state: ResearchGraphState) {
       synthesisEvidence,
       ['market-landscape', 'icp-and-buyer'],
       [
-        'market-landscape claims should stay grounded in product-category demand, UK AI adoption, or supply-side market evidence.',
-        'icp-and-buyer claims should focus on adoption readiness, admin burden, CRM usage, and who is most likely to adopt first.',
+        `market-landscape claims should stay grounded in direct evidence about ${deriveTopicSearchPhrase(state.topic)} or be clearly marked as inferred from adjacent evidence.`,
+        'icp-and-buyer claims should focus on buyer readiness, workflow pain, and who is most likely to adopt first for this topic.',
       ],
     ),
     runNarrativeSectionWorker(

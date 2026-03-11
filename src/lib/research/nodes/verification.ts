@@ -24,6 +24,7 @@ import {
 import { resolveEvidenceSectionKey, resolveFindingSectionKey, resolveSectionKey } from '@/lib/research/section-routing';
 import { getGtmEvidenceSignals, getSectionPolicy, selectEvidenceForSection } from '@/lib/research/section-policy';
 import { coerceSourceCategory, getEvidenceRuleAssessment } from '@/lib/research/source-scoring';
+import { deriveTopicSearchPhrase } from '@/lib/research/topic-utils';
 import { z } from 'zod';
 
 const verificationWorkerSchema = z.object({
@@ -97,7 +98,6 @@ function sanitizeFindings(
       const specificity = inferFindingSpecificity(
         sectionKey,
         buildEvidenceByCitation(evidence, evidenceRecordIndex),
-        finding.claim,
       );
 
       return {
@@ -204,7 +204,7 @@ async function runVerificationWorker(
       'Evidence rules:',
       '- claims should remain verified only if evidence is sufficiently strong',
       '- do not invent details that are not grounded in the evidence',
-      '- downgrade broad AI market evidence to inferred unless it directly supports the claim about meeting assistants, buyer workflow, or the product category',
+      `- downgrade broad adjacent market evidence to inferred unless it directly supports the product category or buyer behavior for ${deriveTopicSearchPhrase(state.topic)}`,
       '- competitor and pricing claims require vendor-primary evidence to remain direct',
       '- gtm-motion claims must stay about buying process, channel choice, partner or direct preference, and purchase friction; productivity alone is not GTM motion evidence',
       '- return 0-2 key takeaways for these sections only',
@@ -354,8 +354,8 @@ export async function runVerificationNode(state: ResearchGraphState) {
       synthesisEvidence,
       ['market-landscape', 'icp-and-buyer'],
       [
-        'market-landscape findings should stay category-aware and keep broad AI adoption evidence inferred unless it directly addresses meeting assistants or conversation intelligence.',
-        'icp-and-buyer findings should stay focused on buyer readiness, workflow pain, CRM usage, and early-adopter fit.',
+        `market-landscape findings should stay category-aware and keep broad adjacent adoption evidence inferred unless it directly addresses ${deriveTopicSearchPhrase(state.topic)}.`,
+        'icp-and-buyer findings should stay focused on buyer readiness, workflow pain, and early-adopter fit for this topic.',
       ],
     ),
     runVerificationWorker(
@@ -373,7 +373,7 @@ export async function runVerificationNode(state: ResearchGraphState) {
       ['competitor-landscape', 'pricing-and-packaging'],
       [
         'competitor findings should summarize vendor deltas from the deterministic profiles instead of repeating vendor marketing copy.',
-        'pricing findings should confirm self-serve versus sales-led packaging from vendor-primary pricing evidence only.',
+        'pricing findings should confirm published versus quote-led packaging from vendor-primary pricing evidence only.',
       ],
       `Deterministic competitor profiles:\n${competitorProfileSummary}`,
     ),

@@ -5,6 +5,11 @@ import {
   resolveCanonicalVendorPages,
   type CanonicalVendorPage,
 } from '@/lib/research/vendor-registry';
+import {
+  extractGenericCapabilityPhrases,
+  extractGenericEcosystemSignals,
+  normalizeResearchText,
+} from '@/lib/research/topic-utils';
 
 export interface WebSearchService {
   searchMany(queries: PlannedSearchQuery[]): Promise<ScoredSource[]>;
@@ -34,6 +39,8 @@ const vendorDomainHints: Record<string, string> = {
   gong: 'gong.io',
   avoma: 'avoma.com',
   'read.ai': 'read.ai',
+  tesla: 'tesla.com',
+  powervault: 'powervault.co.uk',
 };
 
 const MAX_QUERY_CONCURRENCY = 3;
@@ -41,31 +48,6 @@ const FETCH_TIMEOUT_MS = 12_000;
 const MAX_FETCH_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 700;
 const PAGE_FETCH_TIMEOUT_MS = 8_000;
-const featureKeywords = [
-  'transcription',
-  'summaries',
-  'summary',
-  'meeting notes',
-  'action items',
-  'conversation intelligence',
-  'speaker identification',
-  'recording',
-  'crm sync',
-  'crm integration',
-  'real-time recap',
-  'sales coaching',
-  'call summaries',
-];
-const crmKeywords = [
-  'Salesforce',
-  'HubSpot',
-  'Microsoft Dynamics',
-  'Pipedrive',
-  'Zoho',
-  'Copper',
-  'Freshsales',
-];
-
 interface VendorPageFacts {
   vendorPageType: ScoredSource['vendorPageType'];
   productName: string | null;
@@ -116,7 +98,7 @@ function detectVendorPageType(url: string, title: string, text: string): VendorP
   if (/(\/compare|\/vs|comparison)/.test(haystack)) {
     return 'comparison';
   }
-  if (/(features|meeting assistant|ai companion|sales teams|product)/.test(haystack)) {
+  if (/(features|product|overview|specification|specifications|datasheet|manual|for home|for business)/.test(haystack)) {
     return 'product';
   }
   return 'unknown';
@@ -129,6 +111,49 @@ function firstSentenceMatching(text: string, regex: RegExp) {
 
 function compactText(input: string) {
   return input.replace(/\s+/g, ' ').trim();
+}
+
+function repairMalformedJsonEscapes(input: string) {
+  return input
+    .replace(/\\u(?![0-9a-fA-F]{4})/g, '\\\\u')
+    .replace(/\\x([0-9a-fA-F]{0,2})/g, (_match, hex: string) => `\\\\x${hex}`)
+    .replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
+}
+
+function parseTavilyResponseBody(body: string) {
+  try {
+    return JSON.parse(body) as TavilyResponse;
+  } catch (error) {
+    const repairedBody = repairMalformedJsonEscapes(body);
+
+    if (repairedBody === body) {
+      const message = error instanceof Error ? error.message : 'Unknown JSON parse failure.';
+      throw new Error(`Tavily response JSON parse failed: ${message}`);
+    }
+
+    try {
+      return JSON.parse(repairedBody) as TavilyResponse;
+    } catch (repairError) {
+      const message = repairError instanceof Error ? repairError.message : 'Unknown repaired JSON parse failure.';
+      throw new Error(`Tavily response JSON parse failed after repair: ${message}`);
+    }
+  }
+}
+
+export function sanitizeOutboundQuery(input: string) {
+  const sanitized = input
+    .normalize('NFKC')
+    .replace(/[“”‘’"'`]/g, ' ')
+    .replace(/[–—]/g, '-')
+    .replace(/\.\./g, ' ')
+    .replace(/\\[ux][0-9a-fA-F]{0,4}/g, ' ')
+    .replace(/\\/g, ' ')
+    .replace(/[^\x20-\x7E]/g, ' ')
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return sanitized.length > 260 ? sanitized.slice(0, 260).trim() : sanitized;
 }
 
 function isDiscountPricingText(input: string) {
@@ -173,18 +198,18 @@ function extractCanonicalPricingText(text: string) {
   return null;
 }
 
-function extractListMatches(text: string, values: string[]) {
-  const lowered = text.toLowerCase();
-  return values.filter((value) => lowered.includes(value.toLowerCase()));
-}
-
 function extractTargetUser(text: string) {
   const patterns = [
+    /owner-occupied houses/i,
+    /homeowners/i,
+    /households/i,
     /small and medium(?:-sized)? businesses/i,
     /small businesses/i,
     /sales teams/i,
     /customer success teams/i,
     /enterprise teams/i,
+    /installers/i,
+    /portfolio landlords/i,
     /developers/i,
   ];
 
@@ -221,12 +246,12 @@ function buildCanonicalSnippet(pageType: CanonicalVendorPage['vendorPageType'], 
     RegExp
   > = {
     product:
-      /(meeting assistant|meeting notes|transcription|action items|crm|sales|summary|conversation intelligence)/i,
+      /(features?|capabilities|specifications?|datasheet|manual|warranty|capacity|backup|integration|workflow|summary|transcription|pricing)/i,
     pricing:
       /(\$|£|€|usd|gbp|eur|user\/month|seat\/month|billed annually|billed monthly|free plan)/i,
-    docs: /(salesforce|hubspot|crm|integration|sync|api|setup)/i,
-    newsroom: /(launch|introduces|announces|sales|meeting|crm|assistant)/i,
-    comparison: /(compare|comparison|vs|features|pricing|crm)/i,
+    docs: /(integration|setup|manual|api|datasheet|warranty|compatib|installation)/i,
+    newsroom: /(launch|introduces|announces|product|pricing|feature|availability)/i,
+    comparison: /(compare|comparison|vs|features|pricing|capacity|warranty)/i,
   };
 
   return (
@@ -250,8 +275,8 @@ function buildVendorPageFacts(
     vendorPageType: forcedPageType ?? detectVendorPageType(url, title, combined),
     productName: extractProductName(title, vendorTarget),
     targetUser: extractTargetUser(combined),
-    coreFeatures: extractListMatches(combined, featureKeywords).slice(0, 6),
-    crmIntegrations: extractListMatches(combined, crmKeywords).slice(0, 5),
+    coreFeatures: extractGenericCapabilityPhrases(combined, 6),
+    crmIntegrations: extractGenericEcosystemSignals(combined, 5),
     planPricingText: extractCanonicalPricingText(combined),
   };
 }
@@ -372,6 +397,11 @@ export class TavilySearchService implements WebSearchService {
   }
 
   private async fetchVariant(query: string) {
+    const sanitizedQuery = sanitizeOutboundQuery(query);
+    if (!sanitizedQuery) {
+      throw new Error('Search query became empty after sanitization.');
+    }
+
     let lastError: Error | null = null;
 
     for (let attempt = 1; attempt <= MAX_FETCH_ATTEMPTS; attempt += 1) {
@@ -383,7 +413,7 @@ export class TavilySearchService implements WebSearchService {
           },
           body: JSON.stringify({
             api_key: this.apiKey,
-            query,
+            query: sanitizedQuery,
             topic: 'general',
             search_depth: 'advanced',
             max_results: 4,
@@ -400,7 +430,7 @@ export class TavilySearchService implements WebSearchService {
           throw new Error(`Tavily request failed: ${response.status} ${body}`.trim());
         }
 
-        return (await response.json()) as TavilyResponse;
+        return parseTavilyResponseBody(await response.text());
       } catch (error) {
         lastError = error instanceof Error ? error : new Error('Unknown fetch error.');
         if (attempt < MAX_FETCH_ATTEMPTS) {
@@ -413,35 +443,48 @@ export class TavilySearchService implements WebSearchService {
   }
 
   private buildQueryVariants(queryPlan: PlannedSearchQuery) {
-    const variants = [queryPlan.query];
-    const vendorTarget = queryPlan.vendorTarget?.trim().toLowerCase();
-    const hintedDomain = vendorTarget ? vendorDomainHints[vendorTarget] : null;
+    const baseQuery = sanitizeOutboundQuery(queryPlan.query);
+    const variants = baseQuery ? [baseQuery] : [];
+    const sanitizedVendorTarget = queryPlan.vendorTarget
+      ? sanitizeOutboundQuery(queryPlan.vendorTarget)
+      : null;
+    const vendorTarget = sanitizedVendorTarget?.trim().toLowerCase();
+    const hintedDomain =
+      vendorTarget
+        ? vendorDomainHints[vendorTarget] ??
+          (() => {
+            const tokens = normalizeResearchText(vendorTarget)
+              .split(' ')
+              .filter((token) => token.length >= 3);
+            return tokens.length === 1 ? `${tokens[0]}.com` : null;
+          })()
+        : null;
 
     if (
       queryPlan.evidenceMode === 'vendor-primary' &&
-      queryPlan.vendorTarget &&
+      sanitizedVendorTarget &&
       queryPlan.intent === 'pricing'
     ) {
       variants.push(
         hintedDomain
-          ? `${queryPlan.vendorTarget} pricing plans site:${hintedDomain}`
-          : `${queryPlan.vendorTarget} pricing plans official pricing`,
+          ? sanitizeOutboundQuery(`${sanitizedVendorTarget} pricing plans site:${hintedDomain}`)
+          : sanitizeOutboundQuery(`${sanitizedVendorTarget} pricing plans official pricing`),
       );
     }
 
     if (
       queryPlan.evidenceMode === 'vendor-primary' &&
-      queryPlan.vendorTarget &&
+      sanitizedVendorTarget &&
       queryPlan.intent === 'competitor-features'
     ) {
       variants.push(
         hintedDomain
-          ? `${queryPlan.vendorTarget} product features CRM integrations sales teams site:${hintedDomain}`
-          : `${queryPlan.vendorTarget} product features CRM integrations sales teams`,
+          ? sanitizeOutboundQuery(`${sanitizedVendorTarget} product features site:${hintedDomain}`)
+          : sanitizeOutboundQuery(`${sanitizedVendorTarget} product features official`),
       );
     }
 
-    return [...new Set(variants)];
+    return [...new Set(variants.filter(Boolean))];
   }
 
   private async extractVendorPageFacts(
