@@ -184,8 +184,16 @@ export async function processDeepResearchRun(
   });
   await appendDeepResearchRunEvent(runId, {
     stage: "running",
-    eventType: "run_started",
-    message: "Deep research run started.",
+    eventType: options?.clarificationResponse
+      ? "run_resumed"
+      : options?.retry
+        ? "run_retried"
+        : "run_started",
+    message: options?.clarificationResponse
+      ? "Deep research run resumed."
+      : options?.retry
+        ? "Deep research run retried."
+        : "Deep research run started.",
   });
 
   try {

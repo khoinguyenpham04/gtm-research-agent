@@ -2,7 +2,6 @@
 
 import * as React from "react"
 
-import { NavDocuments } from "@/components/nav-documents"
 import { NavMain } from "@/components/nav-main"
 import { NavSecondary } from "@/components/nav-secondary"
 import { NavUser } from "@/components/nav-user"
@@ -15,7 +14,14 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
-import { LayoutDashboardIcon, Settings2Icon, CircleHelpIcon, DatabaseIcon, CommandIcon, SearchIcon } from "lucide-react"
+import {
+  LayoutDashboardIcon,
+  Settings2Icon,
+  CircleHelpIcon,
+  DatabaseIcon,
+  CommandIcon,
+  SearchIcon,
+} from "lucide-react"
 import Link from "next/link"
 
 const data = {
@@ -26,10 +32,26 @@ const data = {
   },
   navMain: [
     {
-      title: "Dashboard",
+      title: "Deep Research",
       url: "/dashboard",
       icon: (
         <LayoutDashboardIcon
+        />
+      ),
+    },
+    {
+      title: "Data Library",
+      url: "/dashboard/data-library",
+      icon: (
+        <DatabaseIcon
+        />
+      ),
+    },
+    {
+      title: "RAG Search",
+      url: "/dashboard/rag-search",
+      icon: (
+        <SearchIcon
         />
       ),
     },
@@ -48,24 +70,6 @@ const data = {
       url: "#",
       icon: (
         <CircleHelpIcon
-        />
-      ),
-    },
-    {
-      title: "Search",
-      url: "/",
-      icon: (
-        <SearchIcon
-        />
-      ),
-    },
-  ],
-  documents: [
-    {
-      name: "Data Library",
-      url: "/documents",
-      icon: (
-        <DatabaseIcon
         />
       ),
     },
@@ -92,7 +96,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarHeader>
       <SidebarContent>
         <NavMain items={data.navMain} />
-        <NavDocuments items={data.documents} />
         <NavSecondary items={data.navSecondary} className="mt-auto" />
       </SidebarContent>
       <SidebarFooter>

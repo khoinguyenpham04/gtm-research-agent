@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { DocumentSummary } from "@/lib/documents";
+import type { WorkspaceSummary } from "@/lib/workspaces";
 
 export const deepResearchRunStatusValues = [
   "queued",
@@ -42,6 +43,7 @@ export const deepResearchBudgetsSchema = z.object({
 export type DeepResearchBudgets = z.infer<typeof deepResearchBudgetsSchema>;
 
 export const createDeepResearchRunRequestSchema = z.object({
+  workspaceId: z.string().trim().min(1, "Workspace is required."),
   topic: z.string().trim().min(1, "Topic is required."),
   objective: z
     .string()
@@ -81,6 +83,7 @@ export interface DeepResearchRunEvent {
 export interface DeepResearchRunRecord {
   id: string;
   thread_id: string;
+  workspace_id: string | null;
   topic: string;
   objective: string | null;
   status: DeepResearchRunStatus;
@@ -95,6 +98,8 @@ export interface DeepResearchRunRecord {
 export interface DeepResearchRunResponse {
   id: string;
   status: DeepResearchRunStatus;
+  workspaceId?: string;
+  workspace?: WorkspaceSummary;
   topic: string;
   objective?: string;
   clarificationQuestion?: string;

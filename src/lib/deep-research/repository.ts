@@ -8,6 +8,11 @@ import type {
   DeepResearchRunStatus,
 } from "@/lib/deep-research/types";
 import { createSupabaseClients } from "@/lib/supabase";
+import {
+  assertWorkspaceDocumentSelection,
+  type WorkspaceSummary,
+  listWorkspaces,
+} from "@/lib/workspaces";
 
 type RunUpdate = Partial<
   Pick<
@@ -49,12 +54,15 @@ function mapEvent(row: DeepResearchRunEventRow): DeepResearchRunEvent {
 
 function mapRunResponse(
   run: DeepResearchRunRecord,
+  workspace: WorkspaceSummary | undefined,
   selectedDocuments: DocumentSummary[],
   events: DeepResearchRunEvent[],
 ): DeepResearchRunResponse {
   return {
     id: run.id,
     status: run.status,
+    workspaceId: run.workspace_id ?? undefined,
+    workspace,
     topic: run.topic,
     objective: run.objective ?? undefined,
     clarificationQuestion: run.clarification_question ?? undefined,
@@ -120,11 +128,17 @@ export async function createDeepResearchRunRecord(
   const id = crypto.randomUUID();
   const timestamp = new Date().toISOString();
 
+  const workspace = await assertWorkspaceDocumentSelection(
+    input.workspaceId,
+    input.selectedDocumentIds,
+  );
+
   const { data, error } = await supabaseAdmin
     .from("deep_research_runs")
     .insert({
       id,
       thread_id: id,
+      workspace_id: workspace.id,
       topic: input.topic,
       objective: input.objective ?? null,
       status: "queued",
@@ -132,7 +146,7 @@ export async function createDeepResearchRunRecord(
       last_progress_at: timestamp,
     })
     .select(
-      "id, thread_id, topic, objective, status, clarification_question, final_report_markdown, error_message, created_at, updated_at, last_progress_at",
+      "id, thread_id, workspace_id, topic, objective, status, clarification_question, final_report_markdown, error_message, created_at, updated_at, last_progress_at",
     )
     .single();
 
@@ -141,11 +155,6 @@ export async function createDeepResearchRunRecord(
   }
 
   const documents = await listDocumentsByIds(input.selectedDocumentIds);
-  if (documents.length !== input.selectedDocumentIds.length) {
-    throw new Error(
-      "One or more selected documents could not be found. Refresh the document list and try again.",
-    );
-  }
 
   if (documents.length > 0) {
     const { error: documentInsertError } = await supabaseAdmin
@@ -168,6 +177,7 @@ export async function createDeepResearchRunRecord(
     eventType: "run_created",
     message: "Deep research run queued.",
     payload: {
+      workspaceId: workspace.id,
       selectedDocumentIds: input.selectedDocumentIds,
       objective: input.objective ?? null,
     },
@@ -212,7 +222,7 @@ export async function updateDeepResearchRun(
     })
     .eq("id", runId)
     .select(
-      "id, thread_id, topic, objective, status, clarification_question, final_report_markdown, error_message, created_at, updated_at, last_progress_at",
+      "id, thread_id, workspace_id, topic, objective, status, clarification_question, final_report_markdown, error_message, created_at, updated_at, last_progress_at",
     )
     .single();
 
@@ -228,7 +238,7 @@ export async function getDeepResearchRunRecord(runId: string) {
   const { data, error } = await supabaseAdmin
     .from("deep_research_runs")
     .select(
-      "id, thread_id, topic, objective, status, clarification_question, final_report_markdown, error_message, created_at, updated_at, last_progress_at",
+      "id, thread_id, workspace_id, topic, objective, status, clarification_question, final_report_markdown, error_message, created_at, updated_at, last_progress_at",
     )
     .eq("id", runId)
     .maybeSingle();
@@ -250,12 +260,15 @@ export async function getDeepResearchRunResponse(runId: string) {
     return null;
   }
 
-  const [selectedDocuments, events] = await Promise.all([
+  const [selectedDocuments, events, workspaces] = await Promise.all([
     getRunDocuments(runId),
     getRunEvents(runId),
+    listWorkspaces(),
   ]);
 
-  return mapRunResponse(run, selectedDocuments, events);
+  const workspace = workspaces.find((item) => item.id === run.workspace_id);
+
+  return mapRunResponse(run, workspace, selectedDocuments, events);
 }
 
 export async function markDeepResearchRunStatus(

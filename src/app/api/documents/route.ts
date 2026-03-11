@@ -114,7 +114,7 @@ export async function GET(req: Request) {
 
 export async function DELETE(req: Request) {
   try {
-    const { supabase, supabaseStorage } = createSupabaseClients();
+    const { supabase, supabaseAdmin, supabaseStorage } = createSupabaseClients();
     const id = new URL(req.url).searchParams.get('id');
     if (!id) return NextResponse.json({ error: 'Document ID required' }, { status: 400 });
     const { data: docs } = await supabase.from('documents').select('metadata').eq('metadata->>document_id', id).limit(1);
@@ -122,6 +122,10 @@ export async function DELETE(req: Request) {
     if (filePath) await supabaseStorage.storage.from('documents').remove([filePath]);
     const { error } = await supabase.from('documents').delete().eq('metadata->>document_id', id);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    await Promise.all([
+      supabaseAdmin.from('workspace_documents').delete().eq('document_external_id', id),
+      supabaseAdmin.from('document_sources').delete().eq('document_external_id', id),
+    ]);
     return NextResponse.json({ success: true, fileDeleted: !!filePath });
   } catch (error: unknown) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Failed to delete document' }, { status: 500 });
