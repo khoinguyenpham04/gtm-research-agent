@@ -6,6 +6,22 @@ import { createSupabaseClients } from '@/lib/supabase';
 
 const openai = new OpenAI();
 
+interface PdfTextRun {
+  T?: string;
+}
+
+interface PdfTextEntry {
+  R?: PdfTextRun[];
+}
+
+interface PdfPage {
+  Texts?: PdfTextEntry[];
+}
+
+interface PdfParseData {
+  Pages?: PdfPage[];
+}
+
 function safeDecodeURIComponent(str: string): string {
   try { return decodeURIComponent(str); }
   catch { try { return decodeURIComponent(str.replace(/%/g, '%25')); } catch { return str; } }
@@ -18,15 +34,23 @@ async function extractTextFromFile(file: File): Promise<string> {
   if (fileName.endsWith('.pdf')) {
     const PDFParser = (await import('pdf2json')).default;
     return new Promise((resolve, reject) => {
-      const pdfParser = new (PDFParser as any)(null, true);
-      pdfParser.on('pdfParser_dataError', (err: any) => reject(new Error(`PDF parsing error: ${err.parserError}`)));
-      pdfParser.on('pdfParser_dataReady', (pdfData: any) => {
+      const pdfParser = new PDFParser(null, true);
+      pdfParser.on('pdfParser_dataError', (err: Error | { parserError: Error }) => {
+        const parserError =
+          err instanceof Error ? err.message : err.parserError.message;
+        reject(new Error(`PDF parsing error: ${parserError}`));
+      });
+      pdfParser.on('pdfParser_dataReady', (pdfData: PdfParseData) => {
         try {
           let fullText = '';
-          pdfData.Pages?.forEach((page: any) => page.Texts?.forEach((text: any) => text.R?.forEach((r: any) => r.T && (fullText += safeDecodeURIComponent(r.T) + ' '))));
+          pdfData.Pages?.forEach((page) => page.Texts?.forEach((text) => text.R?.forEach((run) => {
+            if (run.T) {
+              fullText += `${safeDecodeURIComponent(run.T)} `;
+            }
+          })));
           resolve(fullText.trim());
-        } catch (error: any) {
-          reject(new Error(`Error extracting text: ${error.message}`));
+        } catch (error: unknown) {
+          reject(new Error(`Error extracting text: ${error instanceof Error ? error.message : 'Unknown PDF parse failure'}`));
         }
       });
       pdfParser.parseBuffer(buffer);
@@ -96,7 +120,7 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json({ success: true, documentId, fileName: file.name, chunks: chunks.length, textLength: text.length, fileUrl: urlData.publicUrl });
-  } catch (error: any) {
-    return NextResponse.json({ success: false, error: error.message || 'Failed to process file' }, { status: 500 });
+  } catch (error: unknown) {
+    return NextResponse.json({ success: false, error: error instanceof Error ? error.message : 'Failed to process file' }, { status: 500 });
   }
 }

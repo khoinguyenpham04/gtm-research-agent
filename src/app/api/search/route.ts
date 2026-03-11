@@ -4,6 +4,14 @@ import { createSupabaseClients } from '@/lib/supabase';
 
 const openai = new OpenAI();
 
+interface SearchResultRow {
+  content: string;
+  metadata?: {
+    source?: string;
+    file_name?: string;
+  };
+}
+
 export async function POST(req: Request) {
   try {
     const { supabase } = createSupabaseClients();
@@ -15,7 +23,8 @@ export async function POST(req: Request) {
       match_count: 5,
     });
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    const context = results?.map((r: any) => r.content).join('\n---\n') || '';
+    const typedResults = (results ?? []) as SearchResultRow[];
+    const context = typedResults.map((result) => result.content).join('\n---\n');
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
@@ -23,8 +32,8 @@ export async function POST(req: Request) {
         { role: 'user', content: `Context: ${context}\n\nQuestion: ${query}` }
       ],
     });
-    return NextResponse.json({ answer: completion.choices[0].message.content, sources: results });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ answer: completion.choices[0].message.content, sources: typedResults });
+  } catch (error: unknown) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Search failed' }, { status: 500 });
   }
 }

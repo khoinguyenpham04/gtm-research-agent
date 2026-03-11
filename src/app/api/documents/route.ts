@@ -1,6 +1,22 @@
 import { NextResponse } from 'next/server';
 import { createSupabaseClients } from '@/lib/supabase';
 
+interface DocumentMetadata extends Record<string, unknown> {
+  document_id?: string;
+  file_name?: string;
+  file_type?: string;
+  file_size?: number;
+  upload_date?: string;
+  total_chunks?: number;
+  file_url?: string;
+  file_path?: string;
+}
+
+interface DocumentChunkRow {
+  content: string;
+  metadata: DocumentMetadata;
+}
+
 export async function GET(req: Request) {
   try {
     const { supabase, supabaseStorage } = createSupabaseClients();
@@ -60,7 +76,7 @@ export async function GET(req: Request) {
         file_size: m.file_size || 0,
         upload_date: m.upload_date || new Date().toISOString(),
         total_chunks: chunks.length,
-        fullText: chunks.map((c: any) => c.content).join('\n\n'),
+        fullText: (chunks as DocumentChunkRow[]).map((chunk) => chunk.content).join('\n\n'),
         file_url: m.file_url,
         file_path: m.file_path
       });
@@ -72,25 +88,27 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    const map = new Map();
-    documents?.forEach((doc: any) => {
+    const map = new Map<string, DocumentMetadata>();
+    (documents as { metadata: DocumentMetadata }[] | null)?.forEach((doc) => {
       const m = doc.metadata;
       if (m?.document_id && !map.has(m.document_id)) {
-        map.set(m.document_id, {
-          id: m.document_id,
-          file_name: m.file_name || 'Unknown',
-          file_type: m.file_type || 'unknown',
-          file_size: m.file_size || 0,
-          upload_date: m.upload_date || new Date().toISOString(),
-          total_chunks: m.total_chunks || 0,
-          file_url: m.file_url,
-          file_path: m.file_path,
-        });
+        map.set(m.document_id, m);
       }
     });
-    return NextResponse.json({ documents: Array.from(map.values()) });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({
+      documents: Array.from(map.values()).map((m) => ({
+        id: m.document_id,
+        file_name: m.file_name || 'Unknown',
+        file_type: m.file_type || 'unknown',
+        file_size: m.file_size || 0,
+        upload_date: m.upload_date || new Date().toISOString(),
+        total_chunks: m.total_chunks || 0,
+        file_url: m.file_url,
+        file_path: m.file_path,
+      })),
+    });
+  } catch (error: unknown) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Failed to load documents' }, { status: 500 });
   }
 }
 
@@ -105,7 +123,7 @@ export async function DELETE(req: Request) {
     const { error } = await supabase.from('documents').delete().eq('metadata->>document_id', id);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ success: true, fileDeleted: !!filePath });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Failed to delete document' }, { status: 500 });
   }
 }

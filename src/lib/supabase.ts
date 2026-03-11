@@ -44,9 +44,11 @@ export function getSupabaseConfig() {
 
 export function createSupabaseClients() {
   const { url, publishableKey, serviceRoleKey } = getSupabaseConfig();
+  const adminKey = serviceRoleKey ?? publishableKey;
 
   return {
     supabase: createClient(url, publishableKey),
-    supabaseStorage: createClient(url, serviceRoleKey ?? publishableKey),
+    supabaseAdmin: createClient(url, adminKey),
+    supabaseStorage: createClient(url, adminKey),
   };
 }

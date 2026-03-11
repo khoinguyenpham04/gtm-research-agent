@@ -56,8 +56,11 @@ export default function UploadModal({ isOpen, onClose, onUploadSuccess }: Upload
       } else {
         setMessage({ type: 'error', text: data.error || 'Upload failed' });
       }
-    } catch (error: any) {
-      setMessage({ type: 'error', text: error.message || 'Upload failed' });
+    } catch (error: unknown) {
+      setMessage({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'Upload failed',
+      });
     } finally {
       setUploading(false);
     }
@@ -149,4 +152,3 @@ export default function UploadModal({ isOpen, onClose, onUploadSuccess }: Upload
     </div>
   );
 }
-
