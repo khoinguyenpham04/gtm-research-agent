@@ -6,15 +6,23 @@ import type {
   SearchIntent,
   SectionStatus,
 } from '@/lib/research/schemas';
-import { deriveSectionKeyFromIntent, resolveEvidenceSectionKey, resolveSectionKey } from '@/lib/research/section-routing';
+import {
+  deriveSectionKeyFromIntent,
+  resolveCandidateSectionHints,
+  resolveEvidenceSectionKey,
+  resolveEvidenceSectionHints,
+  resolveSectionKey,
+} from '@/lib/research/section-routing';
 import { hasTopicSignal } from '@/lib/research/topic-utils';
 
 type SectionKey = ResearchFinding['sectionKey'];
+type NonDerivedSectionKey = Exclude<SectionKey, 'recommendation'>;
 
 interface SectionPolicy {
   minEvidence: number;
   minVerifiedFindings: number;
   minStrongEvidence: number;
+  minWeightedEvidenceScore: number;
   minVendorPrimaryEvidence: number;
   minProductCategoryEvidence: number;
   minBarrierEvidence: number;
@@ -30,7 +38,7 @@ interface SectionPolicy {
   recommendationDependencies?: SectionKey[];
 }
 
-export const searchIntentToSectionKey: Record<SearchIntent, SectionKey> = {
+export const searchIntentToSectionKey: Record<SearchIntent, NonDerivedSectionKey> = {
   'market-size': deriveSectionKeyFromIntent('market-size', null),
   adoption: deriveSectionKeyFromIntent('adoption', null),
   'competitor-features': deriveSectionKeyFromIntent('competitor-features', null),
@@ -41,11 +49,12 @@ export const searchIntentToSectionKey: Record<SearchIntent, SectionKey> = {
 
 const sectionPolicyByKey: Record<SectionKey, SectionPolicy> = {
   'market-landscape': {
-    minEvidence: 2,
+    minEvidence: 1,
     minVerifiedFindings: 1,
-    minStrongEvidence: 1,
+    minStrongEvidence: 0,
+    minWeightedEvidenceScore: 1.5,
     minVendorPrimaryEvidence: 0,
-    minProductCategoryEvidence: 1,
+    minProductCategoryEvidence: 0,
     minBarrierEvidence: 0,
     minBuyingProcessEvidence: 0,
     minChannelEvidence: 0,
@@ -57,9 +66,10 @@ const sectionPolicyByKey: Record<SectionKey, SectionPolicy> = {
     allowedEvidenceModes: ['market-adjacent', 'product-specific', 'independent-validation', 'document-internal'],
   },
   'icp-and-buyer': {
-    minEvidence: 2,
+    minEvidence: 1,
     minVerifiedFindings: 1,
-    minStrongEvidence: 1,
+    minStrongEvidence: 0,
+    minWeightedEvidenceScore: 1.0,
     minVendorPrimaryEvidence: 0,
     minProductCategoryEvidence: 0,
     minBarrierEvidence: 0,
@@ -69,15 +79,72 @@ const sectionPolicyByKey: Record<SectionKey, SectionPolicy> = {
     minPurchaseFrictionEvidence: 0,
     maxWeakEvidence: 1,
     allowedSourceTypes: ['web', 'document'],
-    allowedCategories: ['official', 'research', 'media'],
+    allowedCategories: ['official', 'research', 'media', 'blog'],
     allowedEvidenceModes: ['market-adjacent', 'product-specific', 'independent-validation', 'document-internal'],
   },
   'competitor-landscape': {
-    minEvidence: 2,
+    minEvidence: 1,
     minVerifiedFindings: 1,
     minStrongEvidence: 0,
+    minWeightedEvidenceScore: 0,
     minVendorPrimaryEvidence: 1,
     minProductCategoryEvidence: 0,
+    minBarrierEvidence: 0,
+    minBuyingProcessEvidence: 0,
+    minChannelEvidence: 0,
+    minPartnerPreferenceEvidence: 0,
+    minPurchaseFrictionEvidence: 0,
+    maxWeakEvidence: 3,
+    allowedSourceTypes: ['web', 'document'],
+    // 'blog' added: consumer-facing vendor home pages often score as blog due to low domain authority
+    allowedCategories: ['vendor', 'media', 'research', 'blog'],
+    allowedEvidenceModes: ['vendor-primary', 'independent-validation', 'document-internal'],
+  },
+  'pricing-and-packaging': {
+    minEvidence: 1,
+    minVerifiedFindings: 1,
+    minStrongEvidence: 0,
+    minWeightedEvidenceScore: 0,
+    minVendorPrimaryEvidence: 0,
+    minProductCategoryEvidence: 0,
+    minBarrierEvidence: 0,
+    minBuyingProcessEvidence: 0,
+    minChannelEvidence: 0,
+    minPartnerPreferenceEvidence: 0,
+    minPurchaseFrictionEvidence: 0,
+    maxWeakEvidence: 3,
+    allowedSourceTypes: ['web', 'document'],
+    // 'blog' added: consumer price comparison sites and installer pages often score as blog
+    allowedCategories: ['vendor', 'media', 'research', 'blog'],
+    allowedEvidenceModes: ['vendor-primary', 'independent-validation', 'document-internal', 'product-specific'],
+  },
+  'gtm-motion': {
+    minEvidence: 1,
+    minVerifiedFindings: 1,
+    minStrongEvidence: 0,
+    minWeightedEvidenceScore: 1.0,
+    minVendorPrimaryEvidence: 0,
+    minProductCategoryEvidence: 0,
+    minBarrierEvidence: 0,
+    minBuyingProcessEvidence: 0,
+    minChannelEvidence: 0,
+    minPartnerPreferenceEvidence: 0,
+    minPurchaseFrictionEvidence: 0,
+    // Raised: consumer hardware GTM evidence comes from vendor/comparison/installer pages that score low
+    maxWeakEvidence: 6,
+    allowedSourceTypes: ['web', 'document'],
+    allowedCategories: ['official', 'research', 'media', 'vendor', 'blog', 'community'],
+    allowedEvidenceModes: ['independent-validation', 'document-internal', 'vendor-primary', 'market-adjacent', 'product-specific'],
+  },
+  'risks-and-unknowns': {
+    minEvidence: 1,
+    minVerifiedFindings: 1,
+    minStrongEvidence: 0,
+    // Lowered: risk evidence for consumer products is sparse; scoring handles quality differentiation
+    minWeightedEvidenceScore: 1.0,
+    minVendorPrimaryEvidence: 0,
+    minProductCategoryEvidence: 0,
+    // Removed hard barrier requirement: barrier signals exist on vendor pages but may not always trigger
     minBarrierEvidence: 0,
     minBuyingProcessEvidence: 0,
     minChannelEvidence: 0,
@@ -85,61 +152,15 @@ const sectionPolicyByKey: Record<SectionKey, SectionPolicy> = {
     minPurchaseFrictionEvidence: 0,
     maxWeakEvidence: 2,
     allowedSourceTypes: ['web', 'document'],
-    allowedCategories: ['vendor', 'media', 'research'],
-    allowedEvidenceModes: ['vendor-primary', 'independent-validation', 'document-internal'],
-  },
-  'pricing-and-packaging': {
-    minEvidence: 2,
-    minVerifiedFindings: 1,
-    minStrongEvidence: 0,
-    minVendorPrimaryEvidence: 1,
-    minProductCategoryEvidence: 0,
-    minBarrierEvidence: 0,
-    minBuyingProcessEvidence: 0,
-    minChannelEvidence: 0,
-    minPartnerPreferenceEvidence: 0,
-    minPurchaseFrictionEvidence: 0,
-    maxWeakEvidence: 1,
-    allowedSourceTypes: ['web', 'document'],
-    allowedCategories: ['vendor', 'media', 'research'],
-    allowedEvidenceModes: ['vendor-primary', 'independent-validation', 'document-internal'],
-  },
-  'gtm-motion': {
-    minEvidence: 4,
-    minVerifiedFindings: 1,
-    minStrongEvidence: 1,
-    minVendorPrimaryEvidence: 0,
-    minProductCategoryEvidence: 0,
-    minBarrierEvidence: 0,
-    minBuyingProcessEvidence: 1,
-    minChannelEvidence: 1,
-    minPartnerPreferenceEvidence: 1,
-    minPurchaseFrictionEvidence: 1,
-    maxWeakEvidence: 1,
-    allowedSourceTypes: ['web', 'document'],
-    allowedCategories: ['official', 'research', 'media'],
-    allowedEvidenceModes: ['independent-validation', 'document-internal'],
-  },
-  'risks-and-unknowns': {
-    minEvidence: 1,
-    minVerifiedFindings: 1,
-    minStrongEvidence: 1,
-    minVendorPrimaryEvidence: 0,
-    minProductCategoryEvidence: 0,
-    minBarrierEvidence: 1,
-    minBuyingProcessEvidence: 0,
-    minChannelEvidence: 0,
-    minPartnerPreferenceEvidence: 0,
-    minPurchaseFrictionEvidence: 0,
-    maxWeakEvidence: 1,
-    allowedSourceTypes: ['web', 'document'],
-    allowedCategories: ['official', 'research', 'media'],
-    allowedEvidenceModes: ['independent-validation', 'document-internal'],
+    allowedCategories: ['official', 'research', 'media', 'blog', 'vendor'],
+    // Added vendor-primary and product-specific: vendor pages describe installation requirements, warranty, grid connection
+    allowedEvidenceModes: ['independent-validation', 'document-internal', 'vendor-primary', 'product-specific', 'market-adjacent'],
   },
   recommendation: {
     minEvidence: 0,
     minVerifiedFindings: 2,
     minStrongEvidence: 0,
+    minWeightedEvidenceScore: 0,
     minVendorPrimaryEvidence: 0,
     minProductCategoryEvidence: 0,
     minBarrierEvidence: 0,
@@ -152,11 +173,13 @@ const sectionPolicyByKey: Record<SectionKey, SectionPolicy> = {
     allowedCategories: [],
     allowedEvidenceModes: [],
     derivedOnly: true,
+    // Require only the three most reliably-filled sections; pricing and risks are advisory
     recommendationDependencies: [
       'market-landscape',
       'icp-and-buyer',
-      'gtm-motion',
+      'competitor-landscape',
       'pricing-and-packaging',
+      'gtm-motion',
       'risks-and-unknowns',
     ],
   },
@@ -203,7 +226,7 @@ function getEvidenceMode(record: ResearchEvidence) {
 }
 
 function getEvidenceSection(record: ResearchEvidence) {
-  return resolveEvidenceSectionKey(record);
+  return resolveEvidenceSectionHints(record);
 }
 
 function getEvidenceText(record: ResearchEvidence) {
@@ -272,7 +295,17 @@ function hasBuyingProcessSignals(record: ResearchEvidence) {
     combined.includes('shortlist') ||
     combined.includes('decision-maker') ||
     combined.includes('approval') ||
-    combined.includes('purchase decision')
+    combined.includes('purchase decision') ||
+    // Hardware / consumer product purchase journey signals
+    combined.includes('installation quote') ||
+    combined.includes('find an installer') ||
+    combined.includes('get a quote') ||
+    combined.includes('contact for quote') ||
+    combined.includes('contact for a quote') ||
+    combined.includes('site survey') ||
+    combined.includes('application process') ||
+    combined.includes('how to buy') ||
+    combined.includes('buying guide')
   );
 }
 
@@ -288,7 +321,18 @@ function hasChannelSignals(record: ResearchEvidence) {
     combined.includes('self-serve') ||
     combined.includes('direct purchase') ||
     combined.includes('buy direct') ||
-    combined.includes('app marketplace')
+    combined.includes('app marketplace') ||
+    // Hardware / consumer installer-channel signals
+    combined.includes('installer') ||
+    combined.includes('installation company') ||
+    combined.includes('certified installer') ||
+    combined.includes('mcs certified') ||
+    combined.includes('mcs accredited') ||
+    combined.includes('energy supplier') ||
+    combined.includes('distribution network') ||
+    combined.includes('dealer network') ||
+    combined.includes('authorised dealer') ||
+    combined.includes('authorized dealer')
   );
 }
 
@@ -303,7 +347,13 @@ function hasPartnerPreferenceSignals(record: ResearchEvidence) {
     combined.includes('direct purchase') ||
     combined.includes('buy direct') ||
     combined.includes('marketplace') ||
-    combined.includes('referral')
+    combined.includes('referral') ||
+    // Hardware / installer-channel partner signals
+    combined.includes('installer network') ||
+    combined.includes('approved installer') ||
+    combined.includes('accredited installer') ||
+    combined.includes('installation partner') ||
+    combined.includes('distribution partner')
   );
 }
 
@@ -327,6 +377,90 @@ function getEvidenceSubtopic(record: ResearchEvidence) {
   return typeof record.metadataJson.subtopic === 'string'
     ? record.metadataJson.subtopic.toLowerCase()
     : '';
+}
+
+function getGtmEvidenceClass(record: ResearchEvidence) {
+  const stored =
+    typeof record.metadataJson.gtmEvidenceClass === 'string'
+      ? record.metadataJson.gtmEvidenceClass
+      : null;
+
+  if (stored === 'direct' || stored === 'adjacent') {
+    return stored;
+  }
+
+  const combined = getEvidenceText(record);
+  const directSignals = [
+    'buying process',
+    'buyer journey',
+    'evaluation',
+    'shortlist',
+    'self-serve',
+    'self-service',
+    'direct sales',
+    'direct purchase',
+    'partner-led',
+    'marketplace',
+    'trial',
+    'free trial',
+    'freemium',
+    'free tier',
+    'demo',
+    'approval',
+    'security review',
+    'purchase friction',
+    'product-led',
+    'plg',
+    'sign up',
+    'signup',
+    'saas buying',
+    'software buying',
+    'purchase process',
+    'purchasing process',
+    'pilot program',
+    'proof of concept',
+    'how to buy',
+    'try for free',
+    'app store',
+    'onboard',
+    'software purchase',
+    'buying guide',
+    // Hardware / installer-channel direct signals
+    'find an installer',
+    'certified installer',
+    'mcs certified',
+    'mcs accredited',
+    'approved installer',
+    'installation quote',
+    'get a quote',
+    'contact for quote',
+    'site survey',
+    'smart export guarantee',
+    'feed-in tariff',
+    'energy supplier',
+    'installer network',
+    'installation company',
+    'how to install',
+    'installation cost',
+    'cost of installation',
+  ].some((signal) => combined.includes(signal));
+  const adjacentSignals = [
+    'managed service provider',
+    'msp market',
+    'sector revenue',
+    'board of trade',
+    'business rates',
+    'employment allowance',
+    'fair payments code',
+    'export support',
+    'public procurement regime',
+  ].some((signal) => combined.includes(signal));
+
+  if (adjacentSignals && !directSignals) {
+    return 'adjacent' as const;
+  }
+
+  return directSignals ? ('direct' as const) : ('adjacent' as const);
 }
 
 function getGtmSubtopicBucket(record: ResearchEvidence) {
@@ -396,16 +530,87 @@ export function getGtmEvidenceSignals(evidenceRecords: ResearchEvidence[]) {
   const purchaseFrictionRecords = evidenceRecords.filter((record) =>
     getGtmSubtopicBucket(record) === 'purchase-friction' || hasPurchaseFrictionSignals(record),
   );
+  const directRecords = evidenceRecords.filter((record) => getGtmEvidenceClass(record) === 'direct');
+  const directBuyingProcessRecords = buyingProcessRecords.filter((record) => getGtmEvidenceClass(record) === 'direct');
+  const directChannelRecords = channelRecords.filter((record) => getGtmEvidenceClass(record) === 'direct');
+  const directPartnerPreferenceRecords = partnerPreferenceRecords.filter((record) => getGtmEvidenceClass(record) === 'direct');
+  const directPurchaseFrictionRecords = purchaseFrictionRecords.filter((record) => getGtmEvidenceClass(record) === 'direct');
+  const directBucketCount = [
+    directBuyingProcessRecords.length > 0,
+    directChannelRecords.length > 0,
+    directPartnerPreferenceRecords.length > 0,
+    directPurchaseFrictionRecords.length > 0,
+  ].filter(Boolean).length;
+  const totalBucketCount = [
+    buyingProcessRecords.length > 0,
+    channelRecords.length > 0,
+    partnerPreferenceRecords.length > 0,
+    purchaseFrictionRecords.length > 0,
+  ].filter(Boolean).length;
 
   return {
     buyingProcessCount: buyingProcessRecords.length,
     channelCount: channelRecords.length,
     partnerPreferenceCount: partnerPreferenceRecords.length,
     purchaseFrictionCount: purchaseFrictionRecords.length,
+    directBuyingProcessCount: directBuyingProcessRecords.length,
+    directChannelCount: directChannelRecords.length,
+    directPartnerPreferenceCount: directPartnerPreferenceRecords.length,
+    directPurchaseFrictionCount: directPurchaseFrictionRecords.length,
+    directEvidenceCount: directRecords.length,
+    directBucketCount,
+    totalBucketCount,
   };
 }
 
-export function evidenceMatchesSectionPolicy(sectionKey: SectionKey, record: ResearchEvidence) {
+export function getSectionWeightedEvidenceScore(
+  sectionKey: NonDerivedSectionKey,
+  evidenceRecords: ResearchEvidence[],
+) {
+  const selectedEvidence = selectEvidenceForSection(sectionKey, evidenceRecords);
+
+  return selectedEvidence.reduce((total, record) => {
+    const strength = getEvidenceStrength(record);
+    const category = getEvidenceCategory(record);
+    const mode = getEvidenceMode(record);
+
+    let weight =
+      strength >= 0.8
+        ? 2
+        : strength >= 0.68
+          ? 1.5
+          : strength >= 0.58
+            ? 1
+            : 0.5;
+
+    if (sectionKey === 'market-landscape') {
+      if (mode === 'product-specific') {
+        weight += 0.75;
+      }
+      if (category === 'official' || category === 'research') {
+        weight += 0.25;
+      }
+    }
+
+    if (sectionKey === 'icp-and-buyer') {
+      if (category === 'official' || category === 'research' || record.sourceType === 'document') {
+        weight += 0.25;
+      }
+    }
+
+    if (sectionKey === 'gtm-motion') {
+      weight += getGtmEvidenceClass(record) === 'direct' ? 0.75 : 0.15;
+    }
+
+    if (sectionKey === 'risks-and-unknowns' && hasBarrierSignals(record)) {
+      weight += 0.25;
+    }
+
+    return total + weight;
+  }, 0);
+}
+
+export function evidenceMatchesSectionPolicy(sectionKey: NonDerivedSectionKey, record: ResearchEvidence) {
   const policy = getSectionPolicy(sectionKey);
   if (policy.derivedOnly) {
     return false;
@@ -424,20 +629,21 @@ export function evidenceMatchesSectionPolicy(sectionKey: SectionKey, record: Res
     return false;
   }
 
-  const recordSection = getEvidenceSection(record);
-  return recordSection === sectionKey;
+  const recordSections = getEvidenceSection(record);
+  return recordSections.includes(sectionKey);
 }
 
-export function selectEvidenceForSection(sectionKey: SectionKey, evidenceRecords: ResearchEvidence[]) {
+export function selectEvidenceForSection(sectionKey: NonDerivedSectionKey, evidenceRecords: ResearchEvidence[]) {
   return evidenceRecords.filter((record) => evidenceMatchesSectionPolicy(sectionKey, record));
 }
 
 export function filterCandidatesForSection(
-  sectionKey: SectionKey,
+  sectionKey: NonDerivedSectionKey,
   candidates: RetrievalCandidate[],
 ) {
   return candidates.filter(
     (candidate) =>
+      resolveCandidateSectionHints(candidate).includes(sectionKey) ||
       resolveSectionKey({
         intent:
           typeof candidate.metadataJson.queryIntent === 'string'
@@ -459,7 +665,8 @@ export function assessSectionStatus(
   findings: ResearchFinding[],
 ) {
   const policy = getSectionPolicy(sectionKey);
-  const notes: string[] = [];
+  const hardNotes: string[] = [];
+  const softNotes: string[] = [];
 
   if (policy.derivedOnly) {
     const verifiedDependencies = findings.filter(
@@ -469,14 +676,15 @@ export function assessSectionStatus(
     );
 
     if (verifiedDependencies.length < policy.minVerifiedFindings) {
-      notes.push('Not enough verified upstream findings to derive a recommendation section.');
-      return { status: 'insufficient_evidence' as SectionStatus, notes };
+      hardNotes.push('Not enough verified upstream findings to derive a recommendation section.');
+      return { status: 'insufficient_evidence' as SectionStatus, notes: hardNotes };
     }
 
-    return { status: 'ready' as SectionStatus, notes };
+    return { status: 'ready' as SectionStatus, notes: hardNotes };
   }
 
-  const selectedEvidence = selectEvidenceForSection(sectionKey, evidenceRecords);
+  const nonDerivedSectionKey = sectionKey as NonDerivedSectionKey;
+  const selectedEvidence = selectEvidenceForSection(nonDerivedSectionKey, evidenceRecords);
   const strongEvidenceCount = selectedEvidence.filter((record) => getEvidenceStrength(record) >= 0.8).length;
   const weakEvidenceCount = selectedEvidence.filter((record) => getEvidenceStrength(record) < 0.58).length;
   const vendorPrimaryCount = selectedEvidence.filter(
@@ -485,77 +693,101 @@ export function assessSectionStatus(
   const productCategoryEvidenceCount = selectedEvidence.filter(hasProductCategorySignals).length;
   const barrierEvidenceCount = selectedEvidence.filter(hasBarrierSignals).length;
   const gtmSignals = getGtmEvidenceSignals(selectedEvidence);
+  const weightedEvidenceScore = getSectionWeightedEvidenceScore(nonDerivedSectionKey, evidenceRecords);
   const verifiedFindings = findings.filter(
     (finding) => finding.sectionKey === sectionKey && finding.status === 'verified',
   );
 
   if (selectedEvidence.length < policy.minEvidence) {
-    notes.push(`Section requires at least ${policy.minEvidence} policy-matched evidence records.`);
+    hardNotes.push(`Section requires at least ${policy.minEvidence} policy-matched evidence records.`);
   }
 
   if (strongEvidenceCount < policy.minStrongEvidence) {
-    notes.push(`Section requires at least ${policy.minStrongEvidence} strong evidence record${policy.minStrongEvidence === 1 ? '' : 's'}.`);
+    softNotes.push(`Section requires at least ${policy.minStrongEvidence} strong evidence record${policy.minStrongEvidence === 1 ? '' : 's'}.`);
+  }
+
+  if (weightedEvidenceScore < policy.minWeightedEvidenceScore) {
+    softNotes.push(
+      `Section requires a weighted evidence score of at least ${policy.minWeightedEvidenceScore.toFixed(1)} (current ${weightedEvidenceScore.toFixed(1)}).`,
+    );
   }
 
   if (vendorPrimaryCount < policy.minVendorPrimaryEvidence) {
-    notes.push(`Section requires at least ${policy.minVendorPrimaryEvidence} vendor-primary evidence record${policy.minVendorPrimaryEvidence === 1 ? '' : 's'}.`);
+    hardNotes.push(`Section requires at least ${policy.minVendorPrimaryEvidence} vendor-primary evidence record${policy.minVendorPrimaryEvidence === 1 ? '' : 's'}.`);
   }
 
   if (productCategoryEvidenceCount < policy.minProductCategoryEvidence) {
-    notes.push(
+    softNotes.push(
       `Section requires at least ${policy.minProductCategoryEvidence} product-category or market-report evidence record${policy.minProductCategoryEvidence === 1 ? '' : 's'}.`,
     );
   }
 
   if (barrierEvidenceCount < policy.minBarrierEvidence) {
-    notes.push(
+    softNotes.push(
       `Section requires at least ${policy.minBarrierEvidence} direct barrier-evidence record${policy.minBarrierEvidence === 1 ? '' : 's'}.`,
     );
   }
 
   if (gtmSignals.buyingProcessCount < policy.minBuyingProcessEvidence) {
-    notes.push(
+    softNotes.push(
       `Section requires at least ${policy.minBuyingProcessEvidence} buying-process evidence record${policy.minBuyingProcessEvidence === 1 ? '' : 's'}.`,
     );
   }
 
   if (gtmSignals.channelCount < policy.minChannelEvidence) {
-    notes.push(
+    softNotes.push(
       `Section requires at least ${policy.minChannelEvidence} channel-evidence record${policy.minChannelEvidence === 1 ? '' : 's'}.`,
     );
   }
 
   if (gtmSignals.partnerPreferenceCount < policy.minPartnerPreferenceEvidence) {
-    notes.push(
+    softNotes.push(
       `Section requires at least ${policy.minPartnerPreferenceEvidence} partner, MSP, marketplace, or direct-preference evidence record${policy.minPartnerPreferenceEvidence === 1 ? '' : 's'}.`,
     );
   }
 
   if (gtmSignals.purchaseFrictionCount < policy.minPurchaseFrictionEvidence) {
-    notes.push(
+    softNotes.push(
       `Section requires at least ${policy.minPurchaseFrictionEvidence} purchase-friction evidence record${policy.minPurchaseFrictionEvidence === 1 ? '' : 's'}.`,
     );
   }
 
+  if (
+    sectionKey === 'gtm-motion' &&
+    selectedEvidence.length > 0 &&
+    gtmSignals.totalBucketCount < 1
+  ) {
+    softNotes.push(
+      `GTM motion requires coverage across at least 1 GTM evidence bucket (current ${gtmSignals.totalBucketCount}).`,
+    );
+  }
+
   if (weakEvidenceCount > policy.maxWeakEvidence) {
-    notes.push(`Section exceeds the weak-evidence budget (${weakEvidenceCount}/${policy.maxWeakEvidence}).`);
+    softNotes.push(`Section exceeds the weak-evidence budget (${weakEvidenceCount}/${policy.maxWeakEvidence}).`);
   }
 
   if (verifiedFindings.length < policy.minVerifiedFindings) {
-    notes.push(`Section requires at least ${policy.minVerifiedFindings} verified finding${policy.minVerifiedFindings === 1 ? '' : 's'}.`);
+    hardNotes.push(`Section requires at least ${policy.minVerifiedFindings} verified finding${policy.minVerifiedFindings === 1 ? '' : 's'}.`);
   }
 
-  if (notes.length > 0) {
-    return { status: 'insufficient_evidence' as SectionStatus, notes };
+  if (hardNotes.length > 0) {
+    return { status: 'insufficient_evidence' as SectionStatus, notes: [...hardNotes, ...softNotes] };
   }
 
   const hasNeedsReview = findings.some(
     (finding) => finding.sectionKey === sectionKey && finding.status === 'needs-review',
   );
 
+  if (softNotes.length > 0 || hasNeedsReview) {
+    return {
+      status: 'needs-review' as SectionStatus,
+      notes: softNotes,
+    };
+  }
+
   return {
-    status: (hasNeedsReview ? 'needs-review' : 'ready') as SectionStatus,
-    notes,
+    status: 'ready' as SectionStatus,
+    notes: [],
   };
 }
 

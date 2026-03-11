@@ -4,6 +4,7 @@ import type {
   ResearchEvidence,
   ResearchFinding,
 } from '@/lib/research/schemas';
+import { resolveEvidenceSectionKey } from '@/lib/research/section-routing';
 import {
   extractGenericCapabilityPhrases,
   extractGenericEcosystemSignals,
@@ -94,9 +95,10 @@ function isVendorPrimary(record: ResearchEvidence) {
 }
 
 function isCompetitorRecord(record: ResearchEvidence) {
+  const resolvedSection = resolveEvidenceSectionKey(record);
   return (
     isVendorPrimary(record) &&
-    (record.sectionKey === 'competitor-landscape' || record.sectionKey === 'pricing-and-packaging')
+    (resolvedSection === 'competitor-landscape' || resolvedSection === 'pricing-and-packaging')
   );
 }
 
@@ -144,8 +146,9 @@ function isCanonicalCompetitorRecord(record: ResearchEvidence) {
 }
 
 export function isPricingRecord(record: ResearchEvidence) {
+  const resolvedSection = resolveEvidenceSectionKey(record);
   return (
-    record.sectionKey === 'pricing-and-packaging' ||
+    resolvedSection === 'pricing-and-packaging' ||
     record.metadataJson.vendorPageType === 'pricing' ||
     typeof record.metadataJson.planPricingText === 'string'
   );
@@ -477,7 +480,9 @@ export function buildDeterministicCompetitorProfiles(evidenceRecords: ResearchEv
   const profiles: DeterministicCompetitorProfile[] = [];
 
   for (const [vendor, records] of grouped.entries()) {
-    const hasFeatureEvidence = records.some((record) => record.sectionKey === 'competitor-landscape');
+    const hasFeatureEvidence = records.some(
+      (record) => resolveEvidenceSectionKey(record) === 'competitor-landscape',
+    );
     const hasPricingEvidence = records.some(isPricingRecord);
     const coreFeatures = inferCoreFeatures(records);
 

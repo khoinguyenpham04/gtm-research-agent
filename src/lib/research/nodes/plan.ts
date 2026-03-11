@@ -6,10 +6,11 @@ import {
   setRunStage,
 } from '@/lib/research/repository';
 import {
-  researchPlanSchema,
+  researchPlanOutputSchema,
   type PlannedSearchQuery,
   type ResearchGraphState,
   type ResearchPlan,
+  type ResearchPlanOutput,
 } from '@/lib/research/schemas';
 import { resolvePlannedSearchQuery } from '@/lib/research/section-routing';
 import { deriveTopicSearchPhrase } from '@/lib/research/topic-utils';
@@ -387,8 +388,8 @@ export async function runPlanNode(state: ResearchGraphState) {
     .map((document) => document.fileName ?? document.documentExternalId)
     .join(', ');
 
-  const plan = await generateStructuredOutput<ResearchPlan>({
-    schema: researchPlanSchema,
+  const plan = await generateStructuredOutput<ResearchPlanOutput>({
+    schema: researchPlanOutputSchema,
     system:
       'You are a GTM research planner. Return concise research questions, four report sections, and decomposed search queries with explicit section, claim type, evidence mode, and vendor targets when relevant.',
     prompt: [
@@ -423,7 +424,7 @@ export async function runPlanNode(state: ResearchGraphState) {
       '- icp-and-buyer should have at least 2 queries: one adoption query and one workflow pain query',
       '- competitor-landscape should include vendor-targeted queries for likely competitors in the topic category',
       '- pricing-and-packaging should include vendor-targeted pricing queries for likely competitors in the topic category',
-      '- gtm-motion should target buying process, channel preference, partner or MSP or marketplace preference, and purchase friction',
+      '- gtm-motion should target buying process, channel preference (direct, partner, installer, retailer, marketplace, or other), and purchase friction',
       '- risks-and-unknowns should target trust, integration, skills, or adoption barriers',
       '- market-size and adoption queries should explicitly target primary evidence with terms like site:gov.uk, site:ons.gov.uk, site:oecd.org, filetype:pdf, report, survey, or statistics',
       '- competitor-features and pricing queries should name likely vendors and prefer official vendor domains or pricing pages',
@@ -433,7 +434,7 @@ export async function runPlanNode(state: ResearchGraphState) {
       '- queries must be specific, evidence-oriented, and optimized for March 10, 2026 context',
     ].join('\n'),
   });
-  const normalizedPlan = normalizePlan(plan, state.topic);
+  const normalizedPlan = normalizePlan(plan as ResearchPlan, state.topic);
 
   await saveRunPlan(state.runId, normalizedPlan);
   await appendResearchEvent(state.runId, 'plan', 'stage_completed', 'Research plan saved.', {

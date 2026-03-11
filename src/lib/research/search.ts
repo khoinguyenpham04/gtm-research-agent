@@ -282,7 +282,7 @@ function buildVendorPageFacts(
 }
 
 export class TavilySearchService implements WebSearchService {
-  constructor(private readonly apiKey = process.env.TAVILY_API_KEY?.trim()) {}
+  constructor(protected readonly apiKey = process.env.TAVILY_API_KEY?.trim()) {}
 
   async searchMany(queries: PlannedSearchQuery[]) {
     if (!this.apiKey) {
@@ -326,7 +326,7 @@ export class TavilySearchService implements WebSearchService {
     return dedupedResults;
   }
 
-  private async searchOne(queryPlan: PlannedSearchQuery) {
+  protected async searchOne(queryPlan: PlannedSearchQuery) {
     const canonicalSectionKey = resolveSectionKey({
       intent: queryPlan.intent,
       subtopic: queryPlan.subtopic,
@@ -396,7 +396,7 @@ export class TavilySearchService implements WebSearchService {
     return results.flat();
   }
 
-  private async fetchVariant(query: string) {
+  protected async fetchVariant(query: string): Promise<TavilyResponse> {
     const sanitizedQuery = sanitizeOutboundQuery(query);
     if (!sanitizedQuery) {
       throw new Error('Search query became empty after sanitization.');
@@ -442,7 +442,7 @@ export class TavilySearchService implements WebSearchService {
     throw lastError ?? new Error('Web search request failed.');
   }
 
-  private buildQueryVariants(queryPlan: PlannedSearchQuery) {
+  protected buildQueryVariants(queryPlan: PlannedSearchQuery) {
     const baseQuery = sanitizeOutboundQuery(queryPlan.query);
     const variants = baseQuery ? [baseQuery] : [];
     const sanitizedVendorTarget = queryPlan.vendorTarget
@@ -487,7 +487,7 @@ export class TavilySearchService implements WebSearchService {
     return [...new Set(variants.filter(Boolean))];
   }
 
-  private async extractVendorPageFacts(
+  protected async extractVendorPageFacts(
     url: string,
     title: string,
     snippet: string,
@@ -528,7 +528,7 @@ export class TavilySearchService implements WebSearchService {
     return sources.filter((source): source is ScoredSource => Boolean(source));
   }
 
-  private async buildCanonicalVendorSource(
+  protected async buildCanonicalVendorSource(
     queryPlan: PlannedSearchQuery,
     page: CanonicalVendorPage,
     index: number,
@@ -589,7 +589,7 @@ export class TavilySearchService implements WebSearchService {
     }
   }
 
-  private async mapWithConcurrency<T, R>(
+  protected async mapWithConcurrency<T, R>(
     items: T[],
     concurrency: number,
     worker: (item: T, index: number) => Promise<R>,
@@ -612,9 +612,185 @@ export class TavilySearchService implements WebSearchService {
     return results;
   }
 
-  private delay(ms: number) {
+  protected delay(ms: number) {
     return new Promise((resolve) => {
       setTimeout(resolve, ms);
     });
   }
+}
+
+// ---------------------------------------------------------------------------
+// Brave Search  (free tier: 2,000 queries/month — https://api.search.brave.com)
+// Set BRAVE_SEARCH_API_KEY to use.
+// ---------------------------------------------------------------------------
+
+interface BraveWebResult {
+  title?: string;
+  url?: string;
+  description?: string;
+}
+
+interface BraveResponse {
+  web?: { results?: BraveWebResult[] };
+}
+
+export class BraveSearchService extends TavilySearchService {
+  constructor(private readonly braveApiKey = process.env.BRAVE_SEARCH_API_KEY?.trim()) {
+    // Pass a dummy string so the parent's `!this.apiKey` guard doesn't trigger.
+    // The actual key check happens in our override.
+    super('brave');
+  }
+
+  async searchMany(queries: PlannedSearchQuery[]) {
+    if (!this.braveApiKey) {
+      throw new Error('Missing BRAVE_SEARCH_API_KEY.');
+    }
+    return super.searchMany(queries);
+  }
+
+  protected override async fetchVariant(query: string): Promise<TavilyResponse> {
+    const sanitizedQuery = sanitizeOutboundQuery(query);
+    if (!sanitizedQuery) {
+      throw new Error('Search query became empty after sanitization.');
+    }
+
+    let lastError: Error | null = null;
+
+    for (let attempt = 1; attempt <= MAX_FETCH_ATTEMPTS; attempt += 1) {
+      try {
+        const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(sanitizedQuery)}&count=5&search_lang=en`;
+        const response = await fetch(url, {
+          headers: {
+            'Accept': 'application/json',
+            'Accept-Encoding': 'gzip',
+            'X-Subscription-Token': this.braveApiKey!,
+          },
+          cache: 'no-store',
+          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        });
+
+        if (!response.ok) {
+          const body = await response.text();
+          throw new Error(`Brave Search request failed: ${response.status} ${body}`.trim());
+        }
+
+        const data = await response.json() as BraveResponse;
+        return {
+          results: (data.web?.results ?? []).map((r) => ({
+            title: r.title,
+            url: r.url,
+            content: r.description,
+          })),
+        };
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error('Unknown fetch error.');
+        if (attempt < MAX_FETCH_ATTEMPTS) {
+          await this.delay(RETRY_DELAY_MS * attempt);
+        }
+      }
+    }
+
+    throw lastError ?? new Error('Brave Search request failed.');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Exa Search  (free tier: 1,000 requests/month — https://exa.ai)
+// Set EXA_API_KEY to use. Exa uses neural+keyword hybrid search, which works
+// well for research queries about market data and vendor features.
+// ---------------------------------------------------------------------------
+
+interface ExaResult {
+  title?: string;
+  url?: string;
+  text?: string;
+}
+
+interface ExaResponse {
+  results?: ExaResult[];
+}
+
+export class ExaSearchService extends TavilySearchService {
+  constructor(private readonly exaApiKey = process.env.EXA_API_KEY?.trim()) {
+    super('exa');
+  }
+
+  async searchMany(queries: PlannedSearchQuery[]) {
+    if (!this.exaApiKey) {
+      throw new Error('Missing EXA_API_KEY.');
+    }
+    return super.searchMany(queries);
+  }
+
+  protected override async fetchVariant(query: string): Promise<TavilyResponse> {
+    const sanitizedQuery = sanitizeOutboundQuery(query);
+    if (!sanitizedQuery) {
+      throw new Error('Search query became empty after sanitization.');
+    }
+
+    let lastError: Error | null = null;
+
+    for (let attempt = 1; attempt <= MAX_FETCH_ATTEMPTS; attempt += 1) {
+      try {
+        const response = await fetch('https://api.exa.ai/search', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': this.exaApiKey!,
+          },
+          body: JSON.stringify({
+            query: sanitizedQuery,
+            numResults: 5,
+            type: 'auto',
+            contents: { text: { maxCharacters: 600 } },
+          }),
+          cache: 'no-store',
+          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        });
+
+        if (!response.ok) {
+          const body = await response.text();
+          throw new Error(`Exa Search request failed: ${response.status} ${body}`.trim());
+        }
+
+        const data = await response.json() as ExaResponse;
+        return {
+          results: (data.results ?? []).map((r) => ({
+            title: r.title,
+            url: r.url,
+            content: r.text,
+          })),
+        };
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error('Unknown fetch error.');
+        if (attempt < MAX_FETCH_ATTEMPTS) {
+          await this.delay(RETRY_DELAY_MS * attempt);
+        }
+      }
+    }
+
+    throw lastError ?? new Error('Exa Search request failed.');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Factory — selects provider based on SEARCH_PROVIDER env var.
+// Defaults to Tavily for backwards compatibility.
+//   SEARCH_PROVIDER=brave  → BraveSearchService  (BRAVE_SEARCH_API_KEY required)
+//   SEARCH_PROVIDER=exa    → ExaSearchService    (EXA_API_KEY required)
+//   SEARCH_PROVIDER=tavily → TavilySearchService (TAVILY_API_KEY required, default)
+// ---------------------------------------------------------------------------
+
+export function createSearchService(): WebSearchService {
+  const provider = (process.env.SEARCH_PROVIDER ?? 'tavily').toLowerCase().trim();
+
+  if (provider === 'brave') {
+    return new BraveSearchService();
+  }
+
+  if (provider === 'exa') {
+    return new ExaSearchService();
+  }
+
+  return new TavilySearchService();
 }

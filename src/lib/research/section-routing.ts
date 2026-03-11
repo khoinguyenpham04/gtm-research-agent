@@ -3,10 +3,20 @@ import type {
   PlannedSearchQuery,
   ResearchEvidence,
   ResearchFinding,
+  RetrievalCandidate,
   SearchIntent,
 } from '@/lib/research/schemas';
 
 type SectionKey = Exclude<ResearchFinding['sectionKey'], 'recommendation'>;
+
+const sectionKeyValues = [
+  'market-landscape',
+  'icp-and-buyer',
+  'competitor-landscape',
+  'pricing-and-packaging',
+  'gtm-motion',
+  'risks-and-unknowns',
+] as const satisfies readonly SectionKey[];
 
 const riskSubtopicTokens = [
   'adoption-barrier',
@@ -41,6 +51,35 @@ function normalize(value: unknown) {
 
 function hasToken(input: string, tokens: string[]) {
   return tokens.some((token) => input.includes(token));
+}
+
+function uniqueSectionKeys(values: Array<SectionKey | null | undefined>) {
+  return values.filter((value, index, allValues): value is SectionKey =>
+    Boolean(value) && allValues.indexOf(value) === index);
+}
+
+function coerceSectionKey(value: unknown): SectionKey | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const normalized = normalize(value);
+  return sectionKeyValues.find((sectionKey) => sectionKey === normalized) ?? null;
+}
+
+function getMetadataSectionHints(metadata: Record<string, unknown>): SectionKey[] {
+  const arrayHints = [
+    ...(Array.isArray(metadata.sectionHints) ? metadata.sectionHints : []),
+    ...(Array.isArray(metadata.candidateSectionHints) ? metadata.candidateSectionHints : []),
+  ].map(coerceSectionKey);
+
+  const scalarHints = [
+    metadata.primarySectionHint,
+    metadata.taskSectionKey,
+    metadata.sectionKey,
+  ].map(coerceSectionKey);
+
+  return uniqueSectionKeys([...arrayHints, ...scalarHints]);
 }
 
 export function deriveSectionKeyFromIntent(
@@ -146,6 +185,11 @@ export function resolvePlannedSearchQuery(query: PlannedSearchQuery): PlannedSea
 }
 
 export function resolveEvidenceSectionKey(record: Pick<ResearchEvidence, 'sectionKey' | 'metadataJson'>): SectionKey {
+  const metadataHints = getMetadataSectionHints(record.metadataJson ?? {});
+  if (metadataHints.length > 0) {
+    return metadataHints[0];
+  }
+
   const metadata = record.metadataJson ?? {};
   const intent = normalize(metadata.queryIntent) as SearchIntent | '';
   const claimType = normalize(metadata.claimType) as ClaimType | '';
@@ -156,6 +200,39 @@ export function resolveEvidenceSectionKey(record: Pick<ResearchEvidence, 'sectio
     sectionKey: record.sectionKey,
     claimType: claimType || undefined,
   });
+}
+
+export function resolveEvidenceSectionHints(
+  record: Pick<ResearchEvidence, 'sectionKey' | 'metadataJson'>,
+): SectionKey[] {
+  const metadata = record.metadataJson ?? {};
+  const metadataHints = getMetadataSectionHints(metadata);
+  const intent = normalize(metadata.queryIntent) as SearchIntent | '';
+  const claimType = normalize(metadata.claimType) as ClaimType | '';
+  const fallback = resolveSectionKey({
+    intent: intent || undefined,
+    subtopic: normalize(metadata.subtopic),
+    sectionKey: record.sectionKey,
+    claimType: claimType || undefined,
+  });
+
+  return uniqueSectionKeys([...metadataHints, fallback]);
+}
+
+export function resolveCandidateSectionHints(
+  candidate: Pick<RetrievalCandidate, 'sectionKey' | 'claimType' | 'metadataJson'>,
+): SectionKey[] {
+  const metadata = candidate.metadataJson ?? {};
+  const metadataHints = getMetadataSectionHints(metadata);
+  const intent = normalize(metadata.queryIntent) as SearchIntent | '';
+  const fallback = resolveSectionKey({
+    intent: intent || undefined,
+    sectionKey: candidate.sectionKey,
+    claimType: candidate.claimType,
+    subtopic: typeof metadata.subtopic === 'string' ? metadata.subtopic : null,
+  });
+
+  return uniqueSectionKeys([...metadataHints, fallback]);
 }
 
 export function resolveFindingSectionKey(

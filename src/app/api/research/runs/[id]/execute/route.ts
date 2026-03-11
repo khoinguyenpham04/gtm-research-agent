@@ -4,11 +4,20 @@ import { getResearchRunSnapshot } from '@/lib/research/repository';
 
 export const dynamic = 'force-dynamic';
 
-export async function POST(_: Request, context: { params: Promise<{ id: string }> }) {
+export async function POST(req: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
+  let body: { clarificationResponse?: string | null } | null = null;
 
   try {
-    const snapshot = await executeResearchRun(id);
+    body = (await req.json()) as { clarificationResponse?: string | null };
+  } catch {
+    body = null;
+  }
+
+  try {
+    const snapshot = await executeResearchRun(id, {
+      clarificationResponse: body?.clarificationResponse ?? null,
+    });
     return NextResponse.json(snapshot);
   } catch (error) {
     try {

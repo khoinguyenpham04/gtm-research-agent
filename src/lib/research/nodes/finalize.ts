@@ -73,7 +73,7 @@ function buildCompetitorMatrixMarkdown(entries: CompetitorMatrixEntry[]) {
 
   const lines = [
     '### Competitor Matrix',
-    '| Vendor | ICP | Core features | Integrations / ecosystem | Pricing evidence | Target segment | Confidence |',
+    '| Vendor | ICP | Core features | Ecosystem / integrations | Pricing evidence | Target segment | Confidence |',
     '| --- | --- | --- | --- | --- | --- | --- |',
   ];
 
@@ -184,7 +184,7 @@ function buildPricingThesis(
   competitorMatrix: CompetitorMatrixEntry[],
 ) {
   if (pricingClaims.length === 0 && competitorMatrix.length === 0) {
-    return 'Pricing evidence is still limited; validate whether buyers expect transparent published pricing, installer quotes, or sales-assisted packaging.';
+    return 'Pricing evidence is still limited; validate whether buyers expect transparent published pricing, installer or configuration quotes, or sales-assisted packaging.';
   }
 
   const pricingText = [
@@ -193,7 +193,7 @@ function buildPricingThesis(
   ].join(' ');
 
   if (pricingText.includes('enterprise') || pricingText.includes('contact')) {
-    return 'Use transparent published pricing where possible and keep a sales-assisted or quote-led path for larger or more customized deployments.';
+    return 'Use transparent published pricing where possible and keep a quote-led or sales-assisted path for larger or more customized deployments.';
   }
 
   if (pricingText.includes('installed') || pricingText.includes('configuration') || pricingText.includes('quote')) {
@@ -223,26 +223,28 @@ function buildRecommendationSection(
   competitorMatrix: CompetitorMatrixEntry[],
 ) {
   const dependencies = getSectionPolicy('recommendation').recommendationDependencies ?? [];
-  const requiredReadySections: ResearchFinding['sectionKey'][] = [
-    'market-landscape',
-    'icp-and-buyer',
-    'pricing-and-packaging',
-    'risks-and-unknowns',
-  ];
-  const missingRequiredSections = requiredReadySections.filter(
-    (sectionKey) => !readySectionKeys.has(sectionKey),
+  // Accept needs-review sections as sufficient prereqs — they have verified findings even if
+  // some claims are still uncertain. This prevents a single ambiguous market forecast from
+  // blocking the entire recommendation.
+  const needsReviewSectionKeys = new Set(
+    baseSections
+      .filter((section) => section.status === 'needs-review')
+      .map((section) => section.sectionKey as ResearchFinding['sectionKey']),
   );
+  const acceptableSectionKeys = new Set([...Array.from(readySectionKeys), ...Array.from(needsReviewSectionKeys)]);
   const upstreamClaims = findings.filter(
     (finding) =>
       finding.status === 'verified' &&
       finding.inferenceLabel !== 'speculative' &&
-      dependencies.includes(finding.sectionKey) &&
-      readySectionKeys.has(finding.sectionKey),
+      finding.sectionKey !== 'recommendation' &&
+      (dependencies.length === 0 || dependencies.includes(finding.sectionKey)) &&
+      acceptableSectionKeys.has(finding.sectionKey),
   );
+  const acceptableUpstreamSectionCount = new Set(upstreamClaims.map((finding) => finding.sectionKey)).size;
 
-  if (missingRequiredSections.length > 0 || upstreamClaims.length < 3) {
+  if (acceptableUpstreamSectionCount < 3 || upstreamClaims.length < 3) {
     const blockingNotes = [
-      ...missingRequiredSections.map((sectionKey) => `Recommendation requires ${sectionKey} to be ready.`),
+      'Recommendation needs verified support from at least 3 non-recommendation sections.',
       ...(upstreamClaims.length < 3
         ? ['Not enough verified upstream findings to derive a recommendation safely.']
         : []),
@@ -298,7 +300,7 @@ function buildRecommendationSection(
 
   if (recommendationInput.openQuestions.length === 0) {
     recommendationInput.openQuestions.push(
-      'Validate UK buying-path evidence for direct, partner, MSP, or marketplace-led acquisition before committing to a scaled GTM motion.',
+      'Validate buying-path evidence for direct, partner, installer, retailer, or other channel-led acquisition before committing to a scaled GTM motion.',
     );
   }
 
@@ -505,7 +507,7 @@ export async function runFinalizeNode(state: ResearchGraphState) {
   );
   const sections = buildReportSections(
     state.topic,
-    state.objective,
+    state.objective ?? undefined,
     state.findings,
     state.competitorMatrix,
     state.evidenceRecords,

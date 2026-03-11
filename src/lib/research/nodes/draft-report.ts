@@ -260,13 +260,24 @@ function buildDeterministicCommercialFindings(
 }
 
 export async function runDraftReportNode(state: ResearchGraphState) {
+  return runDraftReportNodeInternal(state);
+}
+
+export async function runDraftReportNodeForceRefresh(state: ResearchGraphState) {
+  return runDraftReportNodeInternal(state, { forceRefresh: true });
+}
+
+async function runDraftReportNodeInternal(
+  state: ResearchGraphState,
+  options?: { forceRefresh?: boolean },
+) {
   console.info(`[research:${state.runId}] stage_start`, { stage: 'draft_report' });
 
   if (!state.plan) {
     throw new Error('Cannot extract claims without a research plan.');
   }
 
-  if (await hasStageCompleted(state.runId, 'draft_report')) {
+  if (!options?.forceRefresh && await hasStageCompleted(state.runId, 'draft_report')) {
     const findings = await listResearchFindings(state.runId);
 
     return {
@@ -313,8 +324,8 @@ export async function runDraftReportNode(state: ResearchGraphState) {
       synthesisEvidence,
       ['gtm-motion', 'risks-and-unknowns'],
       [
-        'gtm-motion claims must be about buying process, channel preference, partner or MSP or marketplace versus direct route, and purchase friction.',
-        'risks-and-unknowns claims should focus on deployment, compliance, privacy, consent, integration, trust, or rollout friction.',
+        'gtm-motion claims must be about buying process, channel preference, route-to-market (direct, partner, installer, retailer, marketplace, or other), and purchase friction.',
+        'risks-and-unknowns claims should focus on regulatory, compliance, safety, certification, trust, implementation, or adoption friction barriers.',
       ],
     ),
   ]);

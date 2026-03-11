@@ -21,7 +21,11 @@ import {
   type ResearchGraphState,
   verifiedFindingSchema,
 } from '@/lib/research/schemas';
-import { resolveEvidenceSectionKey, resolveFindingSectionKey, resolveSectionKey } from '@/lib/research/section-routing';
+import {
+  resolveEvidenceSectionHints,
+  resolveFindingSectionKey,
+  resolveSectionKey,
+} from '@/lib/research/section-routing';
 import { getGtmEvidenceSignals, getSectionPolicy, selectEvidenceForSection } from '@/lib/research/section-policy';
 import { coerceSourceCategory, getEvidenceRuleAssessment } from '@/lib/research/source-scoring';
 import { deriveTopicSearchPhrase } from '@/lib/research/topic-utils';
@@ -132,7 +136,7 @@ function buildVerificationEvidenceSummary(
   sectionKeys: VerificationSectionKey[],
 ) {
   const scopedEvidence = evidenceRecords.filter((record) =>
-    sectionKeys.includes(resolveEvidenceSectionKey(record)),
+    resolveEvidenceSectionHints(record).some((sectionKey) => sectionKeys.includes(sectionKey)),
   );
 
   return scopedEvidence
@@ -140,7 +144,7 @@ function buildVerificationEvidenceSummary(
       [
         `Evidence ID: ${record.id}`,
         `Source type: ${record.sourceType}`,
-        `Section: ${record.sectionKey ?? 'unassigned'}`,
+        `Section hints: ${resolveEvidenceSectionHints(record).join(', ') || 'unassigned'}`,
         `Title: ${record.title}`,
         `URL: ${record.url ?? 'n/a'}`,
         `Excerpt: ${record.excerpt}`,
@@ -291,6 +295,44 @@ function getPricingFindingAssessment(
 function getIncompleteGtmRequirements(evidenceRecords: ResearchEvidence[]) {
   const gtmEvidence = selectEvidenceForSection('gtm-motion', evidenceRecords);
   const gtmSignals = getGtmEvidenceSignals(gtmEvidence);
+  const satisfiedSignalCount = [
+    gtmSignals.buyingProcessCount,
+    gtmSignals.channelCount,
+    gtmSignals.partnerPreferenceCount,
+    gtmSignals.purchaseFrictionCount,
+  ].filter((count) => count >= 1).length;
+  const getMode = (record: ResearchEvidence) =>
+    typeof record.metadataJson.evidenceMode === 'string'
+      ? record.metadataJson.evidenceMode
+      : record.sourceType === 'document'
+        ? 'document-internal'
+        : 'market-adjacent';
+
+  const hasDerivedGtmSupport =
+    gtmEvidence.length >= 2 &&
+    gtmEvidence.some((record) => record.metadataJson.evidenceMode === 'vendor-primary') &&
+    gtmEvidence.some((record) => {
+      const mode = getMode(record);
+      return mode === 'independent-validation' || mode === 'document-internal';
+    });
+  const hasDirectGtmSupport =
+    gtmEvidence.length >= 1 &&
+    satisfiedSignalCount >= 2 &&
+    gtmEvidence.some((record) => {
+      const mode = getMode(record);
+      return mode === 'independent-validation' || mode === 'document-internal';
+    });
+  // Vendor pages that show their own distribution channels (self-serve, demo booking, trial)
+  // are valid primary sources for GTM motion claims — the vendor is demonstrating how they
+  // go to market. Allow verification when 2+ vendor-primary sources cover 2+ GTM buckets.
+  const hasVendorDemonstratedGtm =
+    gtmEvidence.filter((record) => record.metadataJson.evidenceMode === 'vendor-primary').length >= 2 &&
+    satisfiedSignalCount >= 2;
+
+  if (hasDerivedGtmSupport || hasDirectGtmSupport || hasVendorDemonstratedGtm) {
+    return [];
+  }
+
   const missing: string[] = [];
 
   if (gtmSignals.buyingProcessCount < 1) {
@@ -300,7 +342,7 @@ function getIncompleteGtmRequirements(evidenceRecords: ResearchEvidence[]) {
     missing.push('channel evidence');
   }
   if (gtmSignals.partnerPreferenceCount < 1) {
-    missing.push('partner, MSP, marketplace, or direct-preference evidence');
+    missing.push('partner, installer, retailer, marketplace, or direct-preference evidence');
   }
   if (gtmSignals.purchaseFrictionCount < 1) {
     missing.push('purchase-friction evidence');
@@ -310,9 +352,20 @@ function getIncompleteGtmRequirements(evidenceRecords: ResearchEvidence[]) {
 }
 
 export async function runVerificationNode(state: ResearchGraphState) {
+  return runVerificationNodeInternal(state);
+}
+
+export async function runVerificationNodeForceRefresh(state: ResearchGraphState) {
+  return runVerificationNodeInternal(state, { forceRefresh: true });
+}
+
+async function runVerificationNodeInternal(
+  state: ResearchGraphState,
+  options?: { forceRefresh?: boolean },
+) {
   console.info(`[research:${state.runId}] stage_start`, { stage: 'verification' });
 
-  if (await hasStageCompleted(state.runId, 'verification')) {
+  if (!options?.forceRefresh && await hasStageCompleted(state.runId, 'verification')) {
     const findings = await listResearchFindings(state.runId);
 
     return {
@@ -363,8 +416,8 @@ export async function runVerificationNode(state: ResearchGraphState) {
       synthesisEvidence,
       ['gtm-motion', 'risks-and-unknowns'],
       [
-        'gtm-motion findings must stay about buying process, route-to-market, channel preference, partner or MSP or marketplace versus direct, and purchase friction.',
-        'risks-and-unknowns findings must stay about privacy, consent, compliance, trust, deployment, rollout, or integration barriers.',
+        'gtm-motion findings must stay about buying process, route-to-market, channel preference (direct, partner, installer, retailer, marketplace, or other), and purchase friction.',
+        'risks-and-unknowns findings must stay about regulatory, compliance, safety, certification, trust, implementation, rollout, or adoption friction barriers.',
       ],
     ),
     runVerificationWorker(
@@ -407,9 +460,14 @@ export async function runVerificationNode(state: ResearchGraphState) {
       const failed =
         finding.sectionKey === 'pricing-and-packaging'
           ? pricingFindingIncomplete || pricingSectionIncomplete
-          : commercialAssessment
-            ? !commercialAssessment.passes
-            : !assessment.passes;
+          : finding.sectionKey === 'gtm-motion'
+            // GTM motion: the standard evidence rule (requires official/research sources) is
+            // inappropriate here. GTM verification is handled exclusively via gtmSectionIncomplete
+            // which allows vendor-demonstrated channels and independent GTM research alike.
+            ? false
+            : commercialAssessment
+              ? !commercialAssessment.passes
+              : !assessment.passes;
       const specificityFailed = finding.inferenceLabel === 'speculative';
       const competitorDeltaFailed =
         finding.sectionKey === 'competitor-landscape' && competitorVendorCount < 2;

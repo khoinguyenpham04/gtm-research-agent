@@ -1,6 +1,6 @@
 import type { ResearchGraphState, RetrievalCandidate } from '@/lib/research/schemas';
 
-type SectionKey = RetrievalCandidate['sectionKey'];
+type SectionKey = Exclude<RetrievalCandidate['sectionKey'], null>;
 
 interface FuseableCandidate {
   id: string;

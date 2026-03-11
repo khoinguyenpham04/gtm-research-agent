@@ -6,6 +6,7 @@ import type {
   ResearchEvidence,
   ResearchFinding,
 } from '@/lib/research/schemas';
+import { resolveEvidenceSectionKey } from '@/lib/research/section-routing';
 import { getGtmEvidenceSignals } from '@/lib/research/section-policy';
 
 const claimTypeBySection: Record<ResearchFinding['sectionKey'], ClaimType> = {
@@ -39,11 +40,11 @@ function getEvidenceMode(record: ResearchEvidence): EvidenceMode {
     value === 'independent-validation' ||
     value === 'document-internal'
   ) {
-    if (
-      value === 'market-adjacent' &&
-      record.sectionKey === 'risks-and-unknowns' &&
+  if (
+    value === 'market-adjacent' &&
+      resolveEvidenceSectionKey(record) === 'risks-and-unknowns' &&
       hasBarrierSignals(record)
-    ) {
+  ) {
       return 'independent-validation';
     }
 

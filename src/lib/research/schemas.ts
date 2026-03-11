@@ -19,6 +19,7 @@ export const researchStageValues = [
   'verification',
   'finalize',
 ] as const;
+export const researchEngineVersionValues = ['v1', 'v2', 'v3'] as const;
 
 export const confidenceValues = ['high', 'medium', 'low'] as const;
 export const findingStatusValues = ['draft', 'verified', 'needs-review'] as const;
@@ -72,11 +73,34 @@ export const searchIntentValues = [
   'buyer-pain',
   'gtm-channels',
 ] as const;
+export const sourcePreferenceValues = ['primary', 'mixed', 'commercial'] as const;
+export const coverageStatusValues = [
+  'unstarted',
+  'in_progress',
+  'satisfied',
+  'needs_repair',
+  'insufficient_evidence',
+] as const;
+export const researchTaskTypeValues = [
+  'web_gap',
+  'vendor_gap',
+  'document_gap',
+  'contradiction_check',
+  'vendor_profile',
+  'vendor_pricing',
+  'buyer_research',
+  'market_research',
+  'gtm_research',
+  'risk_research',
+] as const;
+export const researchTaskResultStatusValues = ['completed', 'no_new_evidence', 'failed'] as const;
+export const pauseStateStatusValues = ['running', 'awaiting_user', 'failed'] as const;
 export const finalReportSectionKeySchema = z.enum(finalReportSectionKeyValues);
 export const claimTypeSchema = z.enum(claimTypeValues);
 export const evidenceModeSchema = z.enum(evidenceModeValues);
 export const inferenceLabelSchema = z.enum(inferenceLabelValues);
 export const vendorPageTypeSchema = z.enum(vendorPageTypeValues);
+export const sourcePreferenceSchema = z.enum(sourcePreferenceValues);
 
 export const createResearchRunInputSchema = z.object({
   topic: z.string().trim().min(3, 'Topic must be at least 3 characters long.'),
@@ -97,13 +121,69 @@ export const plannedSearchQuerySchema = z.object({
   sectionKey: finalReportSectionKeySchema,
   subtopic: z.string().trim().min(1),
   query: z.string().trim().min(1),
-  sourcePreference: z.enum(['primary', 'mixed', 'commercial']),
+  sourcePreference: sourcePreferenceSchema,
   claimType: claimTypeSchema,
   evidenceMode: evidenceModeSchema,
   vendorTarget: z.string().trim().min(1).nullable(),
 });
 
+export const researchBriefSchema = z.object({
+  topic: z.string().trim().min(1),
+  productCategory: z.string().trim().min(1).nullable(),
+  targetBuyer: z.string().trim().min(1).nullable(),
+  companyType: z.string().trim().min(1).nullable(),
+  geo: z.string().trim().min(1).nullable(),
+  timeHorizon: z.string().trim().min(1).nullable(),
+  knownVendors: z.array(z.string().trim().min(1)).default([]),
+  coreUnknowns: z.array(z.string().trim().min(1)).default([]),
+  clarificationNeeded: z.boolean().default(false),
+});
+
+export const coveragePlanSectionSchema = z.object({
+  requiredEvidenceBuckets: z.array(z.string().trim().min(1)).min(1),
+  minStrongEvidence: z.number().int().min(0),
+  preferredSourceTypes: z.array(sourcePreferenceSchema).min(1),
+  repairPriority: z.number().int().min(1).max(5),
+});
+
+export const coveragePlanSchema = z.object({
+  'market-landscape': coveragePlanSectionSchema,
+  'icp-and-buyer': coveragePlanSectionSchema,
+  'competitor-landscape': coveragePlanSectionSchema,
+  'pricing-and-packaging': coveragePlanSectionSchema,
+  'gtm-motion': coveragePlanSectionSchema,
+  'risks-and-unknowns': coveragePlanSectionSchema,
+  recommendation: coveragePlanSectionSchema,
+});
+
+export const queryStrategySchema = z.object({
+  seedQueries: z.array(plannedSearchQuerySchema).default([]),
+  sourcePreferenceBySection: z.record(z.string(), sourcePreferenceSchema).default({}),
+  notes: z.array(z.string().trim().min(1)).default([]),
+});
+
+export const repairHistoryEntrySchema = z.object({
+  iteration: z.number().int().min(0),
+  taskId: z.string().trim().min(1),
+  sectionKey: finalReportSectionKeySchema,
+  taskType: z.enum(researchTaskTypeValues),
+  result: z.enum(researchTaskResultStatusValues),
+  selectedEvidenceDelta: z.number().int().min(0).default(0),
+  improved: z.boolean().default(false),
+  note: z.string().trim().min(1).nullable().default(null),
+});
+
 export const researchPlanSchema = z.object({
+  researchQuestions: z.array(z.string().trim().min(1)).min(3).max(5),
+  searchQueries: z.array(plannedSearchQuerySchema).min(6).max(18),
+  sections: z.array(plannedSectionSchema).length(4),
+  brief: researchBriefSchema.optional(),
+  coveragePlan: coveragePlanSchema.optional(),
+  queryStrategy: queryStrategySchema.optional(),
+  repairHistory: z.array(repairHistoryEntrySchema).default([]),
+});
+
+export const researchPlanOutputSchema = z.object({
   researchQuestions: z.array(z.string().trim().min(1)).min(3).max(5),
   searchQueries: z.array(plannedSearchQuerySchema).min(6).max(18),
   sections: z.array(plannedSectionSchema).length(4),
@@ -186,7 +266,7 @@ export const retrievalCandidateSchema = z.object({
   id: z.string(),
   sourceType: z.enum(retrievalCandidateSourceTypeValues),
   retrieverType: z.enum(retrieverTypeValues),
-  sectionKey: z.enum(finalReportSectionKeyValues),
+  sectionKey: z.enum(finalReportSectionKeyValues).nullable(),
   query: z.string().trim().min(1),
   sourceId: z.string().nullable(),
   title: z.string().trim().min(1),
@@ -267,10 +347,106 @@ export const verificationOutputSchema = z.object({
   findings: z.array(verifiedFindingSchema).min(4),
 });
 
+export const sectionStateSchema = z.object({
+  sectionKey: finalReportSectionKeySchema,
+  coverageStatus: z.enum(coverageStatusValues),
+  selectedEvidenceIds: z.array(z.string()).default([]),
+  selectedCandidateIds: z.array(z.string()).default([]),
+  gaps: z.array(z.string().trim().min(1)).default([]),
+  contradictions: z.array(z.string().trim().min(1)).default([]),
+  lastImprovedIteration: z.number().int().min(0).nullable().default(null),
+});
+
+export const researchTaskSchema = z.object({
+  id: z.string().trim().min(1),
+  type: z.enum(researchTaskTypeValues),
+  sectionKey: finalReportSectionKeySchema,
+  goal: z.string().trim().min(1),
+  gapType: z.string().trim().min(1),
+  priority: z.number().int().min(1).max(5),
+  queryHints: z.array(z.string().trim().min(1)).default([]),
+  sourcePreference: sourcePreferenceSchema,
+  vendorTarget: z.string().trim().min(1).nullable(),
+  attempt: z.number().int().min(0).default(0),
+});
+
+export const researchTaskResultSchema = z.object({
+  taskId: z.string().trim().min(1),
+  status: z.enum(researchTaskResultStatusValues),
+  newSourceIds: z.array(z.string()).default([]),
+  newEvidenceIds: z.array(z.string()).default([]),
+  newCandidateIds: z.array(z.string()).default([]),
+  remainingGaps: z.array(z.string().trim().min(1)).default([]),
+  recommendedFollowups: z.array(z.string().trim().min(1)).default([]),
+});
+
+export const loopControlSchema = z.object({
+  supervisorIteration: z.number().int().min(0).default(0),
+  maxSupervisorIterations: z.number().int().min(1).default(4),
+  maxConcurrentWorkers: z.number().int().min(1).default(4),
+  maxTaskAttemptsPerSection: z.number().int().min(1).default(2),
+  maxStallIterations: z.number().int().min(1).default(2),
+});
+
+export const pauseStateSchema = z.object({
+  status: z.enum(pauseStateStatusValues).default('running'),
+  question: z.string().trim().min(1).nullable().default(null),
+  resumeToken: z.string().trim().min(1).nullable().default(null),
+});
+
+export const researchWorkerOutputSchema = z.object({
+  taskId: z.string().trim().min(1),
+  taskType: z.enum(researchTaskTypeValues),
+  sectionKey: finalReportSectionKeySchema,
+  summary: z.string().trim().min(1).nullable().default(null),
+  vendor: z.string().trim().min(1).nullable().default(null),
+  urls: z.array(z.string().trim().url()).default([]),
+  evidenceIds: z.array(z.string()).default([]),
+  payload: z.record(z.string(), z.unknown()).default({}),
+});
+
+export const queryLedgerEntrySchema = z.object({
+  fingerprint: z.string().trim().min(1),
+  sectionKey: finalReportSectionKeySchema,
+  query: z.string().trim().min(1),
+  sourcePreference: sourcePreferenceSchema,
+  attempt: z.number().int().min(0).default(0),
+  yieldedEvidenceCount: z.number().int().min(0).default(0),
+});
+
+export const sourceFetchLedgerEntrySchema = z.object({
+  url: z.string().trim().url(),
+  sectionKey: finalReportSectionKeySchema,
+  taskId: z.string().trim().min(1),
+  fetchedAt: z.string(),
+});
+
+export const rejectedSearchCandidateSchema = z.object({
+  taskId: z.string().trim().min(1),
+  taskType: z.enum(researchTaskTypeValues),
+  sectionKey: finalReportSectionKeySchema,
+  query: z.string().trim().min(1),
+  title: z.string().trim().min(1),
+  url: z.string().trim().nullable(),
+  domain: z.string().trim().nullable(),
+  sourceCategory: z.enum(sourceCategoryValues),
+  qualityScore: z.number().min(0).max(1),
+  reason: z.string().trim().min(1),
+  attempt: z.number().int().min(0).default(0),
+  widened: z.boolean().default(false),
+});
+
+export const canonicalVendorPageRecordSchema = z.object({
+  url: z.string().trim().url(),
+  title: z.string().trim().min(1),
+  vendorPageType: z.enum(['product', 'pricing', 'docs', 'newsroom', 'comparison']),
+  intents: z.array(searchIntentSchema).min(1),
+});
+
 export const researchGraphStateSchema = z.object({
   runId: z.string().uuid(),
   topic: z.string(),
-  objective: z.string().optional(),
+  objective: z.string().nullable().optional(),
   selectedDocumentIds: z.array(z.string()),
   linkedDocuments: z.array(linkedDocumentSchema).default([]),
   plan: researchPlanSchema.nullable().default(null),
@@ -287,11 +463,64 @@ export const researchGraphStateSchema = z.object({
   currentStage: z.string(),
 });
 
+export const researchGraphStateV2Schema = researchGraphStateSchema.extend({
+  userRequest: z.string().trim().min(1),
+  publicStage: z.enum(researchStageValues).default('plan'),
+  internalStage: z.string().trim().min(1).default('hydrate_run'),
+  engineVersion: z.enum(researchEngineVersionValues).default('v2'),
+  brief: researchBriefSchema.nullable().default(null),
+  legacyPlan: researchPlanSchema.nullable().default(null),
+  coveragePlan: coveragePlanSchema.nullable().default(null),
+  sectionStates: z.array(sectionStateSchema).default([]),
+  taskQueue: z.array(researchTaskSchema).default([]),
+  activeTasks: z.array(researchTaskSchema).default([]),
+  completedTasks: z.array(researchTaskResultSchema).default([]),
+  queryLedger: z.array(queryLedgerEntrySchema).default([]),
+  sourceFetchLedger: z.array(sourceFetchLedgerEntrySchema).default([]),
+  evidenceLedger: z.array(z.string()).default([]),
+  draftFindings: z.array(researchFindingSchema).default([]),
+  verifiedFindings: z.array(verifiedFindingSchema).default([]),
+  contradictions: z.array(z.string().trim().min(1)).default([]),
+  postVerificationRepairPasses: z.number().int().min(0).default(0),
+  loopControl: loopControlSchema.default({
+    supervisorIteration: 0,
+    maxSupervisorIterations: 4,
+    maxConcurrentWorkers: 4,
+    maxTaskAttemptsPerSection: 2,
+    maxStallIterations: 2,
+  }),
+  pauseState: pauseStateSchema.default({
+    status: 'running',
+    question: null,
+    resumeToken: null,
+  }),
+  resumeClarificationResponse: z.string().trim().min(1).nullable().default(null),
+});
+
+export const researchGraphStateV3Schema = researchGraphStateV2Schema.extend({
+  engineVersion: z.enum(researchEngineVersionValues).default('v3'),
+  workerPlan: z.array(researchTaskSchema).default([]),
+  workerOutputs: z.array(researchWorkerOutputSchema).default([]),
+  optionalRepairUsed: z.boolean().default(false),
+  rejectedSearchCandidates: z.array(rejectedSearchCandidateSchema).default([]),
+  requestedResolvedVendors: z.array(z.string().trim().min(1)).default([]),
+  selectedComparisonVendors: z.array(z.string().trim().min(1)).default([]),
+  rejectedResolvedVendors: z.array(z.string().trim().min(1)).default([]),
+  unresolvedRequestedVendors: z.array(z.string().trim().min(1)).default([]),
+  discoveredVendorPages: z.record(z.string(), z.array(canonicalVendorPageRecordSchema)).default({}),
+  // Evidence reflection — populated by the reflect_on_evidence node
+  reflectionUsed: z.boolean().default(false),
+  reflectionExcludedEvidenceIds: z.array(z.string()).default([]),
+});
+
 export type CreateResearchRunInput = z.infer<typeof createResearchRunInputSchema>;
 export type ResearchRunStatus = (typeof researchRunStatusValues)[number];
 export type ResearchStage = (typeof researchStageValues)[number];
+export type ResearchEngineVersion = (typeof researchEngineVersionValues)[number];
 export type ResearchPlan = z.infer<typeof researchPlanSchema>;
+export type ResearchPlanOutput = z.infer<typeof researchPlanOutputSchema>;
 export type SearchIntent = z.infer<typeof searchIntentSchema>;
+export type SourcePreference = z.infer<typeof sourcePreferenceSchema>;
 export type PlannedSearchQuery = z.infer<typeof plannedSearchQuerySchema>;
 export type NormalizedWebSource = z.infer<typeof normalizedWebSourceSchema>;
 export type ScoredSource = z.infer<typeof scoredSourceSchema>;
@@ -313,6 +542,24 @@ export type CompetitorMatrixEntry = z.infer<typeof competitorMatrixEntrySchema>;
 export type StructuredRecommendation = z.infer<typeof structuredRecommendationSchema>;
 export type VerificationOutput = z.infer<typeof verificationOutputSchema>;
 export type ResearchGraphState = z.infer<typeof researchGraphStateSchema>;
+export type ResearchBrief = z.infer<typeof researchBriefSchema>;
+export type CoveragePlan = z.infer<typeof coveragePlanSchema>;
+export type SectionState = z.infer<typeof sectionStateSchema>;
+export type ResearchTask = z.infer<typeof researchTaskSchema>;
+export type ResearchTaskResult = z.infer<typeof researchTaskResultSchema>;
+export type LoopControl = z.infer<typeof loopControlSchema>;
+export type PauseState = z.infer<typeof pauseStateSchema>;
+export type ResearchWorkerOutput = z.infer<typeof researchWorkerOutputSchema>;
+export type QueryStrategy = z.infer<typeof queryStrategySchema>;
+export type RepairHistoryEntry = z.infer<typeof repairHistoryEntrySchema>;
+export type QueryLedgerEntry = z.infer<typeof queryLedgerEntrySchema>;
+export type SourceFetchLedgerEntry = z.infer<typeof sourceFetchLedgerEntrySchema>;
+export type RejectedSearchCandidate = z.infer<typeof rejectedSearchCandidateSchema>;
+export type CanonicalVendorPageRecord = z.infer<typeof canonicalVendorPageRecordSchema>;
+export type CoverageStatus = (typeof coverageStatusValues)[number];
+export type ResearchTaskType = (typeof researchTaskTypeValues)[number];
+export type ResearchGraphStateV2 = z.infer<typeof researchGraphStateV2Schema>;
+export type ResearchGraphStateV3 = z.infer<typeof researchGraphStateV3Schema>;
 
 export interface ResearchRunSnapshot {
   run: {
@@ -321,6 +568,12 @@ export interface ResearchRunSnapshot {
     objective: string | null;
     status: ResearchRunStatus;
     currentStage: string;
+    engineVersion: ResearchEngineVersion;
+    internalStage: string | null;
+    loopIteration: number;
+    awaitingClarification: boolean;
+    clarificationQuestion: string | null;
+    lastProgressAt: string | null;
     planJson: ResearchPlan | null;
     finalReportMarkdown: string | null;
     errorMessage: string | null;

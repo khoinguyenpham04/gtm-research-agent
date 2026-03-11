@@ -8,6 +8,7 @@ import type {
   DraftReportSection,
   RetrievalCandidate,
   ResearchPlan,
+  ResearchEngineVersion,
   ResearchRunSnapshot,
   ResearchRunStatus,
   ResearchStage,
@@ -58,6 +59,13 @@ interface ResearchRunRow {
   objective: string | null;
   status: ResearchRunStatus;
   current_stage: string;
+  engine_version: ResearchEngineVersion | null;
+  internal_stage: string | null;
+  loop_iteration: number | null;
+  awaiting_clarification: boolean | null;
+  clarification_question: string | null;
+  last_progress_at: string | null;
+  workflow_state_json: JsonRecord | null;
   plan_json: ResearchPlan | null;
   final_report_markdown: string | null;
   error_message: string | null;
@@ -136,7 +144,7 @@ interface ResearchRetrievalCandidateRow {
   id: string;
   source_type: RetrievalCandidate['sourceType'];
   retriever_type: RetrievalCandidate['retrieverType'];
-  section_key: string;
+  section_key: string | null;
   query_text: string;
   source_id: string | null;
   document_external_id: string | null;
@@ -193,7 +201,7 @@ interface InsertEvidenceInput {
 interface InsertRetrievalCandidateInput {
   sourceType: RetrievalCandidate['sourceType'];
   retrieverType: RetrievalCandidate['retrieverType'];
-  sectionKey: RetrievalCandidate['sectionKey'];
+  sectionKey?: RetrievalCandidate['sectionKey'];
   query: string;
   sourceId?: string | null;
   documentExternalId?: string | null;
@@ -210,6 +218,10 @@ interface InsertRetrievalCandidateInput {
   metadataJson: JsonRecord;
 }
 
+type ResearchRunRecord = ResearchRunSnapshot['run'] & {
+  workflowStateJson: JsonRecord | null;
+};
+
 function mapLinkedDocument(row: ResearchRunDocumentRow): LinkedDocument {
   return {
     id: row.id,
@@ -218,18 +230,25 @@ function mapLinkedDocument(row: ResearchRunDocumentRow): LinkedDocument {
   };
 }
 
-function mapRun(row: ResearchRunRow): ResearchRunSnapshot['run'] {
+function mapRun(row: ResearchRunRow): ResearchRunRecord {
   return {
     id: row.id,
     topic: row.topic,
     objective: row.objective,
     status: row.status,
     currentStage: row.current_stage,
+    engineVersion: row.engine_version ?? 'v2',
+    internalStage: row.internal_stage,
+    loopIteration: row.loop_iteration ?? 0,
+    awaitingClarification: Boolean(row.awaiting_clarification),
+    clarificationQuestion: row.clarification_question,
+    lastProgressAt: row.last_progress_at,
     planJson: row.plan_json,
     finalReportMarkdown: row.final_report_markdown,
     errorMessage: row.error_message,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    workflowStateJson: row.workflow_state_json ?? null,
   };
 }
 
@@ -247,6 +266,27 @@ function mapResearchEvent(row: ResearchEventRow): ResearchEventRecord {
 
 function getNowIso() {
   return new Date().toISOString();
+}
+
+function stripInternalRunFields(run: ResearchRunRecord): ResearchRunSnapshot['run'] {
+  return {
+    id: run.id,
+    topic: run.topic,
+    objective: run.objective,
+    status: run.status,
+    currentStage: run.currentStage,
+    engineVersion: run.engineVersion,
+    internalStage: run.internalStage,
+    loopIteration: run.loopIteration,
+    awaitingClarification: run.awaitingClarification,
+    clarificationQuestion: run.clarificationQuestion,
+    lastProgressAt: run.lastProgressAt,
+    planJson: run.planJson,
+    finalReportMarkdown: run.finalReportMarkdown,
+    errorMessage: run.errorMessage,
+    createdAt: run.createdAt,
+    updatedAt: run.updatedAt,
+  };
 }
 
 async function maybeGetLegacyDocumentName(documentId: string) {
@@ -276,6 +316,13 @@ export async function createResearchRun(input: CreateResearchRunInput) {
       objective: input.objective ?? null,
       status: 'queued',
       current_stage: 'plan',
+      engine_version: 'v3',
+      internal_stage: 'hydrate_run',
+      loop_iteration: 0,
+      awaiting_clarification: false,
+      clarification_question: null,
+      last_progress_at: timestamp,
+      workflow_state_json: null,
       created_at: timestamp,
       updated_at: timestamp,
     })
@@ -300,19 +347,109 @@ export async function createResearchRun(input: CreateResearchRunInput) {
     }
   }
 
-  return mapRun(run);
+  return stripInternalRunFields(mapRun(run));
 }
 
 export async function setRunStage(runId: string, status: ResearchRunStatus, currentStage: string) {
+  return updateRunExecutionState(runId, {
+    status,
+    currentStage,
+  });
+}
+
+export async function updateRunExecutionState(
+  runId: string,
+  updates: {
+    status?: ResearchRunStatus;
+    currentStage?: string;
+    engineVersion?: ResearchEngineVersion;
+    internalStage?: string | null;
+    loopIteration?: number;
+    awaitingClarification?: boolean;
+    clarificationQuestion?: string | null;
+    workflowStateJson?: JsonRecord | null;
+    finalReportMarkdown?: string | null;
+    errorMessage?: string | null;
+  },
+) {
   const supabase = createSupabaseServerClient();
+  const payload: JsonRecord = {
+    updated_at: getNowIso(),
+    last_progress_at: getNowIso(),
+  };
+
+  if (updates.status) {
+    payload.status = updates.status;
+  }
+
+  if (updates.currentStage) {
+    payload.current_stage = updates.currentStage;
+  }
+
+  if (updates.engineVersion) {
+    payload.engine_version = updates.engineVersion;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(updates, 'internalStage')) {
+    payload.internal_stage = updates.internalStage ?? null;
+  }
+
+  if (typeof updates.loopIteration === 'number') {
+    payload.loop_iteration = updates.loopIteration;
+  }
+
+  if (typeof updates.awaitingClarification === 'boolean') {
+    payload.awaiting_clarification = updates.awaitingClarification;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(updates, 'clarificationQuestion')) {
+    payload.clarification_question = sanitizeDatabaseText(updates.clarificationQuestion ?? null);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(updates, 'workflowStateJson')) {
+    payload.workflow_state_json = sanitizeJsonRecord(updates.workflowStateJson ?? {});
+  }
+
+  if (Object.prototype.hasOwnProperty.call(updates, 'finalReportMarkdown')) {
+    payload.final_report_markdown = sanitizeDatabaseText(updates.finalReportMarkdown ?? null);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(updates, 'errorMessage')) {
+    payload.error_message = sanitizeDatabaseText(updates.errorMessage ?? null);
+  }
+
   const { error } = await supabase
     .from('research_runs')
-    .update({
-      status,
-      current_stage: currentStage,
-      updated_at: getNowIso(),
-    })
+    .update(payload)
     .eq('id', runId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+export async function tryClaimResearchRunExecution(runId: string, token: string) {
+  const supabase = createSupabaseServerClient();
+  const staleBefore = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+  const { data, error } = await supabase.rpc('claim_research_run_execution', {
+    p_run_id: runId,
+    p_token: token,
+    p_stale_before: staleBefore,
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return Boolean(data);
+}
+
+export async function releaseResearchRunExecution(runId: string, token: string) {
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase.rpc('release_research_run_execution', {
+    p_run_id: runId,
+    p_token: token,
+  });
 
   if (error) {
     throw new Error(error.message);
@@ -326,6 +463,7 @@ export async function saveRunPlan(runId: string, plan: ResearchPlan) {
     .update({
       plan_json: plan,
       updated_at: getNowIso(),
+      last_progress_at: getNowIso(),
     })
     .eq('id', runId);
 
@@ -335,38 +473,23 @@ export async function saveRunPlan(runId: string, plan: ResearchPlan) {
 }
 
 export async function finalizeRun(runId: string, finalReportMarkdown: string) {
-  const supabase = createSupabaseServerClient();
-  const { error } = await supabase
-    .from('research_runs')
-    .update({
-      status: 'completed',
-      current_stage: 'finalize',
-      final_report_markdown: finalReportMarkdown,
-      error_message: null,
-      updated_at: getNowIso(),
-    })
-    .eq('id', runId);
-
-  if (error) {
-    throw new Error(error.message);
-  }
+  await updateRunExecutionState(runId, {
+    status: 'completed',
+    currentStage: 'finalize',
+    internalStage: 'finalize_run',
+    awaitingClarification: false,
+    clarificationQuestion: null,
+    finalReportMarkdown,
+    errorMessage: null,
+  });
 }
 
 export async function failRun(runId: string, currentStage: string, errorMessage: string) {
-  const supabase = createSupabaseServerClient();
-  const { error } = await supabase
-    .from('research_runs')
-    .update({
-      status: 'failed',
-      current_stage: currentStage,
-      error_message: errorMessage,
-      updated_at: getNowIso(),
-    })
-    .eq('id', runId);
-
-  if (error) {
-    throw new Error(error.message);
-  }
+  await updateRunExecutionState(runId, {
+    status: 'failed',
+    currentStage,
+    errorMessage,
+  });
 }
 
 export async function appendResearchEvent(
@@ -436,7 +559,7 @@ export async function listResearchRuns() {
     throw new Error(error.message);
   }
 
-  return (data ?? []).map(mapRun);
+  return (data ?? []).map(mapRun).map(stripInternalRunFields);
 }
 
 export async function listLinkedDocuments(runId: string) {
@@ -637,7 +760,7 @@ export async function saveResearchRetrievalCandidates(runId: string, candidates:
         run_id: runId,
         source_type: candidate.sourceType,
         retriever_type: candidate.retrieverType,
-        section_key: candidate.sectionKey,
+        section_key: candidate.sectionKey ?? null,
         query_text: sanitizeDatabaseText(candidate.query),
         source_id: candidate.sourceId ?? null,
         document_external_id: candidate.documentExternalId ?? null,
@@ -897,7 +1020,7 @@ export async function getResearchRunSnapshot(runId: string): Promise<ResearchRun
   ]);
 
   return {
-    run,
+    run: stripInternalRunFields(run),
     linkedDocuments,
     sources,
     findings,

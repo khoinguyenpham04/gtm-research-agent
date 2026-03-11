@@ -22,6 +22,12 @@ interface Snapshot {
     objective: string | null;
     status: string;
     currentStage: string;
+    engineVersion: string;
+    internalStage: string | null;
+    loopIteration: number;
+    awaitingClarification: boolean;
+    clarificationQuestion: string | null;
+    lastProgressAt: string | null;
     planJson: {
       researchQuestions: string[];
       searchQueries: Array<{
@@ -35,6 +41,11 @@ interface Snapshot {
         vendorTarget: string | null;
       }>;
       sections: Array<{ key: string; title: string; description: string }>;
+      brief?: {
+        topic: string;
+        productCategory: string | null;
+        targetBuyer: string | null;
+      };
     } | null;
     finalReportMarkdown: string | null;
     errorMessage: string | null;
@@ -96,7 +107,7 @@ interface Snapshot {
     id: string;
     sourceType: string;
     retrieverType: string;
-    sectionKey: string;
+    sectionKey: string | null;
     query: string;
     title: string;
     claimType: string;
@@ -182,6 +193,8 @@ export default function ResearchRunDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [executeState, setExecuteState] = useState<'idle' | 'starting' | 'running'>('idle');
+  const [clarificationDraft, setClarificationDraft] = useState('');
+  const [clarificationSubmitting, setClarificationSubmitting] = useState(false);
   const executionStarted = useRef(false);
   const runStatus = snapshot?.run.status;
 
@@ -240,7 +253,12 @@ export default function ResearchRunDetailPage() {
   }, [runId, runStatus]);
 
   useEffect(() => {
-    if (!snapshot || isTerminal(snapshot.run.status) || executionStarted.current) {
+    if (
+      !snapshot ||
+      isTerminal(snapshot.run.status) ||
+      snapshot.run.awaitingClarification ||
+      executionStarted.current
+    ) {
       return;
     }
 
@@ -270,6 +288,42 @@ export default function ResearchRunDetailPage() {
   }, [runId, snapshot]);
 
   const progressIndex = snapshot ? stageOrder.indexOf(snapshot.run.currentStage) : -1;
+
+  async function submitClarification() {
+    if (!clarificationDraft.trim()) {
+      setError('Enter a clarification response before resuming the run.');
+      return;
+    }
+
+    setClarificationSubmitting(true);
+    try {
+      const response = await fetch(`/api/research/runs/${runId}/execute`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          clarificationResponse: clarificationDraft.trim(),
+        }),
+      });
+      const payload = (await response.json()) as Snapshot;
+
+      if (!response.ok) {
+        throw new Error(payload.error || payload.run?.errorMessage || 'Failed to resume research execution.');
+      }
+
+      setSnapshot(payload);
+      setClarificationDraft('');
+      setError(null);
+      executionStarted.current = true;
+    } catch (submitError) {
+      setError(
+        submitError instanceof Error ? submitError.message : 'Failed to resume research execution.',
+      );
+    } finally {
+      setClarificationSubmitting(false);
+    }
+  }
 
   return (
     <div className="min-h-screen bg-stone-50">
@@ -301,8 +355,18 @@ export default function ResearchRunDetailPage() {
                     Progress refreshes automatically every 2 seconds while the run is active.
                   </p>
                 )}
+                <p className="text-xs text-slate-500">
+                  Engine {snapshot.run.engineVersion} · internal stage{' '}
+                  {snapshot.run.internalStage ?? 'unknown'} · loop {snapshot.run.loopIteration}
+                </p>
               </div>
               <div className="flex gap-3">
+                <Link
+                  href={`/research/${snapshot.run.id}/debug`}
+                  className="inline-flex items-center justify-center rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-900 transition hover:bg-slate-50"
+                >
+                  Debug view
+                </Link>
                 <Link
                   href="/research"
                   className="inline-flex items-center justify-center rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-900 transition hover:bg-slate-50"
@@ -334,6 +398,30 @@ export default function ResearchRunDetailPage() {
                     <CardDescription>{displayStage(snapshot.run.currentStage)}</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
+                    {snapshot.run.awaitingClarification && snapshot.run.clarificationQuestion && (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+                        <p className="text-sm font-medium text-amber-900">
+                          Clarification needed
+                        </p>
+                        <p className="mt-1 text-sm text-amber-800">
+                          {snapshot.run.clarificationQuestion}
+                        </p>
+                        <textarea
+                          value={clarificationDraft}
+                          onChange={(event) => setClarificationDraft(event.target.value)}
+                          placeholder="Add the missing GTM scope details here."
+                          className="mt-3 min-h-28 w-full rounded-md border border-amber-200 bg-white p-3 text-sm text-slate-900 shadow-sm outline-none ring-0"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => void submitClarification()}
+                          disabled={clarificationSubmitting}
+                          className="mt-3 inline-flex items-center justify-center rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
+                        >
+                          {clarificationSubmitting ? 'Resuming…' : 'Resume research'}
+                        </button>
+                      </div>
+                    )}
                     {stageOrder.map((stage, index) => {
                       const isActive = snapshot.run.currentStage === stage;
                       const isComplete = progressIndex > index || snapshot.run.status === 'completed';
