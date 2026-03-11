@@ -22,7 +22,7 @@ import {
   verifiedFindingSchema,
 } from '@/lib/research/schemas';
 import { resolveEvidenceSectionKey, resolveFindingSectionKey, resolveSectionKey } from '@/lib/research/section-routing';
-import { getSectionPolicy } from '@/lib/research/section-policy';
+import { getGtmEvidenceSignals, getSectionPolicy, selectEvidenceForSection } from '@/lib/research/section-policy';
 import { coerceSourceCategory, getEvidenceRuleAssessment } from '@/lib/research/source-scoring';
 import { z } from 'zod';
 
@@ -103,7 +103,7 @@ function sanitizeFindings(
       return {
         ...finding,
         sectionKey,
-        claimType: getDefaultClaimType(sectionKey),
+        claimType: finding.claimType ?? getDefaultClaimType(sectionKey),
         evidence,
         evidenceMode: specificity.evidenceMode,
         inferenceLabel: specificity.inferenceLabel,
@@ -226,24 +226,6 @@ function getCommercialSectionAssessment(
 ) {
   const evidenceRecords = buildEvidenceByCitation(finding.evidence, evidenceRecordIndex);
 
-  if (finding.sectionKey === 'pricing-and-packaging') {
-    const pricingRecords = evidenceRecords.filter(
-      (record) =>
-        record.metadataJson.evidenceMode === 'vendor-primary' &&
-        (record.metadataJson.vendorPageType === 'pricing' ||
-          typeof record.metadataJson.planPricingText === 'string'),
-    );
-    const vendorCount = new Set(pricingRecords.map(getCompetitorVendorLabel)).size;
-
-    return {
-      passes: pricingRecords.length >= 2 && vendorCount >= 2,
-      failureNote:
-        'Pricing section requires vendor-primary pricing evidence from at least two distinct vendors.',
-      failureGap:
-        'Add vendor-primary pricing pages from at least two distinct vendors before treating pricing as verified.',
-    };
-  }
-
   if (finding.sectionKey === 'competitor-landscape') {
     const vendorRecords = evidenceRecords.filter(
       (record) =>
@@ -266,6 +248,65 @@ function getCommercialSectionAssessment(
   }
 
   return null;
+}
+
+function getPricingSectionAssessment(evidenceRecords: ResearchEvidence[]) {
+  const pricingSectionEvidence = selectEvidenceForSection('pricing-and-packaging', evidenceRecords);
+  const pricingRecords = pricingSectionEvidence.filter(
+    (record) =>
+      record.metadataJson.evidenceMode === 'vendor-primary' &&
+      record.metadataJson.vendorPageType === 'pricing',
+  );
+  const vendorCount = new Set(pricingRecords.map(getCompetitorVendorLabel)).size;
+
+  return {
+    passes: pricingRecords.length >= 2 && vendorCount >= 2,
+    failureNote:
+      'Pricing section requires canonical vendor pricing evidence from at least two distinct vendors.',
+    failureGap:
+      'Add canonical vendor pricing pages from at least two vendors before treating pricing as verified.',
+  };
+}
+
+function getPricingFindingAssessment(
+  finding: ResearchFinding,
+  evidenceRecordIndex: Map<string, ResearchEvidence>,
+) {
+  const pricingRecords = buildEvidenceByCitation(finding.evidence, evidenceRecordIndex).filter(
+    (record) =>
+      record.metadataJson.evidenceMode === 'vendor-primary' &&
+      record.metadataJson.vendorPageType === 'pricing',
+  );
+  const vendorCount = new Set(pricingRecords.map(getCompetitorVendorLabel)).size;
+
+  return {
+    passes: pricingRecords.length >= 2 && vendorCount >= 2,
+    failureNote:
+      'Pricing findings must cite canonical vendor pricing evidence from at least two distinct vendors.',
+    failureGap:
+      'Cite canonical pricing pages from at least two vendors in the pricing finding itself before treating it as verified.',
+  };
+}
+
+function getIncompleteGtmRequirements(evidenceRecords: ResearchEvidence[]) {
+  const gtmEvidence = selectEvidenceForSection('gtm-motion', evidenceRecords);
+  const gtmSignals = getGtmEvidenceSignals(gtmEvidence);
+  const missing: string[] = [];
+
+  if (gtmSignals.buyingProcessCount < 1) {
+    missing.push('buying-process evidence');
+  }
+  if (gtmSignals.channelCount < 1) {
+    missing.push('channel evidence');
+  }
+  if (gtmSignals.partnerPreferenceCount < 1) {
+    missing.push('partner, MSP, marketplace, or direct-preference evidence');
+  }
+  if (gtmSignals.purchaseFrictionCount < 1) {
+    missing.push('purchase-friction evidence');
+  }
+
+  return missing;
 }
 
 export async function runVerificationNode(state: ResearchGraphState) {
@@ -305,6 +346,8 @@ export async function runVerificationNode(state: ResearchGraphState) {
   const ruleSourceIndex = buildEvidenceRuleSourceIndex(synthesisEvidence);
   const deterministicCompetitorMatrix = buildCompetitorMatrixEntries(synthesisEvidence);
   const competitorProfileSummary = buildCompetitorProfileSummary(synthesisEvidence);
+  const missingGtmRequirements = getIncompleteGtmRequirements(synthesisEvidence);
+  const pricingSectionAssessment = getPricingSectionAssessment(synthesisEvidence);
   const [marketAndIcp, gtmAndRisk, commercial] = await Promise.all([
     runVerificationWorker(
       state,
@@ -346,11 +389,27 @@ export async function runVerificationNode(state: ResearchGraphState) {
     .map((finding) => {
       const commercialAssessment = getCommercialSectionAssessment(finding, evidenceRecordIndex);
       const assessment = getEvidenceRuleAssessment(finding.evidence, ruleSourceIndex);
+      const pricingFindingAssessment =
+        finding.sectionKey === 'pricing-and-packaging'
+          ? getPricingFindingAssessment(finding, evidenceRecordIndex)
+          : null;
+      const pricingFindingIncomplete = Boolean(
+        pricingFindingAssessment && !pricingFindingAssessment.passes,
+      );
+      const pricingSectionIncomplete =
+        finding.sectionKey === 'pricing-and-packaging' && !pricingSectionAssessment.passes;
       const competitorVendorCount =
         finding.sectionKey === 'competitor-landscape'
           ? countDistinctCompetitorVendors(buildEvidenceByCitation(finding.evidence, evidenceRecordIndex))
           : 0;
-      const failed = commercialAssessment ? !commercialAssessment.passes : !assessment.passes;
+      const gtmSectionIncomplete =
+        finding.sectionKey === 'gtm-motion' && missingGtmRequirements.length > 0;
+      const failed =
+        finding.sectionKey === 'pricing-and-packaging'
+          ? pricingFindingIncomplete || pricingSectionIncomplete
+          : commercialAssessment
+            ? !commercialAssessment.passes
+            : !assessment.passes;
       const specificityFailed = finding.inferenceLabel === 'speculative';
       const competitorDeltaFailed =
         finding.sectionKey === 'competitor-landscape' && competitorVendorCount < 2;
@@ -359,36 +418,48 @@ export async function runVerificationNode(state: ResearchGraphState) {
       return {
         ...finding,
         confidence:
-          failed || specificityFailed || competitorDeltaFailed
+          failed || specificityFailed || competitorDeltaFailed || gtmSectionIncomplete
             ? 'low'
             : inferredPenalty && finding.confidence === 'high'
               ? 'medium'
               : finding.confidence,
-        status: failed || specificityFailed || competitorDeltaFailed ? 'needs-review' : finding.status,
-        verificationNotes: failed || competitorDeltaFailed
+        status: failed || specificityFailed || competitorDeltaFailed || gtmSectionIncomplete ? 'needs-review' : finding.status,
+        verificationNotes: failed || competitorDeltaFailed || gtmSectionIncomplete
           ? [
               finding.verificationNotes,
-              failed
+              pricingFindingIncomplete
+                ? pricingFindingAssessment?.failureNote ?? ''
+                : pricingSectionIncomplete
+                ? pricingSectionAssessment.failureNote
+                : failed
                 ? commercialAssessment?.failureNote ??
                   'Evidence rule failed: requires one strong primary/research source or two independent medium-quality sources.'
                 : '',
               competitorDeltaFailed
                 ? 'Competitor summary failed: needs evidence spanning at least two distinct vendors.'
                 : '',
+              gtmSectionIncomplete
+                ? `GTM section policy not yet met: missing ${missingGtmRequirements.join(', ')}.`
+                : '',
             ]
               .filter(Boolean)
               .join(' ')
           : finding.verificationNotes,
         gaps:
-          failed || specificityFailed || competitorDeltaFailed
+          failed || specificityFailed || competitorDeltaFailed || gtmSectionIncomplete
             ? [
                 ...finding.gaps,
                 ...(specificityFailed
                   ? ['Evidence remains speculative for this section and needs more section-specific support.']
                   : []),
+                ...(pricingFindingIncomplete ? [pricingFindingAssessment?.failureGap ?? ''] : []),
+                ...(pricingSectionIncomplete ? [pricingSectionAssessment.failureGap] : []),
                 ...(failed && commercialAssessment ? [commercialAssessment.failureGap] : []),
                 ...(competitorDeltaFailed
                   ? ['Add evidence from at least one more vendor before treating this as a comparative competitor claim.']
+                  : []),
+                ...(gtmSectionIncomplete
+                  ? [`Complete GTM coverage with ${missingGtmRequirements.join(', ')} before treating GTM motion as verified.`]
                   : []),
                 ...(!commercialAssessment && failed
                   ? ['Add one strong official/research source or two independent medium-quality sources to verify this claim.']

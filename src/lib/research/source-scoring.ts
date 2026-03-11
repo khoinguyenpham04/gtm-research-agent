@@ -134,7 +134,8 @@ function getSourceCategory(url: string | null, domain: string | null, title: str
 
   if (
     normalizedDomain.endsWith('.gov.uk') ||
-    startsWithAny(normalizedDomain, ['gov.uk', 'ons.gov.uk']) ||
+    startsWithAny(normalizedDomain, ['gov.uk', 'ons.gov.uk', 'ico.org.uk']) ||
+    normalizedDomain.endsWith('.ico.org.uk') ||
     normalizedDomain.endsWith('.gov') ||
     normalizedDomain.endsWith('.edu') ||
     normalizedDomain.endsWith('.ac.uk')
@@ -230,6 +231,25 @@ function hasProductSpecificTerms(input: string) {
   );
 }
 
+function hasRiskSpecificTerms(input: string) {
+  const normalized = input.toLowerCase();
+  return (
+    normalized.includes('privacy') ||
+    normalized.includes('consent') ||
+    normalized.includes('gdpr') ||
+    normalized.includes('data protection') ||
+    normalized.includes('data-protection') ||
+    normalized.includes('security') ||
+    normalized.includes('trust') ||
+    normalized.includes('integration') ||
+    normalized.includes('compliance') ||
+    normalized.includes('rollout') ||
+    normalized.includes('deployment') ||
+    normalized.includes('retention') ||
+    normalized.includes('transcription')
+  );
+}
+
 function getClaimType(intent: ScoredSource['queryIntent']): ClaimType {
   switch (intent) {
     case 'market-size':
@@ -252,9 +272,19 @@ function getEvidenceMode(
   sourceCategory: ScoredSource['sourceCategory'],
   queryIntent: ScoredSource['queryIntent'],
   combinedText: string,
+  claimType?: ClaimType,
+  sectionKey?: ScoredSource['sectionKey'],
 ): EvidenceMode {
   if (queryIntent === 'competitor-features' || queryIntent === 'pricing') {
     return sourceCategory === 'vendor' ? 'vendor-primary' : 'independent-validation';
+  }
+
+  if (
+    (claimType === 'risk' || sectionKey === 'risks-and-unknowns') &&
+    (sourceCategory === 'official' || sourceCategory === 'research' || sourceCategory === 'media') &&
+    hasRiskSpecificTerms(combinedText)
+  ) {
+    return 'independent-validation';
   }
 
   if (hasProductSpecificTerms(combinedText)) {
@@ -349,8 +379,14 @@ export function scoreWebSource(input: Omit<ScoredSource, 'sourceCategory' | 'qua
   const sourceCategory = getSourceCategory(input.url, input.domain, input.title);
   const qualityScore = Number(applyRecencyAdjustment(getBaseScore(sourceCategory), recency).toFixed(2));
   const qualityLabel = getQualityLabel(qualityScore);
-  const claimType = getClaimType(input.queryIntent);
-  const evidenceMode = getEvidenceMode(sourceCategory, input.queryIntent, combinedText);
+  const claimType = input.claimType ?? getClaimType(input.queryIntent);
+  const evidenceMode = getEvidenceMode(
+    sourceCategory,
+    input.queryIntent,
+    combinedText,
+    claimType,
+    input.sectionKey,
+  );
   const vendorPageType =
     input.vendorPageType ?? detectVendorPageType(input.url, input.title, input.vendorTarget);
 

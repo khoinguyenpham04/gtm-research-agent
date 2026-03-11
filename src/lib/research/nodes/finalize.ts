@@ -203,6 +203,15 @@ function buildRecommendationSection(
   competitorMatrix: CompetitorMatrixEntry[],
 ) {
   const dependencies = getSectionPolicy('recommendation').recommendationDependencies ?? [];
+  const requiredReadySections: ResearchFinding['sectionKey'][] = [
+    'market-landscape',
+    'icp-and-buyer',
+    'pricing-and-packaging',
+    'risks-and-unknowns',
+  ];
+  const missingRequiredSections = requiredReadySections.filter(
+    (sectionKey) => !readySectionKeys.has(sectionKey),
+  );
   const upstreamClaims = findings.filter(
     (finding) =>
       finding.status === 'verified' &&
@@ -211,11 +220,18 @@ function buildRecommendationSection(
       readySectionKeys.has(finding.sectionKey),
   );
 
-  if (upstreamClaims.length < 2) {
+  if (missingRequiredSections.length > 0 || upstreamClaims.length < 3) {
+    const blockingNotes = [
+      ...missingRequiredSections.map((sectionKey) => `Recommendation requires ${sectionKey} to be ready.`),
+      ...(upstreamClaims.length < 3
+        ? ['Not enough verified upstream findings to derive a recommendation safely.']
+        : []),
+    ];
+
     return {
-      contentMarkdown: '### Insufficient evidence\n- Not enough verified upstream findings to derive a recommendation safely.',
+      contentMarkdown: ['### Insufficient evidence', ...blockingNotes.map((note) => `- ${note}`)].join('\n'),
       status: 'insufficient_evidence' as const,
-      statusNotes: ['Not enough verified upstream findings to derive a recommendation safely.'],
+      statusNotes: blockingNotes,
       citations: [],
     };
   }

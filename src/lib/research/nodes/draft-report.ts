@@ -70,7 +70,7 @@ function sanitizeFindings(
       return {
         ...finding,
         sectionKey,
-        claimType: getDefaultClaimType(sectionKey),
+        claimType: finding.claimType ?? getDefaultClaimType(sectionKey),
         evidence,
         evidenceMode: specificity.evidenceMode,
         inferenceLabel: specificity.inferenceLabel,

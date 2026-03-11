@@ -141,6 +141,40 @@ function uniqueStrings(values: string[]) {
   return values.filter((value, index, allValues) => value && allValues.indexOf(value) === index);
 }
 
+function normalizeFeatureLabel(input: string) {
+  const normalized = input.toLowerCase().trim();
+
+  if (normalized.includes('transcript') || normalized.includes('transcription')) {
+    return 'transcription';
+  }
+  if (normalized.includes('summary') || normalized.includes('recap')) {
+    return 'AI summaries';
+  }
+  if (normalized.includes('meeting note') || normalized.includes('note-taking')) {
+    return 'meeting notes';
+  }
+  if (normalized.includes('action item') || normalized.includes('next step') || normalized.includes('follow-up')) {
+    return 'action items';
+  }
+  if (normalized.includes('crm')) {
+    return 'CRM sync';
+  }
+  if (normalized.includes('conversation intelligence') || normalized.includes('call analytics')) {
+    return 'conversation intelligence';
+  }
+  if (normalized.includes('coaching') || normalized.includes('scorecard') || normalized.includes('playlist')) {
+    return 'coaching workflows';
+  }
+  if (normalized.includes('speaker')) {
+    return 'speaker identification';
+  }
+  if (normalized.includes('record')) {
+    return 'meeting recording';
+  }
+
+  return input.trim();
+}
+
 function compactSegmentLabel(input: string) {
   const normalized = input.toLowerCase();
   const labels: string[] = [];
@@ -171,7 +205,21 @@ function compactSegmentLabel(input: string) {
 
 function extractPricePoints(input: string) {
   const normalized = input.replace(/\s+/g, ' ').trim();
-  const matches = normalized.match(/([$£€]\s?\d+(?:\.\d+)?(?:\s*(?:\/|per)\s*(?:seat|user|month))?)/gi) ?? [];
+  const monthlyMatches = [
+    ...normalized.matchAll(
+      /(?:from\s*)?([$£€]\s?\d+(?:\.\d+)?)\s*(?:\/|\bper\b)?\s*(seat|user)\s*(?:\/|\bper\b)?\s*month/gi,
+    ),
+  ].map((match) => `${match[1].replace(/\s+/g, '')}/${match[2].toLowerCase()}/month`);
+  const monthThenUserMatches = [
+    ...normalized.matchAll(
+      /(?:from\s*)?([$£€]\s?\d+(?:\.\d+)?)\s*\/\s*month\s*(?:per\s*)?(seat|user)/gi,
+    ),
+  ].map((match) => `${match[1].replace(/\s+/g, '')}/${match[2].toLowerCase()}/month`);
+  const boundedMonthlyMatches = [
+    ...normalized.matchAll(
+      /(?:from\s*)?([$£€]\s?\d+(?:\.\d+)?)\s*(?:monthly|monthly billing)/gi,
+    ),
+  ].map((match) => `${match[1].replace(/\s+/g, '')}/month`);
   const specialLabels = [
     normalized.toLowerCase().includes('free') ? 'free plan' : '',
     normalized.toLowerCase().includes('enterprise') || normalized.toLowerCase().includes('contact')
@@ -179,7 +227,7 @@ function extractPricePoints(input: string) {
       : '',
   ].filter(Boolean);
 
-  return uniqueStrings([...matches.map((match) => match.replace(/\s+/g, ' ').trim()), ...specialLabels]).slice(0, 3);
+  return uniqueStrings([...monthlyMatches, ...monthThenUserMatches, ...boundedMonthlyMatches, ...specialLabels]).slice(0, 3);
 }
 
 function inferIcp(records: ResearchEvidence[]) {
@@ -212,14 +260,16 @@ function inferIcp(records: ResearchEvidence[]) {
 function inferCoreFeatures(records: ResearchEvidence[]) {
   const explicitFeatures = records.flatMap((record) =>
     Array.isArray(record.metadataJson.coreFeatures)
-      ? record.metadataJson.coreFeatures.filter((value): value is string => typeof value === 'string')
+      ? record.metadataJson.coreFeatures
+          .filter((value): value is string => typeof value === 'string')
+          .map(normalizeFeatureLabel)
       : [],
   );
 
   const combined = records.map(getCombinedText).join(' ');
   const inferredFeatures = featureSignals
     .filter(([, keywords]) => keywords.some((keyword) => combined.includes(keyword)))
-    .map(([label]) => label);
+    .map(([label]) => normalizeFeatureLabel(label));
 
   return uniqueStrings([...explicitFeatures, ...inferredFeatures]).slice(0, 6);
 }
@@ -264,14 +314,71 @@ function trimEvidenceText(input: string) {
   return `${normalized.slice(0, 137).trimEnd()}...`;
 }
 
+function isDiscountPricingText(input: string) {
+  const normalized = input.toLowerCase();
+  return (
+    normalized.includes('student') ||
+    normalized.includes('teacher') ||
+    normalized.includes('.edu') ||
+    normalized.includes('discounted price') ||
+    normalized.includes('discounted prices') ||
+    normalized.includes('education discount')
+  );
+}
+
+function getPriceValue(pricePoint: string) {
+  const match = pricePoint.match(/[$£€]\s?(\d+(?:\.\d+)?)/);
+  return match ? Number(match[1]) : Number.POSITIVE_INFINITY;
+}
+
+function buildPricingSummary(pricePoints: string[]) {
+  const normalized = uniqueStrings(pricePoints);
+  const hasFreePlan = normalized.includes('free plan');
+  const hasEnterpriseContact = normalized.includes('enterprise/contact');
+  const selfServePrices = normalized
+    .filter((pricePoint) => pricePoint !== 'free plan' && pricePoint !== 'enterprise/contact')
+    .sort((left, right) => getPriceValue(left) - getPriceValue(right));
+  const summaryParts: string[] = [];
+
+  if (hasFreePlan) {
+    summaryParts.push('free plan');
+  }
+
+  if (selfServePrices.length > 0) {
+    summaryParts.push(`self-serve from ${selfServePrices.slice(0, 2).join(', ')}`);
+  }
+
+  if (hasEnterpriseContact) {
+    summaryParts.push('enterprise/contact');
+  }
+
+  return summaryParts.join('; ');
+}
+
 function inferPricingEvidence(records: ResearchEvidence[]) {
   const pricingRecords = records.filter(isPricingRecord);
   if (pricingRecords.length === 0) {
     return 'Pricing not established from canonical vendor evidence.';
   }
 
+  const pricingPageRecords = pricingRecords.filter(
+    (record) => record.metadataJson.vendorPageType === 'pricing',
+  );
+  const nonDiscountPricingRecords = pricingPageRecords.filter((record) => {
+    const pricingText =
+      typeof record.metadataJson.planPricingText === 'string' && record.metadataJson.planPricingText.trim()
+        ? record.metadataJson.planPricingText
+        : record.excerpt;
+    return !isDiscountPricingText(pricingText);
+  });
+  const prioritizedRecords =
+    nonDiscountPricingRecords.length > 0
+      ? nonDiscountPricingRecords
+      : pricingPageRecords.length > 0
+        ? pricingPageRecords
+        : pricingRecords;
   const pricePoints = uniqueStrings(
-    pricingRecords.flatMap((record) =>
+    prioritizedRecords.flatMap((record) =>
       extractPricePoints(
         typeof record.metadataJson.planPricingText === 'string' && record.metadataJson.planPricingText.trim()
           ? record.metadataJson.planPricingText
@@ -281,7 +388,21 @@ function inferPricingEvidence(records: ResearchEvidence[]) {
   );
 
   if (pricePoints.length > 0) {
-    return trimEvidenceText(pricePoints.join(', '));
+    return trimEvidenceText(buildPricingSummary(pricePoints));
+  }
+
+  const fallbackPricePoints = uniqueStrings(
+    pricingRecords.flatMap((record) =>
+      extractPricePoints(
+        typeof record.metadataJson.planPricingText === 'string' && record.metadataJson.planPricingText.trim()
+          ? record.metadataJson.planPricingText
+          : record.excerpt,
+      ),
+    ),
+  );
+
+  if (fallbackPricePoints.length > 0) {
+    return trimEvidenceText(buildPricingSummary(fallbackPricePoints));
   }
 
   return trimEvidenceText(

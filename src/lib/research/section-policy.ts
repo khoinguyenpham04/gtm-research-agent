@@ -182,11 +182,23 @@ function getEvidenceStrength(record: ResearchEvidence) {
 }
 
 function getEvidenceMode(record: ResearchEvidence) {
-  return typeof record.metadataJson.evidenceMode === 'string'
-    ? record.metadataJson.evidenceMode
-    : record.sourceType === 'document'
-      ? 'document-internal'
-      : 'market-adjacent';
+  const storedMode =
+    typeof record.metadataJson.evidenceMode === 'string'
+      ? record.metadataJson.evidenceMode
+      : record.sourceType === 'document'
+        ? 'document-internal'
+        : 'market-adjacent';
+
+  if (
+    storedMode === 'market-adjacent' &&
+    resolveEvidenceSectionKey(record) === 'risks-and-unknowns' &&
+    ['official', 'research', 'media'].includes(getEvidenceCategory(record)) &&
+    hasBarrierSignals(record)
+  ) {
+    return 'independent-validation';
+  }
+
+  return storedMode;
 }
 
 function getEvidenceSection(record: ResearchEvidence) {
@@ -320,27 +332,72 @@ function getEvidenceSubtopic(record: ResearchEvidence) {
     : '';
 }
 
+function getGtmSubtopicBucket(record: ResearchEvidence) {
+  const subtopic = getEvidenceSubtopic(record);
+
+  if (!subtopic) {
+    return null;
+  }
+
+  if (
+    subtopic === 'buying-process' ||
+    subtopic.includes('buyer-journey') ||
+    subtopic.includes('procurement') ||
+    subtopic.includes('shortlist') ||
+    subtopic.includes('evaluation') ||
+    subtopic.includes('approval')
+  ) {
+    return 'buying-process' as const;
+  }
+
+  if (
+    subtopic === 'channel-preference' ||
+    subtopic.includes('channel') ||
+    subtopic.includes('marketplace') ||
+    subtopic.includes('self-serve')
+  ) {
+    return 'channel-preference' as const;
+  }
+
+  if (
+    subtopic === 'partner-msp-direct' ||
+    subtopic.includes('partner') ||
+    subtopic.includes('msp') ||
+    subtopic.includes('reseller') ||
+    subtopic.includes('direct')
+  ) {
+    return 'partner-msp-direct' as const;
+  }
+
+  if (
+    subtopic === 'purchase-friction' ||
+    subtopic.includes('friction') ||
+    subtopic.includes('privacy') ||
+    subtopic.includes('security') ||
+    subtopic.includes('consent') ||
+    subtopic.includes('integration') ||
+    subtopic.includes('compliance') ||
+    subtopic.includes('data-residency') ||
+    subtopic.includes('trust')
+  ) {
+    return 'purchase-friction' as const;
+  }
+
+  return null;
+}
+
 export function getGtmEvidenceSignals(evidenceRecords: ResearchEvidence[]) {
-  const hasExplicitSubtopics = evidenceRecords.some((record) => Boolean(getEvidenceSubtopic(record)));
   const buyingProcessRecords = evidenceRecords.filter((record) =>
-    hasExplicitSubtopics
-      ? getEvidenceSubtopic(record) === 'buying-process'
-      : hasBuyingProcessSignals(record),
+    getGtmSubtopicBucket(record) === 'buying-process' || hasBuyingProcessSignals(record),
   );
   const channelRecords = evidenceRecords.filter((record) =>
-    hasExplicitSubtopics
-      ? getEvidenceSubtopic(record) === 'channel-preference'
-      : hasChannelSignals(record),
+    getGtmSubtopicBucket(record) === 'channel-preference' || hasChannelSignals(record),
   );
   const partnerPreferenceRecords = evidenceRecords.filter((record) =>
-    hasExplicitSubtopics
-      ? getEvidenceSubtopic(record) === 'partner-msp-direct'
-      : hasPartnerPreferenceSignals(record),
+    getGtmSubtopicBucket(record) === 'partner-msp-direct' || hasPartnerPreferenceSignals(record),
   );
   const purchaseFrictionRecords = evidenceRecords.filter((record) =>
-    hasExplicitSubtopics
-      ? getEvidenceSubtopic(record) === 'purchase-friction'
-      : hasPurchaseFrictionSignals(record),
+    getGtmSubtopicBucket(record) === 'purchase-friction' || hasPurchaseFrictionSignals(record),
   );
 
   return {

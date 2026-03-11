@@ -15,6 +15,11 @@ import { resolvePlannedSearchQuery } from '@/lib/research/section-routing';
 
 const defaultVendorTargets = ['Otter.ai', 'Fireflies.ai', 'Fathom', 'Zoom AI Companion'];
 
+interface CoverageBucket {
+  key: string;
+  matches: (query: PlannedSearchQuery) => boolean;
+}
+
 function withUniqueQueries(queries: PlannedSearchQuery[]) {
   const seen = new Set<string>();
   return queries.filter((query) => {
@@ -25,6 +30,10 @@ function withUniqueQueries(queries: PlannedSearchQuery[]) {
     seen.add(key);
     return true;
   });
+}
+
+function getQueryKey(query: PlannedSearchQuery) {
+  return `${query.sectionKey}:${query.query.toLowerCase()}`;
 }
 
 function buildFallbackQueries(topic: string): PlannedSearchQuery[] {
@@ -144,14 +153,143 @@ function buildFallbackQueries(topic: string): PlannedSearchQuery[] {
   ];
 }
 
+const requiredCoverageBuckets: CoverageBucket[] = [
+  {
+    key: 'market-adjacent',
+    matches: (query) =>
+      query.sectionKey === 'market-landscape' &&
+      query.intent === 'market-size' &&
+      query.evidenceMode === 'market-adjacent',
+  },
+  {
+    key: 'market-product',
+    matches: (query) =>
+      query.sectionKey === 'market-landscape' &&
+      query.intent === 'market-size' &&
+      query.evidenceMode === 'product-specific',
+  },
+  {
+    key: 'icp-adoption',
+    matches: (query) =>
+      query.sectionKey === 'icp-and-buyer' &&
+      query.intent === 'adoption',
+  },
+  {
+    key: 'icp-buyer-pain',
+    matches: (query) =>
+      query.sectionKey === 'icp-and-buyer' &&
+      query.intent === 'buyer-pain',
+  },
+  {
+    key: 'competitor-vendor-1',
+    matches: (query) =>
+      query.sectionKey === 'competitor-landscape' &&
+      query.intent === 'competitor-features' &&
+      Boolean(query.vendorTarget),
+  },
+  {
+    key: 'competitor-vendor-2',
+    matches: (query) =>
+      query.sectionKey === 'competitor-landscape' &&
+      query.intent === 'competitor-features' &&
+      Boolean(query.vendorTarget),
+  },
+  {
+    key: 'pricing-vendor-1',
+    matches: (query) =>
+      query.sectionKey === 'pricing-and-packaging' &&
+      query.intent === 'pricing' &&
+      Boolean(query.vendorTarget),
+  },
+  {
+    key: 'pricing-vendor-2',
+    matches: (query) =>
+      query.sectionKey === 'pricing-and-packaging' &&
+      query.intent === 'pricing' &&
+      Boolean(query.vendorTarget),
+  },
+  {
+    key: 'gtm-buying-process',
+    matches: (query) =>
+      query.sectionKey === 'gtm-motion' && query.subtopic === 'buying-process',
+  },
+  {
+    key: 'gtm-channel-preference',
+    matches: (query) =>
+      query.sectionKey === 'gtm-motion' && query.subtopic === 'channel-preference',
+  },
+  {
+    key: 'gtm-partner-msp-direct',
+    matches: (query) =>
+      query.sectionKey === 'gtm-motion' && query.subtopic === 'partner-msp-direct',
+  },
+  {
+    key: 'gtm-purchase-friction',
+    matches: (query) =>
+      query.sectionKey === 'gtm-motion' && query.subtopic === 'purchase-friction',
+  },
+  {
+    key: 'risk-barriers',
+    matches: (query) =>
+      query.sectionKey === 'risks-and-unknowns' &&
+      query.claimType === 'risk',
+  },
+];
+
+function takeNextMatchingQuery(
+  target: PlannedSearchQuery[],
+  selectedKeys: Set<string>,
+  queries: PlannedSearchQuery[],
+  bucket: CoverageBucket,
+) {
+  const match = queries.find((query) => {
+    const key = getQueryKey(query);
+    return !selectedKeys.has(key) && bucket.matches(query);
+  });
+
+  if (!match) {
+    return;
+  }
+
+  selectedKeys.add(getQueryKey(match));
+  target.push(match);
+}
+
 function normalizePlan(plan: ResearchPlan, topic: string): ResearchPlan {
-  const mergedQueries = withUniqueQueries(
-    [...plan.searchQueries, ...buildFallbackQueries(topic)].map(resolvePlannedSearchQuery),
-  ).slice(0, 18);
+  const plannedQueries = withUniqueQueries(plan.searchQueries.map(resolvePlannedSearchQuery));
+  const fallbackQueries = withUniqueQueries(buildFallbackQueries(topic).map(resolvePlannedSearchQuery));
+  const mergedQueries = withUniqueQueries([...plannedQueries, ...fallbackQueries]);
+  const selectedQueries: PlannedSearchQuery[] = [];
+  const selectedKeys = new Set<string>();
+
+  for (const bucket of requiredCoverageBuckets) {
+    takeNextMatchingQuery(selectedQueries, selectedKeys, plannedQueries, bucket);
+    if (selectedQueries.length >= 18) {
+      break;
+    }
+    takeNextMatchingQuery(selectedQueries, selectedKeys, fallbackQueries, bucket);
+    if (selectedQueries.length >= 18) {
+      break;
+    }
+  }
+
+  for (const query of mergedQueries) {
+    if (selectedQueries.length >= 18) {
+      break;
+    }
+
+    const key = getQueryKey(query);
+    if (selectedKeys.has(key)) {
+      continue;
+    }
+
+    selectedKeys.add(key);
+    selectedQueries.push(query);
+  }
 
   return {
     ...plan,
-    searchQueries: mergedQueries,
+    searchQueries: selectedQueries,
   };
 }
 

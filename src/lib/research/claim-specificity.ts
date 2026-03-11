@@ -39,6 +39,14 @@ function getEvidenceMode(record: ResearchEvidence): EvidenceMode {
     value === 'independent-validation' ||
     value === 'document-internal'
   ) {
+    if (
+      value === 'market-adjacent' &&
+      record.sectionKey === 'risks-and-unknowns' &&
+      hasBarrierSignals(record)
+    ) {
+      return 'independent-validation';
+    }
+
     return value;
   }
 
@@ -254,7 +262,12 @@ export function inferFindingSpecificity(
       (independentSpecificCount >= 1 && evidenceRecords.some(hasBarrierSignals)) ||
       evidenceMode === 'document-internal'
     ) {
-      return { claimType, evidenceMode, inferenceLabel: 'direct', notes };
+      return {
+        claimType,
+        evidenceMode: evidenceMode === 'document-internal' ? 'document-internal' : 'independent-validation',
+        inferenceLabel: 'direct',
+        notes,
+      };
     }
 
     notes.push('Claim relies on adjacent evidence rather than direct risk or adoption-barrier evidence.');

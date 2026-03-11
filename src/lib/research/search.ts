@@ -127,6 +127,52 @@ function firstSentenceMatching(text: string, regex: RegExp) {
   return sentences.find((sentence) => regex.test(sentence))?.trim() ?? null;
 }
 
+function compactText(input: string) {
+  return input.replace(/\s+/g, ' ').trim();
+}
+
+function isDiscountPricingText(input: string) {
+  const normalized = input.toLowerCase();
+  return (
+    normalized.includes('student') ||
+    normalized.includes('teacher') ||
+    normalized.includes('.edu') ||
+    normalized.includes('discount') ||
+    normalized.includes('education')
+  );
+}
+
+function extractCanonicalPricingText(text: string) {
+  const normalized = compactText(text);
+  const planPattern =
+    /(?:free|basic|starter|pro|plus|team|business|premium|enterprise)[^.!?\n]{0,120}?(?:[$£€]\s?\d+(?:\.\d+)?(?:\s*(?:\/|\bper\b)\s*(?:seat|user|month))?|contact us|contact sales|custom pricing|free)/gi;
+  const fallbackPattern =
+    /(?:from\s*)?[$£€]\s?\d+(?:\.\d+)?[^.!?\n]{0,60}?(?:month|monthly|seat|user|billed annually|billed monthly)/gi;
+
+  const planMatches = [...normalized.matchAll(planPattern)]
+    .map((match) => compactText(match[0]))
+    .filter((match) => !isDiscountPricingText(match));
+  const fallbackMatches = [...normalized.matchAll(fallbackPattern)]
+    .map((match) => compactText(match[0]))
+    .filter((match) => !isDiscountPricingText(match));
+  const uniqueMatches = [...new Set([...planMatches, ...fallbackMatches])];
+
+  if (uniqueMatches.length > 0) {
+    return uniqueMatches.slice(0, 3).join(' | ');
+  }
+
+  const fallbackSentence = firstSentenceMatching(
+    normalized,
+    /(\$|£|€|usd|gbp|eur|user\/month|seat\/month|billed annually|billed monthly|free plan)/i,
+  );
+
+  if (fallbackSentence && !isDiscountPricingText(fallbackSentence)) {
+    return compactText(fallbackSentence);
+  }
+
+  return null;
+}
+
 function extractListMatches(text: string, values: string[]) {
   const lowered = text.toLowerCase();
   return values.filter((value) => lowered.includes(value.toLowerCase()));
@@ -166,6 +212,10 @@ function extractProductName(title: string, vendorTarget: string | null) {
 }
 
 function buildCanonicalSnippet(pageType: CanonicalVendorPage['vendorPageType'], text: string) {
+  if (pageType === 'pricing') {
+    return extractCanonicalPricingText(text) ?? text.slice(0, 500).trim() ?? null;
+  }
+
   const canonicalSentenceMatchers: Record<
     CanonicalVendorPage['vendorPageType'],
     RegExp
@@ -202,11 +252,7 @@ function buildVendorPageFacts(
     targetUser: extractTargetUser(combined),
     coreFeatures: extractListMatches(combined, featureKeywords).slice(0, 6),
     crmIntegrations: extractListMatches(combined, crmKeywords).slice(0, 5),
-    planPricingText:
-      firstSentenceMatching(
-        combined,
-        /(\$|£|€|usd|gbp|eur|user\/month|seat\/month|billed annually|billed monthly|free plan)/i,
-      ) ?? null,
+    planPricingText: extractCanonicalPricingText(combined),
   };
 }
 

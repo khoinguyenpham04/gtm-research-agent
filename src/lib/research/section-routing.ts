@@ -109,14 +109,6 @@ export function resolveSectionKey(input: {
   sectionKey?: string | null;
   claimType?: ClaimType | null;
 }): SectionKey {
-  if (input.intent) {
-    return deriveSectionKeyFromIntent(input.intent, input.subtopic);
-  }
-
-  if (input.claimType) {
-    return deriveSectionKeyFromClaimType(input.claimType);
-  }
-
   const explicit = normalize(input.sectionKey);
   switch (explicit) {
     case 'market-landscape':
@@ -127,8 +119,18 @@ export function resolveSectionKey(input: {
     case 'risks-and-unknowns':
       return explicit;
     default:
-      return deriveSectionKeyFromIntent(null, input.subtopic);
+      break;
   }
+
+  if (input.claimType) {
+    return deriveSectionKeyFromClaimType(input.claimType);
+  }
+
+  if (input.intent) {
+    return deriveSectionKeyFromIntent(input.intent, input.subtopic);
+  }
+
+  return deriveSectionKeyFromIntent(null, input.subtopic);
 }
 
 export function resolvePlannedSearchQuery(query: PlannedSearchQuery): PlannedSearchQuery {
