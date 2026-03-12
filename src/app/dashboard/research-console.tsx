@@ -164,22 +164,28 @@ function extractActiveRateLimitRetry(
 
 export function DeepResearchConsole({
   initialDocuments,
+  initialObjective = "",
+  initialTopic = "",
   initialWorkspace,
+  initialWorkspaceId,
   initialWorkspaces,
 }: {
   initialDocuments: DocumentSummary[]
+  initialObjective?: string
+  initialTopic?: string
   initialWorkspace: WorkspaceDetail | null
+  initialWorkspaceId?: string
   initialWorkspaces: WorkspaceSummary[]
 }) {
-  const [topic, setTopic] = useState("")
-  const [objective, setObjective] = useState("")
+  const [topic, setTopic] = useState(initialTopic)
+  const [objective, setObjective] = useState(initialObjective)
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([])
   const [workspace, setWorkspace] = useState<WorkspaceDetail | null>(
     initialWorkspace,
   )
   const [workspaces, setWorkspaces] = useState(initialWorkspaces)
   const [activeWorkspaceId, setActiveWorkspaceId] = useState(
-    initialWorkspace?.id ?? initialWorkspaces[0]?.id ?? "",
+    initialWorkspaceId ?? initialWorkspace?.id ?? initialWorkspaces[0]?.id ?? "",
   )
   const [workspaceName, setWorkspaceName] = useState("")
   const [run, setRun] = useState<DeepResearchRunResponse | null>(null)

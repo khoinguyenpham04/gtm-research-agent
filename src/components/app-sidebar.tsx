@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/sidebar"
 import {
   LayoutDashboardIcon,
+  HomeIcon,
   Settings2Icon,
   CircleHelpIcon,
   DatabaseIcon,
@@ -32,6 +33,14 @@ const data = {
     avatar: "/avatars/shadcn.jpg",
   },
   navMain: [
+    {
+      title: "Home",
+      url: "/dashboard",
+      icon: (
+        <HomeIcon
+        />
+      ),
+    },
     {
       title: "Deep Research",
       url: "/dashboard/deepresearch",
