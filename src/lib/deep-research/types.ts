@@ -317,6 +317,21 @@ export const tavilySearchArtifactSchema = z.object({
 
 export type TavilySearchArtifact = z.infer<typeof tavilySearchArtifactSchema>;
 
+export const gapFillQuerySuggestionSchema = z.object({
+  query: z.string().trim().min(1).max(500),
+  intendedCategories: z.array(gtmCoverageCategorySchema).max(3).default([]),
+});
+
+export type GapFillQuerySuggestion = z.infer<
+  typeof gapFillQuerySuggestionSchema
+>;
+
+export const gapFillQueryPlanSchema = z.object({
+  queries: z.array(gapFillQuerySuggestionSchema).min(1).max(3),
+});
+
+export type GapFillQueryPlan = z.infer<typeof gapFillQueryPlanSchema>;
+
 export const searchToolEnvelopeSchema = z.discriminatedUnion("toolName", [
   z.object({
     toolName: z.literal("selectedDocumentsSearch"),

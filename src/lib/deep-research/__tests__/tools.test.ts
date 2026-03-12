@@ -1,61 +1,181 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { AIMessage } from "@langchain/core/messages";
+
+import type {
+  DeepResearchModelFactory,
+  DeepResearchModelRole,
+} from "@/lib/deep-research/openai-model-factory";
 import {
-  filterAndRankDocumentChunks,
-  formatDocumentSearchResults,
-  type SearchableDocumentChunk,
+  createResearcherTools,
+  parseSearchToolEnvelope,
+  runTavilySearch,
+  type ResearchToolContext,
 } from "@/lib/deep-research/tools";
+import type { DeepResearchModelConfig } from "@/lib/deep-research/types";
 
-test("filterAndRankDocumentChunks keeps only selected document ids", () => {
-  const chunks: SearchableDocumentChunk[] = [
-    {
-      id: 1,
-      content: "Primary document chunk",
-      metadata: {
-        document_id: "doc-1",
-        file_name: "doc-1.pdf",
-        chunk_index: 0,
-        total_chunks: 2,
-      },
-      embedding: [1, 0],
+class FakeModelFactory implements DeepResearchModelFactory {
+  constructor(
+    private readonly structuredHandler: (
+      role: DeepResearchModelRole,
+    ) => Promise<unknown>,
+  ) {}
+
+  async invokeStructured<T>(role: DeepResearchModelRole) {
+    return (await this.structuredHandler(role)) as T;
+  }
+
+  async invokeWithTools() {
+    return new AIMessage({ content: "" });
+  }
+
+  async invokeText() {
+    return new AIMessage({ content: "" });
+  }
+}
+
+const modelConfig: DeepResearchModelConfig = {
+  summarizationModel: "gpt-4.1-mini",
+  summarizationModelMaxTokens: 2048,
+  researchModel: "gpt-4.1",
+  researchModelMaxTokens: 4096,
+  compressionModel: "gpt-4.1",
+  compressionModelMaxTokens: 4096,
+  finalReportModel: "gpt-4.1",
+  finalReportModelMaxTokens: 4096,
+  maxStructuredOutputRetries: 2,
+  maxContentLength: 20_000,
+};
+
+function createToolContext(
+  models: DeepResearchModelFactory,
+  events: Array<{ eventType: string; payload?: Record<string, unknown> }> = [],
+): ResearchToolContext {
+  return {
+    runId: "test-run",
+    selectedDocumentIds: ["doc-1"],
+    openAiApiKey: "test-key",
+    tavilyApiKey: "test-tavily-key",
+    modelConfig,
+    models,
+    logEvent: async (_runId, _stage, eventType, _message, payload) => {
+      events.push({ eventType, payload });
     },
-    {
-      id: 2,
-      content: "Unselected document chunk",
-      metadata: {
-        document_id: "doc-2",
-        file_name: "doc-2.pdf",
-        chunk_index: 0,
-        total_chunks: 1,
+  };
+}
+
+test("runTavilySearch returns partial successful results when one query fails", async () => {
+  const events: Array<{ eventType: string; payload?: Record<string, unknown> }> =
+    [];
+  const models = new FakeModelFactory(async () => {
+    throw new Error("Summarization should not run for this test.");
+  });
+  const context = createToolContext(models, events);
+  const originalFetch = globalThis.fetch;
+  const seenBodies: string[] = [];
+
+  globalThis.fetch = async (input, init) => {
+    void input;
+    const body = String(init?.body ?? "");
+    seenBodies.push(body);
+    if (body.includes("competitor pricing")) {
+      return new Response("upstream failure", { status: 500 });
+    }
+
+    return new Response(
+      JSON.stringify({
+        results: [
+          {
+            title: "UK SME AI adoption overview",
+            url: "https://example.com/adoption",
+            content:
+              "UK SMEs are increasing their adoption of AI productivity software.",
+          },
+        ],
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
       },
-      embedding: [0, 1],
-    },
-  ];
+    );
+  };
 
-  const matches = filterAndRankDocumentChunks(chunks, ["doc-1"], [1, 0], 5);
+  try {
+    const encoded = await runTavilySearch(
+      context,
+      ["uk smb ai adoption", "competitor pricing"],
+      5,
+      {
+        searchDepth: "basic",
+        includeRawContent: false,
+        summarizeRawContent: false,
+      },
+    );
 
-  assert.equal(matches.length, 1);
-  assert.equal(matches[0]?.metadata.document_id, "doc-1");
+    const envelope = parseSearchToolEnvelope(encoded);
+    assert.ok(envelope);
+    assert.equal(envelope?.toolName, "tavilySearch");
+    assert.equal(envelope?.artifact.results.length, 1);
+    assert.ok(events.some((event) => event.eventType === "web_search_started"));
+    assert.ok(
+      events.some((event) => event.eventType === "web_search_completed"),
+    );
+    assert.ok(
+      seenBodies.every(
+        (body) =>
+          body.includes('"search_depth":"basic"') &&
+          body.includes('"include_raw_content":false'),
+      ),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
-test("formatDocumentSearchResults preserves citation metadata", () => {
-  const rendered = formatDocumentSearchResults([
-    {
-      id: 10,
-      content: "Quoted evidence from the uploaded document.",
-      similarity: 0.99,
-      metadata: {
-        document_id: "doc-1",
-        file_name: "analyst-report.pdf",
-        chunk_index: 1,
-        total_chunks: 4,
-        file_url: "https://example.com/analyst-report.pdf",
-      },
-    },
-  ]);
+test("tavilySearch falls back to page content when summarization fails", async () => {
+  const models = new FakeModelFactory(async () => {
+    throw new Error("summarizer failed");
+  });
+  const context = createToolContext(models);
+  const originalFetch = globalThis.fetch;
 
-  assert.match(rendered, /analyst-report\.pdf/);
-  assert.match(rendered, /Document ID: doc-1/);
-  assert.match(rendered, /https:\/\/example\.com\/analyst-report\.pdf/);
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        results: [
+          {
+            title: "AI assistant compliance overview",
+            url: "https://example.com/compliance",
+            content: "Fallback summary content from the search result.",
+            raw_content:
+              "Full raw content that would normally be summarized into a shorter note.",
+          },
+        ],
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+
+  try {
+    const { toolsByName } = createResearcherTools(context);
+    const tavilySearchTool = toolsByName.get("tavilySearch");
+    assert.ok(tavilySearchTool);
+
+    const encoded = await tavilySearchTool?.invoke({
+      queries: ["uk ai assistant compliance"],
+      matchCount: 5,
+    });
+    const envelope = parseSearchToolEnvelope(String(encoded));
+    assert.ok(envelope);
+    assert.equal(envelope?.toolName, "tavilySearch");
+    assert.match(
+      envelope?.renderedText ?? "",
+      /Fallback summary content from the search result/i,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

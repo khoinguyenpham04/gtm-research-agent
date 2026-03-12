@@ -22,6 +22,7 @@ import {
   compressResearchSystemPrompt,
   extractEvidenceLedgerPrompt,
   finalReportGenerationPrompt,
+  gapFillQueryProposalPrompt,
   leadResearcherPrompt,
   preResearchPlanningPrompt,
   researchSystemPrompt,
@@ -34,6 +35,7 @@ import {
   createResearcherTools,
   createSupervisorTools,
   parseSearchToolEnvelope,
+  runTavilySearch,
 } from "@/lib/deep-research/tools";
 import {
   getSourceTierRank,
@@ -54,6 +56,7 @@ import type {
   EvidenceResolution,
   EvidenceRow,
   EvidenceValidationResult,
+  GapFillQueryPlan,
   PreResearchPlan,
   ReportPlan,
   ResearchQuestionResult,
@@ -70,6 +73,7 @@ import {
   evidenceConflictResolutionSchema,
   evidenceExtractionSchema,
   evidenceValidationSchema,
+  gapFillQueryPlanSchema,
   gapFillStatsSchema,
   preResearchPlanSchema,
   reportPlanSchema,
@@ -309,6 +313,53 @@ function extractToolCalls(message: BaseMessage) {
   return [];
 }
 
+function buildResearchToolMessages(
+  toolCalls: ReturnType<typeof extractToolCalls>,
+  observations: unknown[],
+) {
+  const newlyBuiltAnchoredFacts: AnchoredFact[] = [];
+  const successfulToolNames = new Set<string>();
+
+  const toolMessages = observations.map((observation, index) => {
+    const toolCall = toolCalls[index];
+    const observationText =
+      typeof observation === "string"
+        ? observation
+        : stringifyContent(observation);
+    const envelope = parseSearchToolEnvelope(observationText);
+
+    if (envelope?.toolName === "selectedDocumentsSearch") {
+      successfulToolNames.add(envelope.toolName);
+      newlyBuiltAnchoredFacts.push(
+        ...buildDocumentAnchoredFacts(
+          envelope.artifact.queries,
+          envelope.artifact.matches,
+        ),
+      );
+    } else if (envelope?.toolName === "tavilySearch") {
+      successfulToolNames.add(envelope.toolName);
+      newlyBuiltAnchoredFacts.push(
+        ...buildWebAnchoredFacts(
+          envelope.artifact.queries,
+          envelope.artifact.results,
+        ),
+      );
+    }
+
+    return new ToolMessage({
+      content: envelope?.renderedText ?? observationText,
+      tool_call_id: toolCall?.id ?? crypto.randomUUID(),
+      name: toolCall?.name ?? "unknown_tool",
+    });
+  });
+
+  return {
+    toolMessages,
+    newlyBuiltAnchoredFacts,
+    successfulToolNames,
+  };
+}
+
 function extractToolMessageContents(messages: BaseMessage[]) {
   return messages
     .filter((message): message is ToolMessage => message instanceof ToolMessage)
@@ -387,6 +438,14 @@ const GTM_COVERAGE_CATEGORIES: GtmCoverageCategoryKey[] = [
 
 const GAP_FILL_ELIGIBLE_GTM_CATEGORIES: GtmCoverageCategoryKey[] =
   GTM_COVERAGE_CATEGORIES.filter((category) => category !== "recommendations");
+
+const GAP_FILL_PRIORITY_ORDER: GtmCoverageCategoryKey[] = [
+  "market_size_inputs",
+  "competitors_pricing",
+  "compliance",
+  "buyers",
+  "adoption",
+];
 
 const RECOMMENDATION_SUPPORT_CATEGORIES: GtmCoverageCategoryKey[] = [
   "market_size_inputs",
@@ -1133,16 +1192,19 @@ export function recomputeCoverageBoard(
           "Compliance evidence exists, but it needs stronger regulator or document-backed support.",
         );
       }
-    } else if (
+    } else {
+      status = "missing";
+    }
+
+    if (
       !isPending &&
+      status !== "anchored" &&
       gapFillAttempts >= budgets.maxTargetedWebGapFillAttemptsPerCategory
     ) {
       status = "exhausted";
       notes.push(
         "A targeted web gap-fill attempt was already used for this category without finding enough evidence.",
       );
-    } else {
-      status = "missing";
     }
 
     if (isPending) {
@@ -1176,29 +1238,11 @@ export function selectGapFillCategories(
   gapFillStats: GapFillStats,
   budgets: DeepResearchBudgets,
 ) {
-  const remainingRunBudget =
-    budgets.maxTargetedWebGapFillAttemptsPerRun - gapFillStats.totalAttempts;
-  if (remainingRunBudget <= 0) {
-    return [] as GtmCoverageCategoryKey[];
-  }
-
-  const categories = coverageBoard
-    .filter((entry) => GAP_FILL_ELIGIBLE_GTM_CATEGORIES.includes(entry.key))
-    .filter(
-      (entry) =>
-        (entry.status === "missing" || entry.status === "partial") &&
-        entry.gapFillAttempts < budgets.maxTargetedWebGapFillAttemptsPerCategory,
-    )
-    .sort((left, right) => {
-      if (left.status !== right.status) {
-        return left.status === "missing" ? -1 : 1;
-      }
-      return left.key.localeCompare(right.key);
-    })
-    .slice(0, remainingRunBudget)
-    .map((entry) => entry.key);
-
-  return categories;
+  return createGapFillSelectionSnapshot(
+    coverageBoard,
+    gapFillStats,
+    budgets,
+  ).selectedCategories;
 }
 
 function incrementGapFillStats(
@@ -1220,57 +1264,200 @@ function incrementGapFillStats(
   return gapFillStatsSchema.parse(next);
 }
 
-function buildGapFillQueries(
-  topic: string,
-  categories: GtmCoverageCategoryKey[],
-) {
-  const normalizedTopic = normalizeWhitespace(topic);
-  const queries = categories.flatMap((category) => {
-    switch (category) {
-      case "market_size_inputs":
-        return [
-          `${normalizedTopic} UK SMB market size inputs business population sales teams`,
-        ];
-      case "adoption":
-        return [
-          `${normalizedTopic} UK adoption demand AI meeting assistant SMB sales teams`,
-        ];
-      case "buyers":
-        return [
-          `${normalizedTopic} UK SMB sales teams buyer segments personas pain points`,
-        ];
-      case "competitors_pricing":
-        return [
-          `${normalizedTopic} UK AI meeting assistant competitors pricing SMB sales`,
-        ];
-      case "compliance":
-        return [
-          `${normalizedTopic} UK GDPR meeting recording transcription AI compliance`,
-        ];
-      case "recommendations":
-        return [];
-      default:
-        return [];
-    }
-  });
+const GAP_FILL_QUERY_MAX_LENGTH = 350;
+const GAP_FILL_QUERY_MAX_COUNT = 3;
+const GAP_FILL_TOPIC_SEED_MAX_LENGTH = 180;
+const GAP_FILL_INSTRUCTION_NOISE_PATTERNS = [
+  /\buse uploaded documents first\b/gi,
+  /\bfill gaps with (?:current )?web research\b/gi,
+  /\breconcile conflicting statistics\b/gi,
+  /\bprefer the most recent authoritative source\b/gi,
+  /\bstate assumptions explicitly\b/gi,
+  /\bproduce a cited executive brief\b/gi,
+  /\bproduce (?:a )?90-day gtm plan\b/gi,
+  /\bdefine the icp\b/gi,
+  /\bcompare \d+ competitors\b/gi,
+  /\bidentify compliance risks\b/gi,
+  /\bsize tam\/sam\/som\b/gi,
+  /\binput the topic\b/gi,
+  /\bgo[- ]to[- ]market research\b/gi,
+];
 
-  return [...new Set(queries)];
+const GAP_FILL_CATEGORY_HINTS: Record<GtmCoverageCategoryKey, string> = {
+  market_size_inputs: "market size",
+  adoption: "adoption",
+  buyers: "buyer segments",
+  competitors_pricing: "competitors pricing",
+  compliance: "compliance",
+  recommendations: "recommendations",
+};
+
+interface NormalizedGapFillQueriesResult {
+  queries: string[];
+  skippedQueries: Array<{ query: string; reason: string }>;
 }
 
-function buildGapFillControlMessage(
+function stripGapFillInstructionNoise(value: string) {
+  let sanitized = value;
+
+  for (const pattern of GAP_FILL_INSTRUCTION_NOISE_PATTERNS) {
+    sanitized = sanitized.replace(pattern, " ");
+  }
+
+  return normalizeWhitespace(
+    sanitized
+      .replace(/^[\s"'`([{]+/, "")
+      .replace(/[\s"'`)\]}]+$/, "")
+      .replace(/\s*[|:;]+/g, " ")
+      .replace(/\s{2,}/g, " "),
+  );
+}
+
+function clampQueryLength(value: string, maxLength = GAP_FILL_QUERY_MAX_LENGTH) {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  const slice = value.slice(0, maxLength + 1);
+  const lastBoundary = Math.max(
+    slice.lastIndexOf(" "),
+    slice.lastIndexOf(","),
+    slice.lastIndexOf("/"),
+  );
+
+  if (lastBoundary >= Math.floor(maxLength * 0.6)) {
+    return slice.slice(0, lastBoundary).trim();
+  }
+
+  return value.slice(0, maxLength).trim();
+}
+
+function compactGapFillTopicSeed(topic: string) {
+  const stripped = stripGapFillInstructionNoise(topic);
+  const firstSentence = stripped.split(/(?<=[.!?])\s+/)[0] ?? stripped;
+  const withoutLeadVerb = firstSentence.replace(
+    /^(assess|analyse|analyze|evaluate|research|investigate|determine|review)\s+/i,
+    "",
+  );
+
+  return clampQueryLength(
+    normalizeWhitespace(withoutLeadVerb).replace(/[.!?]+$/g, ""),
+    GAP_FILL_TOPIC_SEED_MAX_LENGTH,
+  );
+}
+
+export function normalizeGapFillQueries(
+  inputQueries: string[],
+  maxLength = GAP_FILL_QUERY_MAX_LENGTH,
+): NormalizedGapFillQueriesResult {
+  const seen = new Set<string>();
+  const queries: string[] = [];
+  const skippedQueries: Array<{ query: string; reason: string }> = [];
+
+  for (const originalQuery of inputQueries) {
+    const stripped = stripGapFillInstructionNoise(originalQuery);
+    const normalized = clampQueryLength(
+      stripped
+        .replace(/\s+/g, " ")
+        .replace(/[.!?]+$/g, "")
+        .trim(),
+      maxLength,
+    );
+
+    if (!normalized) {
+      skippedQueries.push({
+        query: originalQuery,
+        reason: "empty_after_normalization",
+      });
+      continue;
+    }
+
+    if (normalized.length < 3 || normalized.split(/\s+/).length < 2) {
+      skippedQueries.push({
+        query: originalQuery,
+        reason: "too_short",
+      });
+      continue;
+    }
+
+    const dedupeKey = normalized.toLowerCase();
+    if (seen.has(dedupeKey)) {
+      skippedQueries.push({
+        query: originalQuery,
+        reason: "duplicate",
+      });
+      continue;
+    }
+
+    seen.add(dedupeKey);
+    queries.push(normalized);
+  }
+
+  return {
+    queries: queries.slice(0, GAP_FILL_QUERY_MAX_COUNT),
+    skippedQueries,
+  };
+}
+
+function buildFallbackGapFillQueries(
   topic: string,
   categories: GtmCoverageCategoryKey[],
 ) {
-  const queries = buildGapFillQueries(topic, categories);
-  return new HumanMessage({
-    content: [
-      "Coverage is still incomplete for this GTM research task.",
-      `Missing or weak categories: ${categories.join(", ")}.`,
-      "Run one targeted tavilySearch next using the following focused queries before calling ResearchComplete again:",
-      ...queries.map((query, index) => `${index + 1}. ${query}`),
-      "After the Tavily search, record a reflection with thinkTool and only then decide whether research is complete.",
-    ].join("\n"),
-  });
+  const topicSeed = compactGapFillTopicSeed(topic);
+
+  return categories
+    .filter((category) => category !== "recommendations")
+    .map((category) =>
+      normalizeWhitespace(
+        [topicSeed, GAP_FILL_CATEGORY_HINTS[category]].filter(Boolean).join(" "),
+      ),
+    )
+    .slice(0, GAP_FILL_QUERY_MAX_COUNT);
+}
+
+function createGapFillSelectionSnapshot(
+  coverageBoard: CoverageBoardEntry[],
+  gapFillStats: GapFillStats,
+  budgets: DeepResearchBudgets,
+) {
+  const remainingRunBudget =
+    budgets.maxTargetedWebGapFillAttemptsPerRun - gapFillStats.totalAttempts;
+  const consideredCategories = coverageBoard
+    .filter((entry) => GAP_FILL_ELIGIBLE_GTM_CATEGORIES.includes(entry.key))
+    .filter(
+      (entry) =>
+        (entry.status === "missing" || entry.status === "partial") &&
+        entry.gapFillAttempts < budgets.maxTargetedWebGapFillAttemptsPerCategory,
+    )
+    .sort((left, right) => {
+      if (left.status !== right.status) {
+        return left.status === "missing" ? -1 : 1;
+      }
+      if (left.gapFillAttempts !== right.gapFillAttempts) {
+        return left.gapFillAttempts - right.gapFillAttempts;
+      }
+      return (
+        GAP_FILL_PRIORITY_ORDER.indexOf(left.key) -
+        GAP_FILL_PRIORITY_ORDER.indexOf(right.key)
+      );
+    })
+    .map((entry) => entry.key);
+
+  const selectedCategories =
+    remainingRunBudget > 0
+      ? consideredCategories.slice(0, remainingRunBudget)
+      : [];
+  const skippedCategories =
+    remainingRunBudget > 0
+      ? consideredCategories.slice(remainingRunBudget)
+      : consideredCategories;
+
+  return {
+    remainingRunBudget,
+    consideredCategories,
+    selectedCategories,
+    skippedCategories,
+  };
 }
 
 function shouldLogCoverageUpdate(
@@ -2793,6 +2980,135 @@ export function createDeepResearchGraphs(dependencies: GraphDependencies) {
     });
   };
 
+  const createRuntimeResearcherTools = (state: ResearcherStateType) =>
+    createResearcherTools({
+      runId: state.runId,
+      selectedDocumentIds: state.selectedDocumentIds,
+      openAiApiKey: dependencies.openAiApiKey,
+      tavilyApiKey: dependencies.tavilyApiKey,
+      modelConfig: state.modelConfig,
+      models: dependencies.models,
+      logEvent: dependencies.logEvent,
+    });
+
+  const createRuntimeResearcherToolContext = (state: ResearcherStateType) => ({
+    runId: state.runId,
+    selectedDocumentIds: state.selectedDocumentIds,
+    openAiApiKey: dependencies.openAiApiKey,
+    tavilyApiKey: dependencies.tavilyApiKey,
+    modelConfig: state.modelConfig,
+    models: dependencies.models,
+    logEvent: dependencies.logEvent,
+  });
+
+  const applyCoverageBoardUpdate = async (
+    state: ResearcherStateType,
+    anchoredFacts: AnchoredFact[],
+    coverageBoard: CoverageBoardEntry[],
+    gapFillStats: GapFillStats,
+    pendingGapFillCategories: GtmCoverageCategoryKey[],
+    completedGapFillCategories: GtmCoverageCategoryKey[] = [],
+  ) => {
+    if (!isGtmMode(state.preResearchPlan?.mode ?? state.reportPlan?.mode)) {
+      return coverageBoard;
+    }
+
+    const recomputedCoverageBoard = recomputeCoverageBoard(
+      anchoredFacts,
+      gapFillStats,
+      state.budgets,
+      pendingGapFillCategories,
+    );
+
+    if (completedGapFillCategories.length > 0) {
+      await logEvent(
+        state.runId,
+        "searching",
+        "gap_fill_completed",
+        "Completed targeted web gap fill for uncovered GTM categories.",
+        {
+          categories: completedGapFillCategories,
+          coverage: createCoverageBoardSnapshot(recomputedCoverageBoard),
+          gapFillStats,
+        },
+      );
+    }
+
+    if (shouldLogCoverageUpdate(coverageBoard, recomputedCoverageBoard)) {
+      await logEvent(
+        state.runId,
+        "researching",
+        "coverage_updated",
+        "Updated GTM coverage tracking from the latest research results.",
+        {
+          coverage: createCoverageBoardSnapshot(recomputedCoverageBoard),
+          gapFillStats,
+        },
+      );
+    }
+
+    return recomputedCoverageBoard;
+  };
+
+  const getGapFillTransition = (
+    coverageBoard: CoverageBoardEntry[],
+    gapFillStats: GapFillStats,
+    budgets: DeepResearchBudgets,
+  ) => {
+    const selection = createGapFillSelectionSnapshot(
+      coverageBoard,
+      gapFillStats,
+      budgets,
+    );
+
+    return {
+      ...selection,
+      shouldRunGapFill: selection.selectedCategories.length > 0,
+    };
+  };
+
+  const proposeGapFillQueries = async (
+    state: ResearcherStateType,
+    selectedCategories: GtmCoverageCategoryKey[],
+    coverageBoard: CoverageBoardEntry[],
+  ) => {
+    try {
+      const queryPlan = await dependencies.models.invokeStructured<GapFillQueryPlan>(
+        "research",
+        gapFillQueryPlanSchema,
+        [
+          new HumanMessage({
+            content: gapFillQueryProposalPrompt
+              .replace("{researchBrief}", state.researchTopic || "")
+              .replace(
+                "{preResearchPlan}",
+                stringifyForPrompt(state.preResearchPlan ?? {}),
+              )
+              .replace(
+                "{selectedCategories}",
+                stringifyForPrompt(selectedCategories),
+              )
+              .replace(
+                "{coverageSnapshot}",
+                stringifyForPrompt(createCoverageBoardSnapshot(coverageBoard)),
+              )
+              .replace("{date}", getTodayString()),
+          }),
+        ],
+      );
+
+      return {
+        source: "llm" as const,
+        rawQueries: queryPlan.queries.map((entry) => entry.query),
+      };
+    } catch {
+      return {
+        source: "fallback" as const,
+        rawQueries: [] as string[],
+      };
+    }
+  };
+
   const researcher = async (state: ResearcherStateType) => {
     const isGtmResearch = isGtmMode(
       state.preResearchPlan?.mode ?? state.reportPlan?.mode,
@@ -2819,15 +3135,7 @@ export function createDeepResearchGraphs(dependencies: GraphDependencies) {
       );
     }
 
-    const { tools } = createResearcherTools({
-      runId: state.runId,
-      selectedDocumentIds: state.selectedDocumentIds,
-      openAiApiKey: dependencies.openAiApiKey,
-      tavilyApiKey: dependencies.tavilyApiKey,
-      modelConfig: state.modelConfig,
-      models: dependencies.models,
-      logEvent: dependencies.logEvent,
-    });
+    const { tools } = createRuntimeResearcherTools(state);
 
     const response = await dependencies.models.invokeWithTools(
       "research",
@@ -2857,20 +3165,42 @@ export function createDeepResearchGraphs(dependencies: GraphDependencies) {
       return new Command({ goto: "compressResearch" });
     }
 
+    const isGtmResearch = isGtmMode(
+      state.preResearchPlan?.mode ?? state.reportPlan?.mode,
+    );
+    let nextCoverageBoard =
+      state.coverageBoard.length > 0
+        ? state.coverageBoard
+        : isGtmResearch
+          ? createInitialCoverageBoard()
+          : state.coverageBoard;
+    const nextGapFillStats = state.gapFillStats;
+    let nextPendingGapFillCategories = state.pendingGapFillCategories;
+
     const toolCalls = extractToolCalls(mostRecentMessage);
     if (toolCalls.length === 0) {
+      if (isGtmResearch) {
+        const gapFillTransition = getGapFillTransition(
+          nextCoverageBoard,
+          nextGapFillStats,
+          state.budgets,
+        );
+        if (gapFillTransition.shouldRunGapFill) {
+          return new Command({
+            goto: "runTargetedGapFill",
+            update: {
+              coverageBoard: nextCoverageBoard,
+              gapFillStats: nextGapFillStats,
+              pendingGapFillCategories: nextPendingGapFillCategories,
+            },
+          });
+        }
+      }
+
       return new Command({ goto: "compressResearch" });
     }
 
-    const { toolsByName } = createResearcherTools({
-      runId: state.runId,
-      selectedDocumentIds: state.selectedDocumentIds,
-      openAiApiKey: dependencies.openAiApiKey,
-      tavilyApiKey: dependencies.tavilyApiKey,
-      modelConfig: state.modelConfig,
-      models: dependencies.models,
-      logEvent: dependencies.logEvent,
-    });
+    const { toolsByName } = createRuntimeResearcherTools(state);
 
     const observations = await Promise.all(
       toolCalls.map(async (toolCall) => {
@@ -2889,55 +3219,22 @@ export function createDeepResearchGraphs(dependencies: GraphDependencies) {
       }),
     );
 
-    const isGtmResearch = isGtmMode(
-      state.preResearchPlan?.mode ?? state.reportPlan?.mode,
-    );
     let nextAnchoredFacts = state.anchoredFacts;
-    let nextCoverageBoard =
-      state.coverageBoard.length > 0
-        ? state.coverageBoard
-        : isGtmResearch
-          ? createInitialCoverageBoard()
-          : state.coverageBoard;
-    let nextGapFillStats = state.gapFillStats;
-    let nextPendingGapFillCategories = state.pendingGapFillCategories;
-    const completedGapFillCategories =
+    const {
+      toolMessages,
+      newlyBuiltAnchoredFacts,
+      successfulToolNames,
+    } =
+      buildResearchToolMessages(toolCalls, observations);
+    const tavilySearchSucceeded = successfulToolNames.has("tavilySearch");
+    const attemptedGapFillCategories =
       state.pendingGapFillCategories.length > 0 &&
       toolCalls.some((toolCall) => toolCall.name === "tavilySearch")
         ? state.pendingGapFillCategories
         : [];
-    const newlyBuiltAnchoredFacts: AnchoredFact[] = [];
-
-    const toolMessages = observations.map((observation, index) => {
-      const toolCall = toolCalls[index];
-      const observationText =
-        typeof observation === "string"
-          ? observation
-          : stringifyContent(observation);
-      const envelope = parseSearchToolEnvelope(observationText);
-
-      if (envelope?.toolName === "selectedDocumentsSearch") {
-        newlyBuiltAnchoredFacts.push(
-          ...buildDocumentAnchoredFacts(
-            envelope.artifact.queries,
-            envelope.artifact.matches,
-          ),
-        );
-      } else if (envelope?.toolName === "tavilySearch") {
-        newlyBuiltAnchoredFacts.push(
-          ...buildWebAnchoredFacts(
-            envelope.artifact.queries,
-            envelope.artifact.results,
-          ),
-        );
-      }
-
-      return new ToolMessage({
-        content: envelope?.renderedText ?? observationText,
-        tool_call_id: toolCall.id ?? crypto.randomUUID(),
-        name: toolCall.name,
-      });
-    });
+    const completedGapFillCategories = tavilySearchSucceeded
+      ? attemptedGapFillCategories
+      : [];
 
     if (newlyBuiltAnchoredFacts.length > 0) {
       nextAnchoredFacts = mergeAnchoredFacts(
@@ -2955,45 +3252,44 @@ export function createDeepResearchGraphs(dependencies: GraphDependencies) {
     }
 
     if (isGtmResearch) {
-      if (completedGapFillCategories.length > 0) {
+      if (attemptedGapFillCategories.length > 0) {
         nextPendingGapFillCategories = [];
       }
 
-      const recomputedCoverageBoard = recomputeCoverageBoard(
+      nextCoverageBoard = await applyCoverageBoardUpdate(
+        state,
         nextAnchoredFacts,
+        nextCoverageBoard,
         nextGapFillStats,
-        state.budgets,
         nextPendingGapFillCategories,
+        completedGapFillCategories,
       );
 
-      if (completedGapFillCategories.length > 0) {
+      if (
+        attemptedGapFillCategories.length > 0 &&
+        completedGapFillCategories.length === 0
+      ) {
+        const failingObservation = observations.find((observation, index) => {
+          const toolCall = toolCalls[index];
+          return toolCall?.name === "tavilySearch";
+        });
+
         await logEvent(
           state.runId,
           "searching",
-          "gap_fill_completed",
-          "Completed targeted web gap fill for uncovered GTM categories.",
+          "gap_fill_failed",
+          "Targeted web gap fill did not return usable Tavily results.",
           {
-            categories: completedGapFillCategories,
-            coverage: createCoverageBoardSnapshot(recomputedCoverageBoard),
+            categories: attemptedGapFillCategories,
+            error:
+              typeof failingObservation === "string"
+                ? failingObservation
+                : stringifyContent(failingObservation),
+            coverage: createCoverageBoardSnapshot(nextCoverageBoard),
             gapFillStats: nextGapFillStats,
           },
         );
       }
-
-      if (shouldLogCoverageUpdate(nextCoverageBoard, recomputedCoverageBoard)) {
-        await logEvent(
-          state.runId,
-          "researching",
-          "coverage_updated",
-          "Updated GTM coverage tracking from the latest research results.",
-          {
-            coverage: createCoverageBoardSnapshot(recomputedCoverageBoard),
-            gapFillStats: nextGapFillStats,
-          },
-        );
-      }
-
-      nextCoverageBoard = recomputedCoverageBoard;
     }
 
     const researchCompleteCalled = toolCalls.some(
@@ -3002,52 +3298,17 @@ export function createDeepResearchGraphs(dependencies: GraphDependencies) {
     const exceededIterations =
       state.toolCallIterations >= state.budgets.maxReactToolCalls;
 
-    if (
-      researchCompleteCalled &&
-      isGtmResearch &&
-      nextAnchoredFacts.length > 0
-    ) {
-      const categoriesToGapFill = selectGapFillCategories(
+    if (isGtmResearch && (researchCompleteCalled || exceededIterations)) {
+      const gapFillTransition = getGapFillTransition(
         nextCoverageBoard,
         nextGapFillStats,
         state.budgets,
       );
-
-      if (categoriesToGapFill.length > 0) {
-        const nextTopic = state.researchTopic || "the active GTM topic";
-        const queries = buildGapFillQueries(nextTopic, categoriesToGapFill);
-        nextGapFillStats = incrementGapFillStats(
-          nextGapFillStats,
-          categoriesToGapFill,
-        );
-        nextPendingGapFillCategories = categoriesToGapFill;
-        nextCoverageBoard = recomputeCoverageBoard(
-          nextAnchoredFacts,
-          nextGapFillStats,
-          state.budgets,
-          nextPendingGapFillCategories,
-        );
-
-        await logEvent(
-          state.runId,
-          "searching",
-          "gap_fill_started",
-          "Targeted web gap fill was scheduled before allowing research completion.",
-          {
-            categories: categoriesToGapFill,
-            queries,
-            coverage: createCoverageBoardSnapshot(nextCoverageBoard),
-            gapFillStats: nextGapFillStats,
-          },
-        );
-
+      if (gapFillTransition.shouldRunGapFill) {
         return new Command({
-          goto: "researcher",
+          goto: "runTargetedGapFill",
           update: {
-            researcherMessages: [
-              ...toolMessages,
-              buildGapFillControlMessage(nextTopic, categoriesToGapFill),
-            ],
+            researcherMessages: toolMessages,
             anchoredFacts: nextAnchoredFacts,
             coverageBoard: nextCoverageBoard,
             gapFillStats: nextGapFillStats,
@@ -3078,6 +3339,201 @@ export function createDeepResearchGraphs(dependencies: GraphDependencies) {
         coverageBoard: nextCoverageBoard,
         gapFillStats: nextGapFillStats,
         pendingGapFillCategories: nextPendingGapFillCategories,
+      },
+    });
+  };
+
+  const runTargetedGapFill = async (state: ResearcherStateType) => {
+    const gapFillTransition = getGapFillTransition(
+      state.coverageBoard,
+      state.gapFillStats,
+      state.budgets,
+    );
+
+    if (!gapFillTransition.shouldRunGapFill) {
+      return new Command({
+        goto: "compressResearch",
+        update: {
+          coverageBoard: state.coverageBoard,
+          gapFillStats: state.gapFillStats,
+          pendingGapFillCategories: [],
+        },
+      });
+    }
+
+    const nextTopic = state.researchTopic || "the active GTM topic";
+    const nextGapFillStats = incrementGapFillStats(
+      state.gapFillStats,
+      gapFillTransition.selectedCategories,
+    );
+    const inFlightCoverageBoard = recomputeCoverageBoard(
+      state.anchoredFacts,
+      nextGapFillStats,
+      state.budgets,
+      gapFillTransition.selectedCategories,
+    );
+
+    const queryProposal = await proposeGapFillQueries(
+      state,
+      gapFillTransition.selectedCategories,
+      inFlightCoverageBoard,
+    );
+    const rawProposedQueries = queryProposal.rawQueries;
+    let normalizedQueryResult = normalizeGapFillQueries(rawProposedQueries);
+    let querySource = queryProposal.source;
+    let fallbackQueries: string[] = [];
+
+    if (normalizedQueryResult.queries.length === 0) {
+      fallbackQueries = buildFallbackGapFillQueries(
+        nextTopic,
+        gapFillTransition.selectedCategories,
+      );
+      normalizedQueryResult = normalizeGapFillQueries(fallbackQueries);
+      querySource = "fallback";
+    }
+
+    const queries = normalizedQueryResult.queries;
+
+    await logEvent(
+      state.runId,
+      "searching",
+      "gap_fill_started",
+      "Targeted web gap fill is running before research completion.",
+      {
+        consideredCategories: gapFillTransition.consideredCategories,
+        selectedCategories: gapFillTransition.selectedCategories,
+        skippedCategories: gapFillTransition.skippedCategories,
+        rawProposedQueries,
+        fallbackQueries,
+        normalizedQueries: queries,
+        skippedInvalidQueries: normalizedQueryResult.skippedQueries,
+        querySource,
+        coverage: createCoverageBoardSnapshot(inFlightCoverageBoard),
+        gapFillStats: nextGapFillStats,
+      },
+    );
+
+    if (queries.length === 0) {
+      const nextCoverageBoard = await applyCoverageBoardUpdate(
+        state,
+        state.anchoredFacts,
+        state.coverageBoard,
+        nextGapFillStats,
+        [],
+        [],
+      );
+
+      await logEvent(
+        state.runId,
+        "searching",
+        "gap_fill_failed",
+        "Targeted web gap fill could not generate Tavily-safe queries.",
+        {
+          categories: gapFillTransition.selectedCategories,
+          rawProposedQueries,
+          fallbackQueries,
+          skippedInvalidQueries: normalizedQueryResult.skippedQueries,
+          coverage: createCoverageBoardSnapshot(nextCoverageBoard),
+          gapFillStats: nextGapFillStats,
+        },
+      );
+
+      return new Command({
+        goto: "compressResearch",
+        update: {
+          coverageBoard: nextCoverageBoard,
+          gapFillStats: nextGapFillStats,
+          pendingGapFillCategories: [],
+        },
+      });
+    }
+
+    const observation = await runTavilySearch(
+      createRuntimeResearcherToolContext(state),
+      queries,
+      5,
+      {
+        searchDepth: "basic",
+        includeRawContent: false,
+        summarizeRawContent: false,
+      },
+    );
+
+    const gapFillToolCall = [
+      {
+        id: crypto.randomUUID(),
+        name: "tavilySearch",
+        args: { queries },
+        type: "tool_call" as const,
+      },
+    ];
+    const {
+      toolMessages,
+      newlyBuiltAnchoredFacts,
+      successfulToolNames,
+    } = buildResearchToolMessages(
+      gapFillToolCall,
+      [observation],
+    );
+    const tavilySearchSucceeded = successfulToolNames.has("tavilySearch");
+
+    let nextAnchoredFacts = state.anchoredFacts;
+    if (newlyBuiltAnchoredFacts.length > 0) {
+      nextAnchoredFacts = mergeAnchoredFacts(
+        state.anchoredFacts,
+        newlyBuiltAnchoredFacts,
+      );
+
+      await logEvent(
+        state.runId,
+        "researching",
+        "anchored_facts_built",
+        "Built deterministic anchored facts from search results.",
+        summarizeAnchoredFacts(newlyBuiltAnchoredFacts),
+      );
+    }
+
+    const nextCoverageBoard = await applyCoverageBoardUpdate(
+      state,
+      nextAnchoredFacts,
+      state.coverageBoard,
+      nextGapFillStats,
+      [],
+      tavilySearchSucceeded ? gapFillTransition.selectedCategories : [],
+    );
+
+    if (!tavilySearchSucceeded) {
+      await logEvent(
+        state.runId,
+        "searching",
+        "gap_fill_failed",
+        "Targeted web gap fill did not return usable Tavily results.",
+        {
+          categories: gapFillTransition.selectedCategories,
+          error:
+            typeof observation === "string"
+              ? observation
+              : stringifyContent(observation),
+          coverage: createCoverageBoardSnapshot(nextCoverageBoard),
+          gapFillStats: nextGapFillStats,
+        },
+      );
+    }
+
+    return new Command({
+      goto: "researcher",
+      update: {
+        researcherMessages: [
+          new AIMessage({
+            content: "",
+            tool_calls: gapFillToolCall,
+          }),
+          ...toolMessages,
+        ],
+        anchoredFacts: nextAnchoredFacts,
+        coverageBoard: nextCoverageBoard,
+        gapFillStats: nextGapFillStats,
+        pendingGapFillCategories: [],
       },
     });
   };
@@ -3252,10 +3708,17 @@ export function createDeepResearchGraphs(dependencies: GraphDependencies) {
       ends: ["researcherTools"],
     })
     .addNode("researcherTools", researcherTools, {
+      ends: ["researcher", "runTargetedGapFill", "compressResearch"],
+    })
+    .addNode("runTargetedGapFill", runTargetedGapFill, {
       ends: ["researcher", "compressResearch"],
+      retryPolicy: {
+        maxAttempts: 3,
+      },
     })
     .addNode("compressResearch", compressResearch)
     .addEdge(START, "researcher")
+    .addEdge("runTargetedGapFill", "researcher")
     .addEdge("compressResearch", END);
 
   const researcherSubgraph = researcherBuilder.compile({

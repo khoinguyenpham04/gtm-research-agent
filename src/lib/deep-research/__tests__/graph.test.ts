@@ -9,6 +9,7 @@ import {
   buildSectionEvidencePacksFromArtifacts,
   buildWebAnchoredFacts,
   createDeepResearchGraphs,
+  normalizeGapFillQueries,
   recomputeCoverageBoard,
   selectGapFillCategories,
 } from "@/lib/deep-research/graph";
@@ -58,6 +59,9 @@ class FakeModelFactory implements DeepResearchModelFactory {
     void schema;
     const next = this.structuredOutputs.shift();
     assert.ok(next, "Expected a queued structured response.");
+    if (next instanceof Error) {
+      throw next;
+    }
     return next as T;
   }
 
@@ -217,6 +221,26 @@ function buildCompleteRunStructuredOutputs(overrides?: {
       plannerType: "adaptive",
       reportPlanVersion: 1,
     },
+    ...(reportPlan.mode === "gtm"
+      ? [
+          {
+            queries: [
+              {
+                query: "market size inputs for the target segment",
+                intendedCategories: ["market_size_inputs"],
+              },
+              {
+                query: "competitors pricing for the target segment",
+                intendedCategories: ["competitors_pricing"],
+              },
+              {
+                query: "compliance requirements for the target segment",
+                intendedCategories: ["compliance"],
+              },
+            ],
+          },
+        ]
+      : []),
     {
       sectionSupport:
         overrides?.sectionSupport ??
@@ -304,7 +328,18 @@ function buildToolOutputs() {
       content: "",
       tool_calls: [
         {
-          id: "supervisor-call-2",
+          id: "researcher-call-3",
+          name: "ResearchComplete",
+          args: {},
+          type: "tool_call",
+        },
+      ],
+    }),
+    new AIMessage({
+      content: "",
+      tool_calls: [
+        {
+          id: "supervisor-call-3",
           name: "ResearchComplete",
           args: {},
           type: "tool_call",
@@ -528,8 +563,8 @@ test("deterministic anchored facts drive GTM coverage and bounded gap fill", () 
   );
 
   assert.deepEqual(gapFillCategories, [
-    "competitors_pricing",
     "market_size_inputs",
+    "competitors_pricing",
   ]);
 });
 
@@ -1052,4 +1087,487 @@ test('missing evidence leads the final writer prompt to require "insufficient ev
   assert.match(finalPrompt, /"support": "missing"/);
   assert.match(finalPrompt, /"facts": \[\]/);
   assert.match(finalPrompt, /insufficient evidence/i);
+});
+
+function createEmptyGapFillStats() {
+  return {
+    totalAttempts: 0,
+    attemptsByCategory: {
+      market_size_inputs: 0,
+      adoption: 0,
+      buyers: 0,
+      competitors_pricing: 0,
+      compliance: 0,
+      recommendations: 0,
+    },
+  };
+}
+
+function createGtmPreResearchPlan() {
+  return {
+    mode: "gtm" as const,
+    coreQuestions: [
+      "What market-size inputs exist?",
+      "What adoption evidence exists?",
+      "What buyer evidence exists?",
+      "What competitor evidence exists?",
+      "What compliance evidence exists?",
+    ],
+    requiredEvidenceCategories: [
+      "market size inputs",
+      "adoption evidence",
+      "buyer evidence",
+      "competitor evidence",
+      "compliance evidence",
+    ],
+    gtmSubquestions: [
+      "What sourced market-size inputs exist?",
+      "What adoption evidence exists?",
+      "What buyer evidence exists?",
+      "What competitor or pricing evidence exists?",
+      "What compliance evidence exists?",
+    ],
+    documentResearchPriorities: [
+      "Use selected uploaded documents first for direct evidence.",
+    ],
+  };
+}
+
+test("normalizeGapFillQueries strips instruction noise and clamps long queries", () => {
+  const longQuery = `Assess the Brazil go-to-market opportunity for an AI meeting assistant for SMB sales teams. Use uploaded documents first, then fill gaps with current web research. Reconcile conflicting statistics, prefer the most recent authoritative source, state assumptions explicitly, produce a cited executive brief plus a 90-day GTM plan, and identify compliance risks for AI meeting recording and transcription tooling.`;
+
+  const result = normalizeGapFillQueries([
+    longQuery,
+    "   ",
+    "Brazil AI meeting assistant market size",
+    "brazil ai meeting assistant market size",
+  ]);
+
+  assert.equal(result.queries.length, 2);
+  assert.ok(result.queries[0]);
+  assert.ok(result.queries[0]!.length <= 350);
+  assert.ok(!/use uploaded documents first/i.test(result.queries[0]!));
+  assert.ok(!/fill gaps with current web research/i.test(result.queries[0]!));
+  assert.ok(/Brazil/i.test(result.queries[0]!));
+  assert.equal(
+    result.skippedQueries.some((entry) => entry.reason === "empty_after_normalization"),
+    true,
+  );
+  assert.equal(
+    result.skippedQueries.some((entry) => entry.reason === "duplicate"),
+    true,
+  );
+});
+
+test("gtm researcher imperatively runs Tavily gap fill when the model returns no tool calls", async () => {
+  const fakeModels = new FakeModelFactory(
+    [
+      {
+        queries: [
+          {
+            query:
+              "UK AI meeting assistant SMB sales teams market size and adoption",
+            intendedCategories: ["market_size_inputs", "adoption"],
+          },
+          {
+            query:
+              "UK AI meeting assistant competitors pricing SMB sales teams",
+            intendedCategories: ["competitors_pricing"],
+          },
+          {
+            query: "UK AI meeting assistant GDPR recording transcription compliance",
+            intendedCategories: ["compliance"],
+          },
+        ],
+      },
+    ],
+    [
+      new AIMessage({ content: "I need to think about this more." }),
+      new AIMessage({
+        content: "",
+        tool_calls: [
+          {
+            id: "researcher-complete-after-gap-fill",
+            name: "ResearchComplete",
+            args: {},
+            type: "tool_call",
+          },
+        ],
+      }),
+    ],
+    [
+      new AIMessage({
+        content:
+          "Compressed findings with [UK SMB Statistics](https://example.com/market-size) and [ICO guidance](https://ico.org.uk/guidance).",
+      }),
+    ],
+  );
+
+  const events: Array<{
+    stage: string;
+    eventType: string;
+    message: string;
+    payload?: Record<string, unknown>;
+  }> = [];
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        results: [
+          {
+            title: "UK SMB Statistics",
+            url: "https://example.com/market-size",
+            content:
+              "UK business population figures and employee bands for SMBs.",
+          },
+          {
+            title: "Meeting Assistant Pricing",
+            url: "https://example.com/pricing",
+            content:
+              "Competitor pricing tiers for AI meeting assistants used by sales teams.",
+          },
+          {
+            title: "ICO Guidance",
+            url: "https://ico.org.uk/guidance",
+            content:
+              "UK ICO guidance covers transparency, lawful basis, and data minimisation for AI systems processing meeting data.",
+          },
+        ],
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+
+  try {
+    const { researcherSubgraph } = createDeepResearchGraphs({
+      models: fakeModels,
+      openAiApiKey: "test-key",
+      tavilyApiKey: "test-tavily-key",
+      logEvent: async (_runId, stage, eventType, message, payload) => {
+        events.push({ stage, eventType, message, payload });
+      },
+    });
+
+    const result = await researcherSubgraph.invoke({
+      runId: "run-gap-fill-no-tools",
+      selectedDocumentIds: ["doc-1"],
+      modelConfig,
+      budgets,
+      researchTopic:
+        "Assess the UK go-to-market opportunity for an AI meeting assistant for SMB sales teams.",
+      preResearchPlan: createGtmPreResearchPlan(),
+      reportPlan: {
+        mode: "gtm",
+        sections: [
+          {
+            key: "executive_summary",
+            title: "Executive Summary",
+            objective: "Summarize the commercial conclusion.",
+          },
+        ],
+        fallbackRule: 'Write "insufficient evidence" when evidence is missing.',
+        plannerType: "adaptive",
+        reportPlanVersion: 1,
+      },
+      coverageBoard: [],
+      anchoredFacts: [],
+      researcherMessages: [
+        new HumanMessage({
+          content:
+            "Focused research task:\nAssess the UK go-to-market opportunity for an AI meeting assistant for SMB sales teams.",
+        }),
+      ],
+      toolCallIterations: 0,
+      gapFillStats: createEmptyGapFillStats(),
+      pendingGapFillCategories: [],
+    });
+
+    assert.match(String(result.compressedResearch), /Compressed findings/i);
+    assert.ok(
+      events.some((event) => event.eventType === "gap_fill_started"),
+      "Expected imperative gap fill to start when the model returned no tool calls.",
+    );
+    assert.ok(
+      events.some((event) => event.eventType === "web_search_started"),
+      "Expected Tavily search to run imperatively.",
+    );
+    assert.ok(
+      events.some((event) => event.eventType === "gap_fill_completed"),
+      "Expected imperative gap fill to complete.",
+    );
+
+    const secondResearchCallMessages = fakeModels.toolCalls[1]?.messages ?? [];
+    const syntheticGapFillAiMessage = secondResearchCallMessages.find(
+      (message) =>
+        message instanceof AIMessage &&
+        message.tool_calls?.some((toolCall) => toolCall.name === "tavilySearch"),
+    );
+    assert.ok(
+      syntheticGapFillAiMessage,
+      "Expected the imperative gap-fill path to append a matching AI tool-call message before the Tavily tool result.",
+    );
+
+    const gapFillStarted = events.find(
+      (event) => event.eventType === "gap_fill_started",
+    );
+    assert.deepEqual(gapFillStarted?.payload?.selectedCategories, [
+      "market_size_inputs",
+      "competitors_pricing",
+      "compliance",
+    ]);
+    assert.deepEqual(gapFillStarted?.payload?.skippedCategories, [
+      "buyers",
+      "adoption",
+    ]);
+    assert.deepEqual(gapFillStarted?.payload?.rawProposedQueries, [
+      "UK AI meeting assistant SMB sales teams market size and adoption",
+      "UK AI meeting assistant competitors pricing SMB sales teams",
+      "UK AI meeting assistant GDPR recording transcription compliance",
+    ]);
+    assert.deepEqual(gapFillStarted?.payload?.normalizedQueries, [
+      "UK AI meeting assistant SMB sales teams market size and adoption",
+      "UK AI meeting assistant competitors pricing SMB sales teams",
+      "UK AI meeting assistant GDPR recording transcription compliance",
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("gtm researcher uses the same imperative gap-fill path after an early ResearchComplete", async () => {
+  const fakeModels = new FakeModelFactory(
+    [
+      {
+        queries: [
+          {
+            query: "UK AI meeting assistant SMB sales teams market size",
+            intendedCategories: ["market_size_inputs"],
+          },
+          {
+            query: "UK AI meeting assistant competitors pricing",
+            intendedCategories: ["competitors_pricing"],
+          },
+          {
+            query: "UK AI meeting assistant GDPR compliance",
+            intendedCategories: ["compliance"],
+          },
+        ],
+      },
+    ],
+    [
+      new AIMessage({
+        content: "",
+        tool_calls: [
+          {
+            id: "researcher-complete-too-early",
+            name: "ResearchComplete",
+            args: {},
+            type: "tool_call",
+          },
+        ],
+      }),
+      new AIMessage({
+        content: "",
+        tool_calls: [
+          {
+            id: "researcher-complete-after-gap-fill",
+            name: "ResearchComplete",
+            args: {},
+            type: "tool_call",
+          },
+        ],
+      }),
+    ],
+    [
+      new AIMessage({
+        content:
+          "Compressed findings with [UK SMB Statistics](https://example.com/market-size).",
+      }),
+    ],
+  );
+
+  const events: string[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        results: [
+          {
+            title: "UK SMB Statistics",
+            url: "https://example.com/market-size",
+            content:
+              "UK business population figures and employee bands for SMBs.",
+          },
+        ],
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+
+  try {
+    const { researcherSubgraph } = createDeepResearchGraphs({
+      models: fakeModels,
+      openAiApiKey: "test-key",
+      tavilyApiKey: "test-tavily-key",
+      logEvent: async (_runId, _stage, eventType) => {
+        events.push(eventType);
+      },
+    });
+
+    await researcherSubgraph.invoke({
+      runId: "run-gap-fill-early-complete",
+      selectedDocumentIds: ["doc-1"],
+      modelConfig,
+      budgets,
+      researchTopic:
+        "Assess the UK go-to-market opportunity for an AI meeting assistant for SMB sales teams.",
+      preResearchPlan: createGtmPreResearchPlan(),
+      reportPlan: {
+        mode: "gtm",
+        sections: [
+          {
+            key: "executive_summary",
+            title: "Executive Summary",
+            objective: "Summarize the commercial conclusion.",
+          },
+        ],
+        fallbackRule: 'Write "insufficient evidence" when evidence is missing.',
+        plannerType: "adaptive",
+        reportPlanVersion: 1,
+      },
+      coverageBoard: [],
+      anchoredFacts: [],
+      researcherMessages: [
+        new HumanMessage({
+          content:
+            "Focused research task:\nAssess the UK go-to-market opportunity for an AI meeting assistant for SMB sales teams.",
+        }),
+      ],
+      toolCallIterations: 0,
+      gapFillStats: createEmptyGapFillStats(),
+      pendingGapFillCategories: [],
+    });
+
+    assert.ok(events.includes("gap_fill_started"));
+    assert.ok(events.includes("web_search_started"));
+    assert.ok(events.includes("gap_fill_completed"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("gap-fill fallback does not inject UK when the topic is non-UK", async () => {
+  const fakeModels = new FakeModelFactory(
+    [new Error("proposal failed")],
+    [
+      new AIMessage({ content: "I need to think about this more." }),
+      new AIMessage({
+        content: "",
+        tool_calls: [
+          {
+            id: "researcher-complete-after-gap-fill",
+            name: "ResearchComplete",
+            args: {},
+            type: "tool_call",
+          },
+        ],
+      }),
+    ],
+    [
+      new AIMessage({
+        content:
+          "Compressed findings with [Brazil SMB statistics](https://example.com/br-market).",
+      }),
+    ],
+  );
+
+  const events: Array<{
+    eventType: string;
+    payload?: Record<string, unknown>;
+  }> = [];
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        results: [
+          {
+            title: "Brazil SMB statistics",
+            url: "https://example.com/br-market",
+            content: "Brazil business population and employee-band data.",
+          },
+        ],
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+
+  try {
+    const { researcherSubgraph } = createDeepResearchGraphs({
+      models: fakeModels,
+      openAiApiKey: "test-key",
+      tavilyApiKey: "test-tavily-key",
+      logEvent: async (_runId, _stage, eventType, _message, payload) => {
+        events.push({ eventType, payload });
+      },
+    });
+
+    await researcherSubgraph.invoke({
+      runId: "run-gap-fill-brazil-fallback",
+      selectedDocumentIds: ["doc-1"],
+      modelConfig,
+      budgets,
+      researchTopic:
+        "Assess the Brazil go-to-market opportunity for an AI meeting assistant for SMB sales teams. Use uploaded documents first, then fill gaps with current web research.",
+      preResearchPlan: createGtmPreResearchPlan(),
+      reportPlan: {
+        mode: "gtm",
+        sections: [
+          {
+            key: "executive_summary",
+            title: "Executive Summary",
+            objective: "Summarize the commercial conclusion.",
+          },
+        ],
+        fallbackRule: 'Write "insufficient evidence" when evidence is missing.',
+        plannerType: "adaptive",
+        reportPlanVersion: 1,
+      },
+      coverageBoard: [],
+      anchoredFacts: [],
+      researcherMessages: [
+        new HumanMessage({
+          content:
+            "Focused research task:\nAssess the Brazil go-to-market opportunity for an AI meeting assistant for SMB sales teams.",
+        }),
+      ],
+      toolCallIterations: 0,
+      gapFillStats: createEmptyGapFillStats(),
+      pendingGapFillCategories: [],
+    });
+
+    const gapFillStarted = events.find(
+      (event) => event.eventType === "gap_fill_started",
+    );
+    const normalizedQueries = (gapFillStarted?.payload?.normalizedQueries ??
+      []) as string[];
+    assert.ok(normalizedQueries.length > 0);
+    assert.equal(
+      normalizedQueries.some((query) => /\buk\b/i.test(query)),
+      false,
+    );
+    assert.equal(
+      normalizedQueries.every((query) => /brazil/i.test(query)),
+      true,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

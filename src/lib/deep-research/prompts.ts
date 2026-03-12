@@ -292,6 +292,38 @@ Rules:
 8. For GTM market sizing sections, treat sourced inputs separately from assumption-driven estimates.
 `;
 
+export const gapFillQueryProposalPrompt = `You are proposing short web-search queries for targeted evidence gap filling.
+
+<ResearchBrief>
+{researchBrief}
+</ResearchBrief>
+
+<PreResearchPlan>
+{preResearchPlan}
+</PreResearchPlan>
+
+<SelectedGapFillCategories>
+{selectedCategories}
+</SelectedGapFillCategories>
+
+<CoverageSnapshot>
+{coverageSnapshot}
+</CoverageSnapshot>
+
+Today's date is {date}.
+
+Return 1-3 concise search-engine-style queries total.
+
+Rules:
+1. Propose short standalone search queries, not workflow instructions.
+2. Use geography, product, segment, buyer, or compliance terms only if they are actually present in the task.
+3. Never inject a default country, market, product, or customer segment.
+4. Prefer one evidence gap per query unless combining is clearly more efficient.
+5. Keep each query concise and Tavily-safe.
+6. intendedCategories should contain only categories that the query is deliberately trying to fill.
+7. Do not mention "uploaded documents", "brief", "report", or "research plan" in the queries.
+`;
+
 export const finalReportGenerationPrompt = `Based on all the research conducted, create a comprehensive, well-structured answer to the overall research brief:
 <Research Brief>
 {researchBrief}

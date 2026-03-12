@@ -57,7 +57,13 @@ interface TavilySearchResponse {
   results: TavilySearchResult[];
 }
 
-interface ResearchToolContext {
+export interface TavilySearchOptions {
+  searchDepth?: "basic" | "advanced";
+  includeRawContent?: boolean;
+  summarizeRawContent?: boolean;
+}
+
+export interface ResearchToolContext {
   runId: string;
   selectedDocumentIds: string[];
   openAiApiKey: string;
@@ -123,6 +129,41 @@ function normalizeExcerpt(content: string, maxLength = 420) {
   }
 
   return `${normalized.slice(0, maxLength).trim()}...`;
+}
+
+function normalizeSearchContent(
+  content: string | undefined,
+  rawContent: string | undefined,
+  modelConfig: DeepResearchModelConfig,
+) {
+  const preferred = content?.trim() || rawContent?.trim() || "";
+  return normalizeExcerpt(
+    preferred,
+    Math.min(modelConfig.maxContentLength, 1400),
+  );
+}
+
+async function withTimeout<T>(
+  operation: Promise<T>,
+  ms: number,
+  label: string,
+) {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(new Error(`${label} timed out after ${ms}ms.`));
+        }, ms);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
 }
 
 function encodeSearchToolEnvelope(envelope: SearchToolEnvelope) {
@@ -335,33 +376,45 @@ async function summarizeWebpage(
   models: DeepResearchModelFactory,
   modelConfig: DeepResearchModelConfig,
   rawContent: string,
+  fallbackContent?: string,
 ) {
-  const result = await models.invokeStructured<SummaryResult>(
-    "summarization",
-    z.object({
-      summary: z.string(),
-      keyExcerpts: z.string(),
-    }),
-    [
-      new HumanMessage({
-        content: summarizeWebpagePrompt
-          .replace("{date}", getTodayString())
-          .replace(
-            "{webpageContent}",
-            rawContent.slice(0, modelConfig.maxContentLength),
-          ),
-      }),
-    ],
-  );
+  try {
+    const result = await withTimeout(
+      models.invokeStructured<SummaryResult>(
+        "summarization",
+        z.object({
+          summary: z.string(),
+          keyExcerpts: z.string(),
+        }),
+        [
+          new HumanMessage({
+            content: summarizeWebpagePrompt
+              .replace("{date}", getTodayString())
+              .replace(
+                "{webpageContent}",
+                rawContent.slice(0, modelConfig.maxContentLength),
+              ),
+          }),
+        ],
+      ),
+      60_000,
+      "Tavily page summarization",
+    );
 
-  return `<summary>\n${result.summary}\n</summary>\n\n<key_excerpts>\n${result.keyExcerpts}\n</key_excerpts>`;
+    return `<summary>\n${result.summary}\n</summary>\n\n<key_excerpts>\n${result.keyExcerpts}\n</key_excerpts>`;
+  } catch {
+    return normalizeSearchContent(fallbackContent, rawContent, modelConfig);
+  }
 }
 
 async function callTavily(
   tavilyApiKey: string,
   query: string,
   maxResults: number,
+  options: TavilySearchOptions = {},
 ): Promise<TavilySearchResponse> {
+  const searchDepth = options.searchDepth ?? "advanced";
+  const includeRawContent = options.includeRawContent ?? true;
   const response = await fetch("https://api.tavily.com/search", {
     method: "POST",
     headers: {
@@ -372,14 +425,19 @@ async function callTavily(
       query,
       max_results: maxResults,
       topic: "general",
-      search_depth: "advanced",
-      include_raw_content: true,
+      search_depth: searchDepth,
+      include_raw_content: includeRawContent,
       include_answer: false,
     }),
   });
 
   if (!response.ok) {
-    throw new Error(`Tavily search failed with status ${response.status}.`);
+    const errorText = await response.text().catch(() => "");
+    throw new Error(
+      `Tavily search failed with status ${response.status}${
+        errorText ? `: ${errorText}` : "."
+      }`,
+    );
   }
 
   const payload = (await response.json()) as TavilySearchResponse;
@@ -393,6 +451,7 @@ async function searchTavily(
   context: ResearchToolContext,
   queries: string[],
   matchCount = 5,
+  options: TavilySearchOptions = {},
 ) {
   if (!context.tavilyApiKey) {
     return {
@@ -402,11 +461,34 @@ async function searchTavily(
     };
   }
 
-  const searchResponses = await Promise.all(
+  const searchResponses = await Promise.allSettled(
     queries.map((query) =>
-      callTavily(context.tavilyApiKey as string, query, matchCount),
+      callTavily(context.tavilyApiKey as string, query, matchCount, options),
     ),
   );
+  const successfulResponses = searchResponses
+    .filter(
+      (
+        result,
+      ): result is PromiseFulfilledResult<TavilySearchResponse> =>
+        result.status === "fulfilled",
+    )
+    .map((result) => result.value);
+
+  if (successfulResponses.length === 0) {
+    const failureReasons = searchResponses
+      .filter(
+        (result): result is PromiseRejectedResult => result.status === "rejected",
+      )
+      .map((result) =>
+        result.reason instanceof Error ? result.reason.message : String(result.reason),
+      );
+    throw new Error(
+      failureReasons.length > 0
+        ? failureReasons.join(" | ")
+        : "All Tavily searches failed.",
+    );
+  }
 
   const uniqueResults = new Map<
     string,
@@ -414,28 +496,57 @@ async function searchTavily(
       title: string;
       content: string;
       sourceTier: TavilySearchArtifact["results"][number]["sourceTier"];
+      rawContent?: string;
     }
   >();
-  for (const response of searchResponses) {
+  for (const response of successfulResponses) {
     for (const result of response.results) {
       if (!result.url || uniqueResults.has(result.url)) {
         continue;
       }
 
-      const summary = result.raw_content
-        ? await summarizeWebpage(
-            context.models,
-            context.modelConfig,
-            result.raw_content,
-          )
-        : result.content;
-
       uniqueResults.set(result.url, {
         title: result.title,
-        content: summary,
+        content: normalizeSearchContent(
+          result.content,
+          result.raw_content,
+          context.modelConfig,
+        ),
         sourceTier: inferSourceTierFromUrl(result.url, result.title),
+        rawContent: result.raw_content,
       });
     }
+  }
+
+  const shouldSummarizeRawContent =
+    (options.includeRawContent ?? true) &&
+    (options.summarizeRawContent ?? true);
+
+  if (shouldSummarizeRawContent) {
+    const entries = Array.from(uniqueResults.entries());
+    const summaries = await Promise.allSettled(
+      entries.map(([, result]) =>
+        result.rawContent
+          ? summarizeWebpage(
+              context.models,
+              context.modelConfig,
+              result.rawContent,
+              result.content,
+            )
+          : Promise.resolve(result.content),
+      ),
+    );
+
+    entries.forEach(([url, result], index) => {
+      const summary = summaries[index];
+      uniqueResults.set(url, {
+        title: result.title,
+        content:
+          summary?.status === "fulfilled" ? summary.value : result.content,
+        sourceTier: result.sourceTier,
+        rawContent: result.rawContent,
+      });
+    });
   }
 
   return {
@@ -454,6 +565,54 @@ async function searchTavily(
       sourceTier: result.sourceTier,
     })),
   };
+}
+
+export async function runTavilySearch(
+  context: ResearchToolContext,
+  queries: string[],
+  matchCount = 5,
+  options: TavilySearchOptions = {},
+) {
+  await context.logEvent?.(
+    context.runId,
+    "searching",
+    "web_search_started",
+    "Running Tavily web searches.",
+    { queries, options },
+  );
+
+  try {
+    const result = await searchTavily(context, queries, matchCount, options);
+
+    await context.logEvent?.(
+      context.runId,
+      "searching",
+      "web_search_completed",
+      "Completed Tavily web search.",
+      { queries, resultCount: result.results.length, options },
+    );
+
+    return encodeSearchToolEnvelope({
+      toolName: "tavilySearch",
+      renderedText: result.renderedText,
+      artifact: {
+        queries,
+        results: result.results,
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    await context.logEvent?.(
+      context.runId,
+      "searching",
+      "web_search_failed",
+      "Tavily web search failed.",
+      { queries, error: message, options },
+    );
+
+    throw error;
+  }
 }
 
 export function createSupervisorTools() {
@@ -585,32 +744,7 @@ export function createResearcherTools(context: ResearchToolContext) {
 
   const tavilySearch = tool(
     async ({ queries, matchCount }) => {
-      await context.logEvent?.(
-        context.runId,
-        "searching",
-        "web_search_started",
-        "Running Tavily web searches.",
-        { queries },
-      );
-
-      const result = await searchTavily(context, queries, matchCount ?? 5);
-
-      await context.logEvent?.(
-        context.runId,
-        "searching",
-        "web_search_completed",
-        "Completed Tavily web search.",
-        { queries },
-      );
-
-      return encodeSearchToolEnvelope({
-        toolName: "tavilySearch",
-        renderedText: result.renderedText,
-        artifact: {
-          queries,
-          results: result.results,
-        },
-      });
+      return runTavilySearch(context, queries, matchCount ?? 5);
     },
     {
       name: "tavilySearch",
