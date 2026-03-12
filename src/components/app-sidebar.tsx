@@ -21,6 +21,7 @@ import {
   DatabaseIcon,
   CommandIcon,
   SearchIcon,
+  HistoryIcon,
 } from "lucide-react"
 import Link from "next/link"
 
@@ -36,6 +37,14 @@ const data = {
       url: "/dashboard",
       icon: (
         <LayoutDashboardIcon
+        />
+      ),
+    },
+    {
+      title: "Recent Runs",
+      url: "/dashboard/recent",
+      icon: (
+        <HistoryIcon
         />
       ),
     },

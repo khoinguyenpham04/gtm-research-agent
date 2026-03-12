@@ -1,7 +1,6 @@
 import { SiteHeader } from "@/components/site-header"
 import { listDocuments } from "@/lib/documents"
 import { ensureDeepResearchDatabase } from "@/lib/deep-research/db"
-import { listDeepResearchRuns } from "@/lib/deep-research/service"
 import { getWorkspaceDetail, listWorkspaces } from "@/lib/workspaces"
 import { DeepResearchConsole } from "@/app/dashboard/research-console"
 
@@ -15,10 +14,6 @@ export default async function Page() {
     initialWorkspaces[0]
       ? await getWorkspaceDetail(initialWorkspaces[0].id).catch(() => null)
       : null
-  const initialRecentRuns = await listDeepResearchRuns({
-    workspaceId: initialWorkspace?.id,
-    limit: 12,
-  }).catch(() => [])
 
   return (
     <>
@@ -30,7 +25,6 @@ export default async function Page() {
         <div className="@container/main flex flex-1 flex-col gap-2 px-4 py-4 lg:px-6 lg:py-6">
           <DeepResearchConsole
             initialDocuments={initialDocuments}
-            initialRecentRuns={initialRecentRuns}
             initialWorkspace={initialWorkspace}
             initialWorkspaces={initialWorkspaces}
           />
