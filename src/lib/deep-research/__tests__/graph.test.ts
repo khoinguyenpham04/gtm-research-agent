@@ -9,10 +9,10 @@ import {
   buildSectionEvidencePacksFromArtifacts,
   buildWebAnchoredFacts,
   createDeepResearchGraphs,
-  getSourceTierRank,
   recomputeCoverageBoard,
   selectGapFillCategories,
 } from "@/lib/deep-research/graph";
+import { getSourceTierRank } from "@/lib/deep-research/source-tier";
 import type {
   DeepResearchModelFactory,
   DeepResearchModelRole,
@@ -504,6 +504,9 @@ test("deterministic anchored facts drive GTM coverage and bounded gap fill", () 
 
   assert.ok(documentFacts.length > 0);
   assert.ok(webFacts.length > 0);
+  assert.ok(documentFacts[0]?.targetCategoryKeys.includes("adoption"));
+  assert.ok(documentFacts[0]?.evidenceCategoryKeys.includes("adoption"));
+  assert.ok(documentFacts[0]?.evidenceCategoryKeys.includes("buyers"));
   assert.equal(adoption?.status, "anchored");
   assert.equal(compliance?.status, "anchored");
   assert.equal(marketSize?.status, "missing");
@@ -528,6 +531,47 @@ test("deterministic anchored facts drive GTM coverage and bounded gap fill", () 
     "competitors_pricing",
     "market_size_inputs",
   ]);
+});
+
+test("weak text similarity stays in target categories and does not become evidence coverage", () => {
+  const weakSimilarityFacts = buildWebAnchoredFacts(
+    ["UK GDPR compliance for AI meeting assistants"],
+    [
+      {
+        title: "AI adoption trends for UK SMBs",
+        url: "https://example.com/adoption",
+        excerpt:
+          "UK SMB teams are increasing their use of AI assistants for note taking and meeting follow-up.",
+        sourceTier: "trade_press",
+      },
+    ],
+  );
+
+  assert.ok(weakSimilarityFacts.length > 0);
+  assert.ok(weakSimilarityFacts[0]?.targetCategoryKeys.includes("compliance"));
+  assert.ok(!weakSimilarityFacts[0]?.evidenceCategoryKeys.includes("compliance"));
+  assert.ok(weakSimilarityFacts[0]?.evidenceCategoryKeys.includes("adoption"));
+
+  const coverage = recomputeCoverageBoard(
+    weakSimilarityFacts,
+    {
+      totalAttempts: 0,
+      attemptsByCategory: {
+        market_size_inputs: 0,
+        adoption: 0,
+        buyers: 0,
+        competitors_pricing: 0,
+        compliance: 0,
+        recommendations: 0,
+      },
+    },
+    budgets,
+  );
+
+  assert.equal(
+    coverage.find((entry) => entry.key === "compliance")?.status,
+    "missing",
+  );
 });
 
 test("anchored facts can prevent empty GTM section packs when validated evidence is sparse", () => {
@@ -566,7 +610,8 @@ test("anchored facts can prevent empty GTM section packs when validated evidence
       sourceUrl: "https://example.com/doc-1.pdf",
       documentId: "doc-1",
       chunkIndex: 0,
-      categoryKeys: ["adoption", "buyers"],
+      targetCategoryKeys: ["adoption", "buyers"],
+      evidenceCategoryKeys: ["adoption", "buyers"],
       strength: "strong",
     },
     {
@@ -577,7 +622,8 @@ test("anchored facts can prevent empty GTM section packs when validated evidence
       sourceTier: "vendor",
       sourceTitle: "Fireflies pricing",
       sourceUrl: "https://example.com/pricing",
-      categoryKeys: ["competitors_pricing"],
+      targetCategoryKeys: ["competitors_pricing"],
+      evidenceCategoryKeys: ["competitors_pricing"],
       strength: "moderate",
     },
     {
@@ -588,7 +634,8 @@ test("anchored facts can prevent empty GTM section packs when validated evidence
       sourceTier: "primary",
       sourceTitle: "ICO guidance",
       sourceUrl: "https://ico.org.uk/guidance",
-      categoryKeys: ["compliance"],
+      targetCategoryKeys: ["compliance"],
+      evidenceCategoryKeys: ["compliance"],
       strength: "strong",
     },
   ];

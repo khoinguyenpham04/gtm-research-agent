@@ -35,6 +35,10 @@ import {
   createSupervisorTools,
   parseSearchToolEnvelope,
 } from "@/lib/deep-research/tools";
+import {
+  getSourceTierRank,
+  inferSourceTierFromText,
+} from "@/lib/deep-research/source-tier";
 import type {
   AnchoredFact,
   CandidateEvidenceRow,
@@ -363,76 +367,7 @@ function buildCompressedFindingsSummary(state: DeepResearchStateType) {
 }
 
 function extractSourceTier(content: string): SectionSupport["topSourceTier"] {
-  const normalized = content.toLowerCase();
-
-  if (
-    normalized.includes("document id:") ||
-    normalized.includes("selected uploaded documents") ||
-    normalized.includes("sourceType\":\"uploaded_document")
-  ) {
-    return "selected_document";
-  }
-
-  if (
-    normalized.includes(".gov") ||
-    normalized.includes("office for national statistics") ||
-    normalized.includes("fca") ||
-    normalized.includes("gov.uk") ||
-    normalized.includes("regulator")
-  ) {
-    return "primary";
-  }
-
-  if (
-    normalized.includes("gartner") ||
-    normalized.includes("forrester") ||
-    normalized.includes("mckinsey") ||
-    normalized.includes("analyst")
-  ) {
-    return "analyst";
-  }
-
-  if (
-    normalized.includes("techcrunch") ||
-    normalized.includes("computerweekly") ||
-    normalized.includes("ft.com") ||
-    normalized.includes("reuters")
-  ) {
-    return "trade_press";
-  }
-
-  if (
-    normalized.includes("salesforce") ||
-    normalized.includes("hubspot") ||
-    normalized.includes("vendor")
-  ) {
-    return "vendor";
-  }
-
-  if (normalized.includes("blog")) {
-    return "blog";
-  }
-
-  return "unknown";
-}
-
-const SOURCE_TIER_RANK: Record<
-  NonNullable<SectionSupport["topSourceTier"]>,
-  number
-> = {
-  selected_document: 0,
-  primary: 1,
-  analyst: 2,
-  trade_press: 3,
-  vendor: 4,
-  blog: 5,
-  unknown: 6,
-};
-
-export function getSourceTierRank(
-  sourceTier: SectionSupport["topSourceTier"] | undefined,
-) {
-  return SOURCE_TIER_RANK[sourceTier ?? "unknown"];
+  return inferSourceTierFromText(content);
 }
 
 export function isUploadedDocument(
@@ -452,6 +387,34 @@ const GTM_COVERAGE_CATEGORIES: GtmCoverageCategoryKey[] = [
 
 const GAP_FILL_ELIGIBLE_GTM_CATEGORIES: GtmCoverageCategoryKey[] =
   GTM_COVERAGE_CATEGORIES.filter((category) => category !== "recommendations");
+
+const RECOMMENDATION_SUPPORT_CATEGORIES: GtmCoverageCategoryKey[] = [
+  "market_size_inputs",
+  "adoption",
+  "buyers",
+  "competitors_pricing",
+  "compliance",
+];
+
+const GTM_SECTION_CATEGORY_MAP: Partial<
+  Record<string, GtmCoverageCategoryKey[]>
+> = {
+  executive_summary: GTM_COVERAGE_CATEGORIES,
+  market_sizing_scenarios: ["market_size_inputs"],
+  market_opportunity: ["market_size_inputs"],
+  buyers_and_adoption: ["adoption", "buyers"],
+  competition_and_pricing: ["competitors_pricing"],
+  competitors: ["competitors_pricing"],
+  compliance_constraints: ["compliance"],
+  recommendations: ["recommendations"],
+};
+
+const GENERAL_SECTION_CATEGORY_MAP: Partial<
+  Record<string, GtmCoverageCategoryKey[]>
+> = {
+  summary: GTM_COVERAGE_CATEGORIES,
+  key_findings: GTM_COVERAGE_CATEGORIES,
+};
 
 const ANCHORED_FACT_STRENGTH_RANK: Record<AnchoredFact["strength"], number> = {
   weak: 0,
@@ -607,7 +570,134 @@ function parseTimeframe(text: string) {
   return match?.[1];
 }
 
-function inferCategoriesFromText(input: string) {
+const MARKET_SIZE_INPUT_KEYWORDS = [
+  "market size",
+  "market sizing",
+  "business population",
+  "number of businesses",
+  "private sector businesses",
+  "business count",
+  "population estimates",
+  "sme employers",
+  "size band",
+  "employee band",
+  "employees",
+  "employers",
+  "employment",
+  "market opportunity",
+] as const;
+
+const MARKET_SIZE_CONTEXT_KEYWORDS = [
+  "microbusiness",
+  "microbusinesses",
+  "small business",
+  "medium business",
+  "employee band",
+  "size band",
+  "employment",
+  "business population",
+  "number of businesses",
+] as const;
+
+const ADOPTION_KEYWORDS = [
+  "adoption",
+  "adopted",
+  "using",
+  "use of ai",
+  "use ai",
+  "uptake",
+  "usage",
+  "readiness",
+  "buyer intent",
+  "demand",
+  "demand signals",
+  "pilot",
+  "implemented ai",
+] as const;
+
+const BUYER_KEYWORDS = [
+  "buyer",
+  "buyers",
+  "persona",
+  "segment",
+  "segments",
+  "icp",
+  "ideal customer",
+  "sales manager",
+  "sales leader",
+  "revops",
+  "revenue operations",
+  "business owner",
+  "workflow",
+  "pain point",
+  "pain points",
+  "digital maturity",
+] as const;
+
+const COMPETITOR_PRICING_KEYWORDS = [
+  "competitor",
+  "competitors",
+  "pricing",
+  "price",
+  "per seat",
+  "tier",
+  "plan",
+  "plans",
+  "feature comparison",
+  "compare",
+  "comparison",
+  "alternative",
+  "alternatives",
+  "positioning",
+  "feature set",
+] as const;
+
+const COMPLIANCE_KEYWORDS = [
+  "gdpr",
+  "privacy",
+  "data protection",
+  "consent",
+  "lawful basis",
+  "ico",
+  "regulation",
+  "regulatory",
+  "compliance",
+  "data residency",
+  "recording",
+  "transcription",
+  "ai act",
+  "dpia",
+  "dpa 2018",
+] as const;
+
+const RECOMMENDATION_KEYWORDS = [
+  "recommendation",
+  "recommendations",
+  "should",
+  "focus on",
+  "go-to-market",
+  "go to market",
+  "gtm",
+  "launch",
+  "pilot",
+  "next step",
+  "strategy",
+  "channel",
+  "partner",
+  "prioritize",
+] as const;
+
+function normalizeEvidenceSignal(...values: Array<string | undefined>) {
+  return normalizeWhitespace(values.filter(Boolean).join(" ").toLowerCase());
+}
+
+function hasKeywordMatch(content: string, keywords: readonly string[]) {
+  return keywords.some((keyword) => content.includes(keyword));
+}
+
+function inferTargetCategoriesFromText(
+  input: string,
+): GtmCoverageCategoryKey[] {
   const normalized = input.toLowerCase();
   const categories = GTM_COVERAGE_CATEGORIES.filter((category) =>
     GTM_CATEGORY_KEYWORDS[category].some((keyword) =>
@@ -626,32 +716,108 @@ function inferCategoriesFromText(input: string) {
   return [];
 }
 
-function inferClaimTypeFromCategories(
-  categoryKeys: GtmCoverageCategoryKey[],
-  text: string,
+function inferClaimTypeFromEvidence(
+  normalizedEvidence: string,
+  targetCategoryKeys: GtmCoverageCategoryKey[],
 ): AnchoredFact["claimType"] {
-  if (categoryKeys.includes("compliance")) {
+  if (hasKeywordMatch(normalizedEvidence, COMPLIANCE_KEYWORDS)) {
     return "compliance";
   }
-  if (categoryKeys.includes("competitors_pricing")) {
-    return /\b(price|pricing|cost|plan|seat)\b/i.test(text)
+  if (hasKeywordMatch(normalizedEvidence, COMPETITOR_PRICING_KEYWORDS)) {
+    return /\b(price|pricing|cost|plan|tier|seat)\b/i.test(normalizedEvidence)
       ? "pricing_signal"
       : "competitor_fact";
   }
-  if (categoryKeys.includes("recommendations")) {
+  if (hasKeywordMatch(normalizedEvidence, RECOMMENDATION_KEYWORDS)) {
     return "recommendation";
   }
+  if (/\brisk|constraint|blocker\b/i.test(normalizedEvidence)) {
+    return "risk";
+  }
   if (
-    categoryKeys.includes("market_size_inputs") ||
-    categoryKeys.includes("adoption")
+    hasKeywordMatch(normalizedEvidence, MARKET_SIZE_INPUT_KEYWORDS) ||
+    hasKeywordMatch(normalizedEvidence, ADOPTION_KEYWORDS) ||
+    targetCategoryKeys.includes("market_size_inputs") ||
+    targetCategoryKeys.includes("adoption")
   ) {
     return "market_stat";
   }
-  if (/\brisk|constraint|blocker\b/i.test(text)) {
-    return "risk";
-  }
 
   return "qualitative_insight";
+}
+
+function inferEvidenceCategoriesFromFact(
+  normalizedEvidence: string,
+  claimType: AnchoredFact["claimType"],
+  numericValue?: number,
+): GtmCoverageCategoryKey[] {
+  const evidenceCategories: GtmCoverageCategoryKey[] = [];
+  const hasExplicitMarketSizingSignal = hasKeywordMatch(
+    normalizedEvidence,
+    MARKET_SIZE_INPUT_KEYWORDS,
+  );
+  const hasMarketSizingContext =
+    hasExplicitMarketSizingSignal ||
+    hasKeywordMatch(normalizedEvidence, MARKET_SIZE_CONTEXT_KEYWORDS);
+  const hasAdoptionContext = hasKeywordMatch(normalizedEvidence, ADOPTION_KEYWORDS);
+  const hasBuyerContext = hasKeywordMatch(normalizedEvidence, BUYER_KEYWORDS);
+  const hasCompetitorPricingContext = hasKeywordMatch(
+    normalizedEvidence,
+    COMPETITOR_PRICING_KEYWORDS,
+  );
+  const hasComplianceContext = hasKeywordMatch(
+    normalizedEvidence,
+    COMPLIANCE_KEYWORDS,
+  );
+  const hasRecommendationContext = hasKeywordMatch(
+    normalizedEvidence,
+    RECOMMENDATION_KEYWORDS,
+  );
+  const hasSizingInput =
+    hasExplicitMarketSizingSignal &&
+    (typeof numericValue === "number" ||
+      normalizedEvidence.includes("prevalence") ||
+      normalizedEvidence.includes("share") ||
+      normalizedEvidence.includes("rate"));
+
+  if (
+    hasSizingInput ||
+    (claimType === "market_stat" &&
+      hasMarketSizingContext &&
+      !hasAdoptionContext)
+  ) {
+    evidenceCategories.push("market_size_inputs");
+  } else if (hasMarketSizingContext) {
+    evidenceCategories.push("market_size_inputs");
+  }
+
+  if (hasAdoptionContext) {
+    evidenceCategories.push("adoption");
+  }
+
+  if (hasBuyerContext) {
+    evidenceCategories.push("buyers");
+  }
+
+  if (
+    hasCompetitorPricingContext &&
+    (claimType === "pricing_signal" || claimType === "competitor_fact")
+  ) {
+    evidenceCategories.push("competitors_pricing");
+  }
+
+  if (
+    hasComplianceContext &&
+    (claimType === "compliance" || claimType === "risk")
+  ) {
+    evidenceCategories.push("compliance");
+  }
+
+  if (hasRecommendationContext && claimType === "recommendation") {
+    evidenceCategories.push("recommendations");
+  }
+
+  return [...new Set(evidenceCategories)];
 }
 
 function inferAnchoredFactStrength(
@@ -705,7 +871,14 @@ function mergeAnchoredFacts(
     merged.set(fact.id, {
       ...(keepIncoming ? existing : fact),
       ...(keepIncoming ? fact : existing),
-      categoryKeys: mergeCategoryKeys(existing.categoryKeys, fact.categoryKeys),
+      targetCategoryKeys: mergeCategoryKeys(
+        existing.targetCategoryKeys,
+        fact.targetCategoryKeys,
+      ),
+      evidenceCategoryKeys: mergeCategoryKeys(
+        existing.evidenceCategoryKeys,
+        fact.evidenceCategoryKeys,
+      ),
       strength:
         ANCHORED_FACT_STRENGTH_RANK[fact.strength] >=
         ANCHORED_FACT_STRENGTH_RANK[existing.strength]
@@ -748,32 +921,38 @@ export function buildDocumentAnchoredFacts(
         return null;
       }
 
-      const categoryKeys = mergeCategoryKeys(
-        inferCategoriesFromText(queries.join(" ")),
-        inferCategoriesFromText(
-          [statement, match.fileName].filter(Boolean).join(" "),
-        ),
-      );
+      const targetCategoryKeys = inferTargetCategoriesFromText(queries.join(" "));
       const key =
         match.documentId && typeof match.chunkIndex === "number"
           ? `doc:${match.documentId}:${match.chunkIndex}`
           : `doc:unknown:${match.id}`;
       const numeric = parseNumericValue(statement);
+      const normalizedEvidence = normalizeEvidenceSignal(
+        statement,
+        match.fileName,
+      );
+      const claimType = inferClaimTypeFromEvidence(
+        normalizedEvidence,
+        targetCategoryKeys,
+      );
+      const evidenceCategoryKeys = inferEvidenceCategoriesFromFact(
+        normalizedEvidence,
+        claimType,
+        numeric.numericValue,
+      );
 
       return anchoredFactSchema.parse({
         id: key,
         statement,
-        claimType: inferClaimTypeFromCategories(
-          categoryKeys.length > 0 ? categoryKeys : ["buyers"],
-          statement,
-        ),
+        claimType,
         sourceType: "uploaded_document",
         sourceTier: "selected_document",
         sourceTitle: match.fileName,
         sourceUrl: match.fileUrl,
         documentId: match.documentId,
         chunkIndex: match.chunkIndex,
-        categoryKeys,
+        targetCategoryKeys,
+        evidenceCategoryKeys,
         ...numeric,
         timeframe: parseTimeframe(statement),
         entity: match.fileName,
@@ -804,26 +983,33 @@ export function buildWebAnchoredFacts(
         return null;
       }
 
-      const categoryKeys = mergeCategoryKeys(
-        inferCategoriesFromText(queries.join(" ")),
-        inferCategoriesFromText(
-          [result.title, result.excerpt].filter(Boolean).join(" "),
-        ),
-      );
+      const targetCategoryKeys = inferTargetCategoriesFromText(queries.join(" "));
       const numeric = parseNumericValue(statement);
+      const normalizedEvidence = normalizeEvidenceSignal(
+        statement,
+        result.title,
+        result.url,
+      );
+      const claimType = inferClaimTypeFromEvidence(
+        normalizedEvidence,
+        targetCategoryKeys,
+      );
+      const evidenceCategoryKeys = inferEvidenceCategoriesFromFact(
+        normalizedEvidence,
+        claimType,
+        numeric.numericValue,
+      );
 
       return anchoredFactSchema.parse({
         id: `web:${result.url}`,
         statement,
-        claimType: inferClaimTypeFromCategories(
-          categoryKeys.length > 0 ? categoryKeys : ["adoption"],
-          statement,
-        ),
+        claimType,
         sourceType: "web",
         sourceTier: result.sourceTier,
         sourceTitle: result.title,
         sourceUrl: result.url,
-        categoryKeys,
+        targetCategoryKeys,
+        evidenceCategoryKeys,
         ...numeric,
         timeframe: parseTimeframe(statement),
         entity: result.title,
@@ -840,12 +1026,12 @@ export function recomputeCoverageBoard(
   pendingGapFillCategories: GtmCoverageCategoryKey[] = [],
 ): CoverageBoardEntry[] {
   const nonRecommendationFacts = anchoredFacts.filter(
-    (fact) => !fact.categoryKeys.includes("recommendations"),
+    (fact) => !fact.evidenceCategoryKeys.includes("recommendations"),
   );
 
   return GTM_COVERAGE_CATEGORIES.map((key) => {
     const matchingFacts = anchoredFacts.filter((fact) =>
-      fact.categoryKeys.includes(key),
+      fact.evidenceCategoryKeys.includes(key),
     );
     const documentHits = matchingFacts.filter((fact) =>
       isUploadedDocument(fact),
@@ -859,6 +1045,29 @@ export function recomputeCoverageBoard(
       (fact) =>
         fact.sourceTier === "selected_document" ||
         fact.sourceTier === "primary",
+    );
+    const hasUsableMarketSizingInput = matchingFacts.some(
+      (fact) =>
+        fact.claimType === "market_stat" &&
+        (typeof fact.numericValue === "number" ||
+          normalizeEvidenceSignal(fact.statement, fact.sourceTitle).includes(
+            "prevalence",
+          ) ||
+          normalizeEvidenceSignal(fact.statement, fact.sourceTitle).includes(
+            "share",
+          ) ||
+          normalizeEvidenceSignal(fact.statement, fact.sourceTitle).includes(
+            "rate",
+          )),
+    );
+    const hasCompetitorOrPricingFact = matchingFacts.some(
+      (fact) =>
+        fact.claimType === "competitor_fact" ||
+        fact.claimType === "pricing_signal",
+    );
+    const hasComplianceFact = matchingFacts.some(
+      (fact) =>
+        fact.claimType === "compliance" || fact.claimType === "risk",
     );
     const isPending = pendingGapFillCategories.includes(key);
     let status: CoverageBoardEntry["status"] = "missing";
@@ -874,14 +1083,56 @@ export function recomputeCoverageBoard(
       } else {
         status = "missing";
       }
-    } else if (
-      matchingFacts.length >= 2 ||
-      (matchingFacts.length >= 1 && hasHighQuality)
-    ) {
-      status = "anchored";
-    } else if (matchingFacts.length >= 1) {
-      status = "partial";
-      notes.push("Only limited evidence has been gathered for this category.");
+    } else if (key === "market_size_inputs") {
+      if (hasUsableMarketSizingInput) {
+        status = "anchored";
+      } else if (matchingFacts.length >= 1) {
+        status = "partial";
+        notes.push(
+          "Market context exists, but there are not yet enough usable sizing inputs for this category.",
+        );
+      }
+    } else if (key === "adoption") {
+      if (
+        matchingFacts.length >= 2 ||
+        (matchingFacts.length >= 1 && hasHighQuality)
+      ) {
+        status = "anchored";
+      } else if (matchingFacts.length >= 1) {
+        status = "partial";
+        notes.push("Only limited adoption evidence has been gathered so far.");
+      }
+    } else if (key === "buyers") {
+      if (
+        matchingFacts.length >= 2 ||
+        (matchingFacts.length >= 1 && hasHighQuality)
+      ) {
+        status = "anchored";
+      } else if (matchingFacts.length >= 1) {
+        status = "partial";
+        notes.push("Buyer or segment evidence exists, but it remains limited.");
+      }
+    } else if (key === "competitors_pricing") {
+      if (
+        hasCompetitorOrPricingFact &&
+        (matchingFacts.length >= 2 || hasHighQuality)
+      ) {
+        status = "anchored";
+      } else if (hasCompetitorOrPricingFact) {
+        status = "partial";
+        notes.push(
+          "Some competitor or pricing evidence exists, but not enough to treat the category as covered.",
+        );
+      }
+    } else if (key === "compliance") {
+      if (hasComplianceFact && hasHighQuality) {
+        status = "anchored";
+      } else if (hasComplianceFact) {
+        status = "partial";
+        notes.push(
+          "Compliance evidence exists, but it needs stronger regulator or document-backed support.",
+        );
+      }
     } else if (
       !isPending &&
       gapFillAttempts >= budgets.maxTargetedWebGapFillAttemptsPerCategory
@@ -1044,7 +1295,17 @@ function summarizeAnchoredFacts(anchoredFacts: AnchoredFact[]) {
   const byCategory = GTM_COVERAGE_CATEGORIES.reduce<Record<string, number>>(
     (accumulator, category) => {
       accumulator[category] = anchoredFacts.filter((fact) =>
-        fact.categoryKeys.includes(category),
+        fact.evidenceCategoryKeys.includes(category),
+      ).length;
+      return accumulator;
+    },
+    {},
+  );
+
+  const byTargetCategory = GTM_COVERAGE_CATEGORIES.reduce<Record<string, number>>(
+    (accumulator, category) => {
+      accumulator[category] = anchoredFacts.filter((fact) =>
+        fact.targetCategoryKeys.includes(category),
       ).length;
       return accumulator;
     },
@@ -1055,6 +1316,7 @@ function summarizeAnchoredFacts(anchoredFacts: AnchoredFact[]) {
     total: anchoredFacts.length,
     bySourceType,
     byCategory,
+    byTargetCategory,
   };
 }
 
@@ -1156,28 +1418,16 @@ function getAnchoredFactsForSection(
 
   const categories: GtmCoverageCategoryKey[] =
     reportMode === "gtm"
-      ? sectionKey === "executive_summary"
-        ? GTM_COVERAGE_CATEGORIES
-        : sectionKey === "market_sizing_scenarios" || sectionKey === "market_opportunity"
-          ? ["market_size_inputs"]
-          : sectionKey === "buyers_and_adoption"
-            ? ["adoption", "buyers"]
-            : sectionKey === "competition_and_pricing" || sectionKey === "competitors"
-              ? ["competitors_pricing"]
-              : sectionKey === "compliance_constraints"
-                ? ["compliance"]
-                : sectionKey === "recommendations"
-                  ? ["recommendations"]
-                  : []
-      : sectionKey === "summary" || sectionKey === "key_findings"
-        ? GTM_COVERAGE_CATEGORIES
-        : [];
+      ? GTM_SECTION_CATEGORY_MAP[sectionKey] ?? []
+      : GENERAL_SECTION_CATEGORY_MAP[sectionKey] ?? [];
 
   const rankedFacts = anchoredFacts
     .filter((fact) =>
       categories.length === 0
         ? false
-        : fact.categoryKeys.some((category) => categories.includes(category)),
+        : fact.evidenceCategoryKeys.some((category) =>
+            categories.includes(category),
+          ),
     )
     .sort((left, right) => {
       const tierDelta =
@@ -1205,14 +1455,8 @@ function getAnchoredFactsForSection(
   if (sectionKey === "recommendations" && rankedFacts.length === 0) {
     return anchoredFacts
       .filter((fact) =>
-        fact.categoryKeys.some((category) =>
-          [
-            "market_size_inputs",
-            "adoption",
-            "buyers",
-            "competitors_pricing",
-            "compliance",
-          ].includes(category),
+        fact.evidenceCategoryKeys.some((category) =>
+          RECOMMENDATION_SUPPORT_CATEGORIES.includes(category),
         ),
       )
       .slice(0, 2);

@@ -8,6 +8,7 @@ import { listDocumentChunksByIds } from "@/lib/documents";
 import {
   summarizeWebpagePrompt,
 } from "@/lib/deep-research/prompts";
+import { inferSourceTierFromUrl } from "@/lib/deep-research/source-tier";
 import type {
   DocumentSearchArtifact,
   DeepResearchModelConfig,
@@ -122,55 +123,6 @@ function normalizeExcerpt(content: string, maxLength = 420) {
   }
 
   return `${normalized.slice(0, maxLength).trim()}...`;
-}
-
-function inferSourceTierFromUrl(url: string, title?: string) {
-  const normalized = `${url} ${title ?? ""}`.toLowerCase();
-
-  if (
-    normalized.includes(".gov") ||
-    normalized.includes("gov.uk") ||
-    normalized.includes("ico.org.uk") ||
-    normalized.includes("ons.gov.uk") ||
-    normalized.includes("fca")
-  ) {
-    return "primary" as const;
-  }
-
-  if (
-    normalized.includes("gartner") ||
-    normalized.includes("forrester") ||
-    normalized.includes("mckinsey") ||
-    normalized.includes("statista")
-  ) {
-    return "analyst" as const;
-  }
-
-  if (
-    normalized.includes("reuters") ||
-    normalized.includes("computerweekly") ||
-    normalized.includes("ft.com") ||
-    normalized.includes("techcrunch")
-  ) {
-    return "trade_press" as const;
-  }
-
-  if (
-    normalized.includes("salesforce") ||
-    normalized.includes("hubspot") ||
-    normalized.includes("otter.ai") ||
-    normalized.includes("fireflies.ai") ||
-    normalized.includes("avoma") ||
-    normalized.includes("microsoft")
-  ) {
-    return "vendor" as const;
-  }
-
-  if (normalized.includes("blog")) {
-    return "blog" as const;
-  }
-
-  return "unknown" as const;
 }
 
 function encodeSearchToolEnvelope(envelope: SearchToolEnvelope) {
