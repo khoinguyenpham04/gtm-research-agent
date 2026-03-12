@@ -262,11 +262,6 @@ function DashboardHomeContent({
       return
     }
 
-    if (selectedDocumentIds.length === 0) {
-      setError("Select at least one attached workspace document before launching deep research.")
-      return
-    }
-
     setError(null)
 
     startTransition(() => {

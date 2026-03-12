@@ -122,13 +122,11 @@ export function DashboardResearchLauncher({
   const pendingUploads = attachments.files
   const hasPendingUploads = pendingUploads.length > 0
   const missingWorkspace = activeWorkspaceId.trim().length === 0
-  const missingSelectedDocuments = selectedDocumentIds.length === 0
   const submitDisabled =
     topic.trim().length === 0 ||
     hasPendingUploads ||
     uploadState === "uploading" ||
-    missingWorkspace ||
-    missingSelectedDocuments
+    missingWorkspace
   const attachedDocuments = workspace?.documents ?? []
   const selectedDocumentIdSet = useMemo(
     () => new Set(selectedDocumentIds),
@@ -137,9 +135,11 @@ export function DashboardResearchLauncher({
   const visibleWorkspaces = workspaces.slice(0, 4)
   const overflowWorkspaces = workspaces.slice(4)
   const selectedDocLabel =
-    workspaceDocumentCount > 0
+    selectedDocumentIds.length > 0 && workspaceDocumentCount > 0
       ? `${selectedDocumentIds.length} of ${workspaceDocumentCount} docs + web`
-      : "0 docs + web"
+      : workspaceDocumentCount > 0
+        ? "web only"
+        : "web only"
 
   const workspaceSummary = useMemo(() => {
     const name = (workspace?.name ?? "No workspace").trim()
@@ -330,18 +330,6 @@ export function DashboardResearchLauncher({
           setUploadError("Select a workspace before starting research.")
           return Promise.reject(
             new Error("Select a workspace before starting research."),
-          )
-        }
-
-        if (missingSelectedDocuments) {
-          setUploadState("error")
-          setUploadError(
-            "Select at least one attached workspace document before starting research.",
-          )
-          return Promise.reject(
-            new Error(
-              "Select at least one attached workspace document before starting research.",
-            ),
           )
         }
 
@@ -593,7 +581,9 @@ export function DashboardResearchLauncher({
                           Attached documents
                         </p>
                         <p className="mt-1 text-sm text-muted-foreground">
-                          {selectedDocumentIds.length} selected for this launch
+                          {selectedDocumentIds.length > 0
+                            ? `${selectedDocumentIds.length} selected for this launch`
+                            : "No workspace docs selected. Research will use web sources only."}
                         </p>
                       </div>
                       {attachedDocuments.length > 0 ? (

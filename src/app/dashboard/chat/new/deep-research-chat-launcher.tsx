@@ -60,12 +60,8 @@ export function DeepResearchChatLauncher({
       return "Select a workspace before starting research."
     }
 
-    if (selectedDocumentIds.length === 0) {
-      return "Select at least one attached workspace document before starting research."
-    }
-
     return null
-  }, [selectedDocumentIds.length, topic, workspaceId])
+  }, [topic, workspaceId])
 
   const createRun = useCallback(
     async (nextTopic: string) => {

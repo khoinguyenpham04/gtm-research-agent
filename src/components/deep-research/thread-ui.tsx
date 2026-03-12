@@ -39,7 +39,6 @@ import { RunActivityStagePill } from "@/components/ui/run-activity-stage-pill"
 import { StatusPill } from "@/components/ui/status-pill"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
-import { useStickToBottomContext } from "use-stick-to-bottom"
 
 const THREAD_SURFACE_CARD_CLASS =
   "border border-zinc-200 bg-white ring-0 shadow-none"
@@ -228,7 +227,7 @@ export function DeepResearchActivityTimeline({
 }: {
   events: DeepResearchRunEvent[]
 }) {
-  const { scrollToBottom } = useStickToBottomContext()
+  const containerRef = useRef<HTMLDivElement>(null)
   const previousEventIdsRef = useRef(events.map((event) => event.id))
   const [freshEventIds, setFreshEventIds] = useState<string[]>([])
 
@@ -238,29 +237,24 @@ export function DeepResearchActivityTimeline({
       .filter((event) => !previousEventIds.has(event.id))
       .map((event) => event.id)
 
+    previousEventIdsRef.current = events.map((event) => event.id)
+
     if (nextFreshEventIds.length === 0) {
-      previousEventIdsRef.current = events.map((event) => event.id)
       return
     }
 
     setFreshEventIds(nextFreshEventIds)
-    void scrollToBottom({
-      animation: {
-        damping: 0.78,
-        mass: 1.05,
-        stiffness: 0.06,
-      },
-      duration: 280,
-      wait: 40,
-    })
 
-    previousEventIdsRef.current = events.map((event) => event.id)
+    if (containerRef.current) {
+      containerRef.current.scrollTop = containerRef.current.scrollHeight
+    }
+
     const timeoutId = window.setTimeout(() => {
       setFreshEventIds([])
     }, 700)
 
     return () => window.clearTimeout(timeoutId)
-  }, [events, scrollToBottom])
+  }, [events])
 
   return (
     <Card className={THREAD_SURFACE_CARD_CLASS}>
@@ -272,7 +266,7 @@ export function DeepResearchActivityTimeline({
       </CardHeader>
       <CardContent>
         {events.length ? (
-          <div className="space-y-3">
+          <div ref={containerRef} className="max-h-96 space-y-3 overflow-y-auto pr-1">
             {events.map((event) => (
               <div
                 key={event.id}
@@ -404,7 +398,7 @@ export function DeepResearchFinalReport({
       </CardHeader>
       <CardContent>
         {markdown ? (
-          <article className="max-h-[42rem] overflow-y-auto rounded-xl border border-zinc-200 bg-white px-4 py-4">
+          <article className="max-h-168 overflow-y-auto rounded-xl border border-zinc-200 bg-white px-4 py-4">
             <pre className="whitespace-pre-wrap text-sm leading-6">
               {markdown}
             </pre>
@@ -903,7 +897,7 @@ export function DeepResearchThreadShell({
       </Conversation>
 
       {composer ? (
-        <div className="sticky bottom-0 z-10 border-t border-border/50 bg-background/92 px-4 pb-4 pt-4 backdrop-blur supports-[backdrop-filter]:bg-background/82 sm:px-6">
+        <div className="sticky bottom-0 z-10 border-t border-border/50 bg-background/92 px-4 pb-4 pt-4 backdrop-blur supports-backdrop-filter:bg-background/82 sm:px-6">
           {composer}
         </div>
       ) : null}

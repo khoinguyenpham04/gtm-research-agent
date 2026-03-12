@@ -35,12 +35,6 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion"
 import type { SessionThreadResponse } from "@/lib/deep-research/types"
 import type {
   WorkspaceDetail,
@@ -272,6 +266,29 @@ export function DeepResearchSessionThread({
                           </MessageContent>
                         </Message>
 
+                        <Message
+                          from="assistant"
+                          className="max-w-full"
+                          data-run-id={linkedRun.id}
+                        >
+                          <MessageContent className="w-full max-w-full bg-transparent p-0">
+                            <DeepResearchActivityTimeline events={linkedRun.events} />
+                          </MessageContent>
+                        </Message>
+
+                        <Message from="assistant" className="max-w-full">
+                          <MessageContent className="w-full max-w-full bg-transparent p-0">
+                            <DeepResearchArtifactsPanel
+                              activeRateLimitRetry={activeRateLimitRetry}
+                              citedSources={citedSources}
+                              preResearchPlan={preResearchPlan}
+                              run={linkedRun}
+                              selectedDocuments={linkedRun.selectedDocuments}
+                              workspaceName={linkedRun.workspace?.name ?? workspaceName}
+                            />
+                          </MessageContent>
+                        </Message>
+
                         {linkedRun.status === "needs_clarification" &&
                         linkedRun.clarificationQuestion ? (
                           <Message from="assistant" className="max-w-full">
@@ -323,50 +340,6 @@ export function DeepResearchSessionThread({
                             </MessageContent>
                           </Message>
                         ) : null}
-
-                        <Message
-                          from="assistant"
-                          className="max-w-full"
-                          data-run-id={linkedRun.id}
-                        >
-                          <MessageContent className="w-full max-w-full bg-transparent p-0">
-                            <Card className="border border-zinc-200 bg-white ring-0 shadow-none">
-                              <CardHeader>
-                                <CardTitle>Run details</CardTitle>
-                                <CardDescription>
-                                  Curated research context, sources, and raw orchestration history for this run.
-                                </CardDescription>
-                              </CardHeader>
-                              <CardContent>
-                                <Accordion defaultValue={["context"]} type="multiple">
-                                  <AccordionItem value="context">
-                                    <AccordionTrigger>Research context</AccordionTrigger>
-                                    <AccordionContent>
-                                      <DeepResearchArtifactsPanel
-                                        activeRateLimitRetry={activeRateLimitRetry}
-                                        citedSources={citedSources}
-                                        preResearchPlan={preResearchPlan}
-                                        run={linkedRun}
-                                        selectedDocuments={linkedRun.selectedDocuments}
-                                        workspaceName={
-                                          linkedRun.workspace?.name ?? workspaceName
-                                        }
-                                      />
-                                    </AccordionContent>
-                                  </AccordionItem>
-                                  <AccordionItem value="activity">
-                                    <AccordionTrigger>Raw activity</AccordionTrigger>
-                                    <AccordionContent>
-                                      <DeepResearchActivityTimeline
-                                        events={linkedRun.events}
-                                      />
-                                    </AccordionContent>
-                                  </AccordionItem>
-                                </Accordion>
-                              </CardContent>
-                            </Card>
-                          </MessageContent>
-                        </Message>
                       </>
                     ) : null}
                   </div>
@@ -385,7 +358,7 @@ export function DeepResearchSessionThread({
             <ConversationScrollButton className="bottom-36" />
           </Conversation>
 
-          <div className="sticky bottom-0 z-10 border-t border-border/50 bg-background/92 px-4 pb-4 pt-4 backdrop-blur supports-[backdrop-filter]:bg-background/82 sm:px-6">
+          <div className="sticky bottom-0 z-10 border-t border-border/50 bg-background/92 px-4 pb-4 pt-4 backdrop-blur supports-backdrop-filter:bg-background/82 sm:px-6">
             <DeepResearchThreadLauncher
               initialSelectedDocumentIds={
                 initialWorkspace?.documents.map((attachment) => attachment.documentId) ?? []
