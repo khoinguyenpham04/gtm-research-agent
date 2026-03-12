@@ -1,6 +1,6 @@
-# GTM Research Agent
+# Clarion
 
-GTM Research Agent is a Next.js 16 application for document-grounded go-to-market research. It combines three capabilities in one product:
+Clarion is a Next.js 16 application for document-grounded go-to-market research. It combines three capabilities in one product:
 
 - A shared document library for uploads and URL ingestion
 - A lightweight RAG search surface for quick corpus Q&A

@@ -21,11 +21,11 @@ import {
   Settings2Icon,
   CircleHelpIcon,
   DatabaseIcon,
-  CommandIcon,
   SearchIcon,
   HistoryIcon,
 } from "lucide-react"
 import Link from "next/link"
+import Image from "next/image"
 
 const data = {
   user: {
@@ -106,8 +106,15 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               className="data-[slot=sidebar-menu-button]:p-1.5!"
             >
               <Link href="/dashboard">
-                <CommandIcon className="size-5!" />
-                <span className="text-base font-semibold">GTM Research</span>
+                <Image
+                  src="/logo.png"
+                  alt="Clarion logo"
+                  width={28}
+                  height={28}
+                  className="size-7 rounded-sm"
+                  priority
+                />
+                <span className="text-base font-semibold">Clarion</span>
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>

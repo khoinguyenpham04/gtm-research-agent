@@ -1,7 +1,15 @@
 "use client"
 
 import Link from "next/link"
-import { useEffect, useRef, useState, type ReactNode } from "react"
+import ReactMarkdown, { type Components } from "react-markdown"
+import remarkGfm from "remark-gfm"
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ComponentPropsWithoutRef,
+  type ReactNode,
+} from "react"
 
 import type { DocumentSummary } from "@/lib/documents"
 import type {
@@ -14,6 +22,21 @@ import {
   ConversationContent,
   ConversationScrollButton,
 } from "@/components/ai-elements/conversation"
+import {
+  InlineCitation,
+  InlineCitationCarousel,
+  InlineCitationCarouselContent,
+  InlineCitationCarouselHeader,
+  InlineCitationCarouselIndex,
+  InlineCitationCarouselItem,
+  InlineCitationCarouselNext,
+  InlineCitationCarouselPrev,
+  InlineCitationCard,
+  InlineCitationCardBody,
+  InlineCitationCardTrigger,
+  InlineCitationQuote,
+  InlineCitationSource,
+} from "@/components/ai-elements/inline-citation"
 import { Message, MessageContent } from "@/components/ai-elements/message"
 import type {
   DeepResearchRateLimitRetry,
@@ -44,6 +67,112 @@ const THREAD_SURFACE_CARD_CLASS =
   "border border-zinc-200 bg-white ring-0 shadow-none"
 
 const THREAD_INSET_SURFACE_CLASS = "border border-zinc-200 bg-white"
+
+const REPORT_MARKDOWN_CLASS =
+  "mx-auto w-full max-w-3xl text-[15px] leading-8 text-zinc-800 [&_a]:break-words [&_blockquote]:my-6 [&_blockquote]:border-l-2 [&_blockquote]:border-zinc-300 [&_blockquote]:bg-zinc-50/60 [&_blockquote]:py-1 [&_blockquote]:pl-4 [&_blockquote]:text-zinc-700 [&_code]:rounded-md [&_code]:bg-zinc-100 [&_code]:px-1.5 [&_code]:py-0.5 [&_em]:text-zinc-700 [&_h1]:mt-2 [&_h1]:mb-6 [&_h1]:text-3xl [&_h1]:font-semibold [&_h1]:tracking-tight [&_h2]:mt-10 [&_h2]:mb-4 [&_h2]:border-b [&_h2]:border-zinc-200 [&_h2]:pb-2 [&_h2]:text-2xl [&_h2]:font-semibold [&_h2]:tracking-tight [&_h3]:mt-8 [&_h3]:mb-3 [&_h3]:text-xl [&_h3]:font-semibold [&_h4]:mt-6 [&_h4]:mb-2 [&_h4]:text-lg [&_h4]:font-semibold [&_hr]:my-8 [&_hr]:border-zinc-200 [&_li]:my-1.5 [&_li]:pl-1 [&_ol]:my-5 [&_ol]:list-decimal [&_ol]:space-y-1 [&_ol]:pl-6 [&_p]:my-5 [&_p]:text-zinc-800 [&_pre]:my-5 [&_pre]:overflow-x-auto [&_pre]:rounded-xl [&_pre]:border [&_pre]:border-zinc-800 [&_pre]:bg-zinc-950 [&_pre]:p-4 [&_pre]:text-zinc-50 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_strong]:font-semibold [&_table]:w-full [&_tbody_tr]:border-t [&_tbody_tr]:border-zinc-200 [&_thead]:border-b [&_thead]:border-zinc-300 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:font-semibold [&_td]:px-3 [&_td]:py-2 [&_td]:align-top [&_ul]:my-5 [&_ul]:list-disc [&_ul]:space-y-1 [&_ul]:pl-6"
+
+function formatCitationHost(url: string) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "")
+  } catch {
+    return "Source"
+  }
+}
+
+function formatCitationPath(url: string) {
+  try {
+    const path = new URL(url).pathname
+    if (!path || path === "/") {
+      return "Home"
+    }
+
+    const segments = path.split("/").filter(Boolean)
+    return decodeURIComponent(segments.at(-1) ?? "Home")
+  } catch {
+    return "Reference"
+  }
+}
+
+function citationTextFromChildren(children: ReactNode) {
+  if (typeof children === "string") {
+    return children.trim()
+  }
+
+  if (Array.isArray(children)) {
+    const text = children
+      .map((child) => (typeof child === "string" ? child : ""))
+      .join(" ")
+      .trim()
+    return text || null
+  }
+
+  return null
+}
+
+function ReportCitationLink({
+  children,
+  href,
+  ...props
+}: ComponentPropsWithoutRef<"a">) {
+  if (!href) {
+    return <span>{children}</span>
+  }
+
+  const citationText = citationTextFromChildren(children)
+  const sourceTitle = citationText || formatCitationPath(href)
+  const sourceHost = formatCitationHost(href)
+
+  return (
+    <InlineCitation className="inline-flex items-center">
+      <a
+        className="text-primary underline underline-offset-4 hover:text-primary/80"
+        href={href}
+        rel="noreferrer"
+        target="_blank"
+        {...props}
+      >
+        {children}
+      </a>
+
+      <InlineCitationCard>
+        <InlineCitationCardTrigger
+          className="cursor-pointer"
+          sources={[href]}
+        />
+        <InlineCitationCardBody>
+          <InlineCitationCarousel>
+            <InlineCitationCarouselHeader>
+              <InlineCitationCarouselPrev />
+              <InlineCitationCarouselNext />
+              <InlineCitationCarouselIndex />
+            </InlineCitationCarouselHeader>
+            <InlineCitationCarouselContent>
+              <InlineCitationCarouselItem>
+                <InlineCitationSource
+                  description={`Source: ${sourceHost}`}
+                  title={sourceTitle}
+                  url={href}
+                />
+                {citationText ? (
+                  <InlineCitationQuote>{citationText}</InlineCitationQuote>
+                ) : null}
+              </InlineCitationCarouselItem>
+            </InlineCitationCarouselContent>
+          </InlineCitationCarousel>
+        </InlineCitationCardBody>
+      </InlineCitationCard>
+    </InlineCitation>
+  )
+}
+
+const REPORT_MARKDOWN_COMPONENTS: Components = {
+  a: ReportCitationLink,
+  table: ({ children }) => (
+    <div className="my-6 overflow-x-auto rounded-xl border border-zinc-200">
+      <table className="w-full border-collapse text-sm">{children}</table>
+    </div>
+  ),
+}
 
 function StatusCopy({
   launchPending,
@@ -393,15 +522,20 @@ export function DeepResearchFinalReport({
       <CardHeader>
         <CardTitle>Final report</CardTitle>
         <CardDescription>
-          The markdown report generated by the final writer node.
+          Key findings with cited sources and grounded uploaded documents.
         </CardDescription>
       </CardHeader>
       <CardContent>
         {markdown ? (
-          <article className="max-h-168 overflow-y-auto rounded-xl border border-zinc-200 bg-white px-4 py-4">
-            <pre className="whitespace-pre-wrap text-sm leading-6">
-              {markdown}
-            </pre>
+          <article className="max-h-168 overflow-y-auto rounded-xl border border-zinc-200 bg-white px-5 py-5 sm:px-7">
+            <div className={REPORT_MARKDOWN_CLASS}>
+              <ReactMarkdown
+                components={REPORT_MARKDOWN_COMPONENTS}
+                remarkPlugins={[remarkGfm]}
+              >
+                {markdown}
+              </ReactMarkdown>
+            </div>
           </article>
         ) : (
           <p className="text-sm text-muted-foreground">
