@@ -21,6 +21,7 @@ import {
   PromptInputProvider,
   usePromptInputController,
 } from "@/components/ai-elements/prompt-input"
+import { buildDeepResearchChatNewHref } from "@/components/deep-research/utils"
 import {
   DashboardResearchLauncher,
   type ResearchPlay,
@@ -247,19 +248,27 @@ function DashboardHomeContent({
       return
     }
 
-    const searchParams = new URLSearchParams()
-    searchParams.set("topic", nextTopic)
-
-    if (activeWorkspaceId) {
-      searchParams.set("workspaceId", activeWorkspaceId)
+    if (!activeWorkspaceId) {
+      setError("Select a workspace before launching deep research.")
+      return
     }
 
-    if (selectedDocumentIds.length > 0) {
-      searchParams.set("selectedDocumentIds", selectedDocumentIds.join(","))
+    if (selectedDocumentIds.length === 0) {
+      setError("Select at least one attached workspace document before launching deep research.")
+      return
     }
+
+    setError(null)
 
     startTransition(() => {
-      router.push(`/dashboard/deepresearch?${searchParams.toString()}`)
+      router.push(
+        buildDeepResearchChatNewHref({
+          launchKey: crypto.randomUUID(),
+          selectedDocumentIds,
+          topic: nextTopic,
+          workspaceId: activeWorkspaceId,
+        }),
+      )
     })
   }
 
@@ -370,7 +379,7 @@ function DashboardHomeContent({
                 {latestRun ? (
                   <Link
                     className="group flex items-start justify-between gap-4 rounded-2xl px-1 py-1 outline-none motion-safe:transition-colors motion-safe:duration-200 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
-                    href="/dashboard/recent"
+                    href={`/dashboard/chat/runs/${latestRun.id}`}
                   >
                     <div className="min-w-0">
                       <p className="text-[0.68rem] font-medium uppercase tracking-[0.14em] text-muted-foreground">

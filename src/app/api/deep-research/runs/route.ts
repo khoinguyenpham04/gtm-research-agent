@@ -1,5 +1,6 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 
+import { scheduleDeepResearchTask } from "@/lib/deep-research/background";
 import {
   createDeepResearchRun,
   listDeepResearchRuns,
@@ -33,17 +34,18 @@ export async function POST(request: Request) {
     const payload = createDeepResearchRunRequestSchema.parse(
       await request.json(),
     );
-    const run = await createDeepResearchRun(payload);
+    const result = await createDeepResearchRun(payload);
 
-    after(async () => {
-      try {
-        await processDeepResearchRun(run.id);
-      } catch (error) {
-        console.error("Deep research background run failed:", error);
-      }
+    if (result.created) {
+      scheduleDeepResearchTask(
+        () => processDeepResearchRun(result.run.id),
+        "Deep research background run failed:",
+      );
+    }
+
+    return NextResponse.json(result.run, {
+      status: result.created ? 201 : 200,
     });
-
-    return NextResponse.json(run, { status: 201 });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Failed to create research run.";

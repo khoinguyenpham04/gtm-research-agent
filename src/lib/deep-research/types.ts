@@ -408,6 +408,11 @@ export const createDeepResearchRunRequestSchema = z.object({
     .trim()
     .optional()
     .transform((value) => (value ? value : undefined)),
+  launchKey: z
+    .string()
+    .trim()
+    .optional()
+    .transform((value) => (value ? value : undefined)),
   selectedDocumentIds: z
     .array(z.string().trim().min(1))
     .min(1, "Select at least one document."),

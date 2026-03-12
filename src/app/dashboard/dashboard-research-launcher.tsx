@@ -92,7 +92,7 @@ export function DashboardResearchLauncher({
   workspaceDocumentCount,
   workspaces,
   onWorkspaceRefresh,
-  selectedDocumentIds,
+  selectedDocumentIds = [],
   onSelectedDocumentIdsChange,
   onSubmit,
   onWorkspaceChange,
@@ -102,7 +102,7 @@ export function DashboardResearchLauncher({
   workspaceDocumentCount: number
   workspaces: WorkspaceSummary[]
   onWorkspaceRefresh: (workspaceId: string) => Promise<void>
-  selectedDocumentIds: string[]
+  selectedDocumentIds?: string[]
   onSelectedDocumentIdsChange: (documentIds: string[]) => void
   onSubmit: (text?: string) => void
   onWorkspaceChange: (workspaceId: string) => void
@@ -121,8 +121,14 @@ export function DashboardResearchLauncher({
   const [uploadError, setUploadError] = useState<string | null>(null)
   const pendingUploads = attachments.files
   const hasPendingUploads = pendingUploads.length > 0
+  const missingWorkspace = activeWorkspaceId.trim().length === 0
+  const missingSelectedDocuments = selectedDocumentIds.length === 0
   const submitDisabled =
-    topic.trim().length === 0 || hasPendingUploads || uploadState === "uploading"
+    topic.trim().length === 0 ||
+    hasPendingUploads ||
+    uploadState === "uploading" ||
+    missingWorkspace ||
+    missingSelectedDocuments
   const attachedDocuments = workspace?.documents ?? []
   const selectedDocumentIdSet = useMemo(
     () => new Set(selectedDocumentIds),
@@ -317,6 +323,26 @@ export function DashboardResearchLauncher({
 
         if (!text.trim()) {
           return Promise.reject(new Error("Enter a research topic first."))
+        }
+
+        if (missingWorkspace) {
+          setUploadState("error")
+          setUploadError("Select a workspace before starting research.")
+          return Promise.reject(
+            new Error("Select a workspace before starting research."),
+          )
+        }
+
+        if (missingSelectedDocuments) {
+          setUploadState("error")
+          setUploadError(
+            "Select at least one attached workspace document before starting research.",
+          )
+          return Promise.reject(
+            new Error(
+              "Select at least one attached workspace document before starting research.",
+            ),
+          )
         }
 
         onSubmit(text)

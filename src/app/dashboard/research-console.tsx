@@ -6,15 +6,25 @@ import { ArrowRight, Database, FolderOpen, History, Search } from "lucide-react"
 
 import type { DocumentSummary } from "@/lib/documents"
 import type {
-  DeepResearchRunEvent,
   DeepResearchRunResponse,
-  PreResearchPlan,
 } from "@/lib/deep-research/types"
 import type { WorkspaceDetail, WorkspaceSummary } from "@/lib/workspaces"
+import {
+  DeepResearchActivityTimeline,
+  DeepResearchArtifactsRail,
+  DeepResearchClarificationCard,
+  DeepResearchFailureCard,
+  DeepResearchFinalReport,
+  DeepResearchLaunchStatusCard,
+} from "@/components/deep-research/thread-ui"
+import {
+  extractActiveRateLimitRetry,
+  extractPreResearchPlan,
+  extractSourcesFromReport,
+  formatFileSize,
+} from "@/components/deep-research/utils"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { RunActivityStagePill } from "@/components/ui/run-activity-stage-pill"
-import { StatusPill } from "@/components/ui/status-pill"
 import {
   Card,
   CardContent,
@@ -32,125 +42,6 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-
-function extractSourcesFromReport(markdown?: string) {
-  if (!markdown) {
-    return []
-  }
-
-  const linkPattern = /\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g
-  const sources = new Map<string, { label: string; url: string }>()
-  for (const match of markdown.matchAll(linkPattern)) {
-    const [, label, url] = match
-    if (!sources.has(url)) {
-      sources.set(url, { label, url })
-    }
-  }
-
-  return Array.from(sources.values())
-}
-
-function formatTimestamp(value: string) {
-  if (!value) {
-    return "Unknown"
-  }
-
-  const date = new Date(value)
-  return Number.isNaN(date.getTime())
-    ? value
-    : date.toLocaleString("en-GB", {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      })
-}
-
-function formatFileSize(bytes: number) {
-  if (bytes < 1024) {
-    return `${bytes} B`
-  }
-
-  if (bytes < 1024 * 1024) {
-    return `${(bytes / 1024).toFixed(1)} KB`
-  }
-
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
-
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === "string")
-}
-
-function extractPreResearchPlan(
-  events: DeepResearchRunEvent[] | undefined,
-): PreResearchPlan | null {
-  if (!events || events.length === 0) {
-    return null
-  }
-
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index]
-    if (event.eventType !== "pre_research_plan_completed") {
-      continue
-    }
-
-    const value = event.payload?.preResearchPlan
-    if (!value || typeof value !== "object") {
-      continue
-    }
-
-    const candidate = value as Partial<PreResearchPlan>
-    if (
-      (candidate.mode === "gtm" ||
-        candidate.mode === "general" ||
-        candidate.mode === "other") &&
-      isStringArray(candidate.coreQuestions) &&
-      isStringArray(candidate.requiredEvidenceCategories) &&
-      isStringArray(candidate.gtmSubquestions) &&
-      isStringArray(candidate.documentResearchPriorities)
-    ) {
-      return candidate as PreResearchPlan
-    }
-  }
-
-  return null
-}
-
-function extractActiveRateLimitRetry(
-  run: DeepResearchRunResponse | null,
-): {
-  attempt: number
-  maxAttempts: number
-  delayMs: number
-  role?: string
-} | null {
-  if (!run || (run.status !== "queued" && run.status !== "running")) {
-    return null
-  }
-
-  const latestEvent = run.events.at(-1)
-  if (latestEvent?.eventType !== "rate_limit_retry_scheduled") {
-    return null
-  }
-
-  const { attempt, maxAttempts, delayMs, role } = latestEvent.payload ?? {}
-  if (
-    typeof attempt !== "number" ||
-    typeof maxAttempts !== "number" ||
-    typeof delayMs !== "number"
-  ) {
-    return null
-  }
-
-  return {
-    attempt,
-    maxAttempts,
-    delayMs,
-    role: typeof role === "string" ? role : undefined,
-  }
-}
 
 export function DeepResearchConsole({
   initialDocuments,
@@ -664,286 +555,43 @@ export function DeepResearchConsole({
           </CardContent>
         </Card>
 
-        <Card className="border border-border/60">
-          <CardHeader>
-            <CardTitle>Run activity</CardTitle>
-            <CardDescription>
-              Fine-grained server-side progress events persisted for polling.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {run?.events.length ? (
-              <div className="space-y-3">
-                {run.events.map((event) => (
-                  <div
-                    key={event.id}
-                    className="rounded-xl border border-border/60 bg-background px-3 py-3"
-                  >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <RunActivityStagePill stage={event.stage} />
-                      <p className="text-sm font-medium">{event.message}</p>
-                    </div>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {event.eventType} · {formatTimestamp(event.createdAt)}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                Start a run to see progress events here.
-              </p>
-            )}
-          </CardContent>
-        </Card>
+        <DeepResearchLaunchStatusCard
+          activeRateLimitRetry={activeRateLimitRetry}
+          error={error}
+          run={run}
+        />
 
-        <Card className="border border-border/60">
-          <CardHeader>
-            <CardTitle>Final report</CardTitle>
-            <CardDescription>
-              The raw Markdown report generated by the final LangGraph writer
-              node.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {run?.finalReportMarkdown ? (
-              <article className="max-h-[42rem] overflow-y-auto rounded-xl border border-border/60 bg-background px-4 py-4">
-                <pre className="whitespace-pre-wrap text-sm leading-6">
-                  {run.finalReportMarkdown}
-                </pre>
-              </article>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                The report will appear here once the run completes.
-              </p>
-            )}
-          </CardContent>
-        </Card>
+        {run?.status === "needs_clarification" && run.clarificationQuestion ? (
+          <DeepResearchClarificationCard
+            clarificationResponse={clarificationResponse}
+            onClarificationResponseChange={setClarificationResponse}
+            onResume={() => void handleResume()}
+            question={run.clarificationQuestion}
+            submitting={submitting}
+          />
+        ) : null}
+
+        {run?.status === "failed" || run?.status === "timed_out" ? (
+          <DeepResearchFailureCard
+            errorMessage={run.errorMessage}
+            onRetry={() => void handleRetry()}
+            submitting={submitting}
+          />
+        ) : null}
+
+        <DeepResearchActivityTimeline events={run?.events ?? []} />
+
+        <DeepResearchFinalReport markdown={run?.finalReportMarkdown} />
       </div>
 
-      <div className="space-y-6">
-        <Card className="border border-border/60">
-          <CardHeader>
-            <CardTitle>Research focus</CardTitle>
-            <CardDescription>
-              The pre-research plan that shaped the supervisor and sub-agent
-              research loop.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {preResearchPlan ? (
-              <div className="space-y-4">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="outline">{preResearchPlan.mode}</Badge>
-                  <span className="text-xs text-muted-foreground">
-                    {preResearchPlan.coreQuestions.length} core questions
-                  </span>
-                </div>
-
-                <div className="space-y-2">
-                  <p className="text-sm font-medium">Core questions</p>
-                  <ul className="space-y-2 text-sm text-muted-foreground">
-                    {preResearchPlan.coreQuestions.map((question) => (
-                      <li
-                        key={question}
-                        className="rounded-lg border border-border/60 bg-background px-3 py-2"
-                      >
-                        {question}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-
-                <div className="space-y-2">
-                  <p className="text-sm font-medium">Evidence categories</p>
-                  <div className="flex flex-wrap gap-2">
-                    {preResearchPlan.requiredEvidenceCategories.map(
-                      (category) => (
-                        <Badge key={category} variant="secondary">
-                          {category}
-                        </Badge>
-                      ),
-                    )}
-                  </div>
-                </div>
-
-                {preResearchPlan.gtmSubquestions.length > 0 ? (
-                  <div className="space-y-2">
-                    <p className="text-sm font-medium">GTM sub-questions</p>
-                    <ul className="space-y-2 text-sm text-muted-foreground">
-                      {preResearchPlan.gtmSubquestions.map((question) => (
-                        <li
-                          key={question}
-                          className="rounded-lg border border-border/60 bg-background px-3 py-2"
-                        >
-                          {question}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                Start a run to see the focused research questions and evidence
-                categories here.
-              </p>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className="border border-border/60">
-          <CardHeader>
-            <CardTitle>Current run</CardTitle>
-            <CardDescription>
-              Polling status for the latest deep research execution.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {run ? (
-              <>
-                <div className="flex flex-wrap items-center gap-2">
-                  <StatusPill status={run.status} />
-                  <span className="text-xs text-muted-foreground">
-                    Updated {formatTimestamp(run.updatedAt)}
-                  </span>
-                </div>
-                {activeRateLimitRetry ? (
-                  <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="outline">rate limited</Badge>
-                      <p className="text-sm font-medium">
-                        Retrying with backoff
-                      </p>
-                    </div>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      Attempt {activeRateLimitRetry.attempt} of{" "}
-                      {activeRateLimitRetry.maxAttempts}
-                      {activeRateLimitRetry.role
-                        ? ` · ${activeRateLimitRetry.role} model call`
-                        : ""}
-                      {` · waiting about ${(
-                        activeRateLimitRetry.delayMs / 1000
-                      ).toFixed(activeRateLimitRetry.delayMs >= 1000 ? 1 : 2)}s before retry`}
-                    </p>
-                  </div>
-                ) : null}
-                <div className="space-y-1">
-                  <p className="text-sm font-medium">{run.topic}</p>
-                  {run.objective ? (
-                    <p className="text-sm text-muted-foreground">
-                      {run.objective}
-                    </p>
-                  ) : null}
-                </div>
-
-                <div className="space-y-2">
-                  <p className="text-sm font-medium">Workspace</p>
-                  <Badge variant="outline">
-                    {run.workspace?.name ?? run.workspaceId ?? "Unknown workspace"}
-                  </Badge>
-                </div>
-
-                <div className="space-y-2">
-                  <p className="text-sm font-medium">Run scope</p>
-                  <div className="flex flex-wrap gap-2">
-                    {run.selectedDocuments.map((document) => (
-                      <Badge key={document.id} variant="outline">
-                        {document.file_name}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-
-                {run.status === "needs_clarification" ? (
-                  <div className="space-y-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
-                    <div className="space-y-1">
-                      <p className="text-sm font-medium">
-                        Clarification required
-                      </p>
-                      <p className="text-sm text-muted-foreground">
-                        {run.clarificationQuestion}
-                      </p>
-                    </div>
-                    <Textarea
-                      className="min-h-28"
-                      placeholder="Provide the missing detail so the run can continue."
-                      value={clarificationResponse}
-                      onChange={(event) =>
-                        setClarificationResponse(event.target.value)
-                      }
-                    />
-                    <Button
-                      disabled={
-                        submitting || clarificationResponse.trim().length === 0
-                      }
-                      onClick={handleResume}
-                    >
-                      {submitting ? "Resuming..." : "Resume research"}
-                    </Button>
-                  </div>
-                ) : null}
-
-                {run.status === "failed" || run.status === "timed_out" ? (
-                  <div className="space-y-3 rounded-xl border border-destructive/30 bg-destructive/10 p-4">
-                    <div className="space-y-1">
-                      <p className="text-sm font-medium">Run error</p>
-                      <p className="text-sm text-muted-foreground">
-                        {run.errorMessage || "The run failed without an error message."}
-                      </p>
-                    </div>
-                    <Button
-                      disabled={submitting}
-                      onClick={handleRetry}
-                      variant="destructive"
-                    >
-                      {submitting ? "Retrying..." : "Retry run"}
-                    </Button>
-                  </div>
-                ) : null}
-              </>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                No run started yet.
-              </p>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className="border border-border/60">
-          <CardHeader>
-            <CardTitle>Cited sources</CardTitle>
-            <CardDescription>
-              Deduplicated links extracted from the final Markdown report.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {citedSources.length ? (
-              <div className="space-y-3">
-                {citedSources.map((source) => (
-                  <a
-                    key={source.url}
-                    className="block rounded-xl border border-border/60 bg-background px-3 py-3 text-sm hover:bg-muted/30"
-                    href={source.url}
-                    rel="noreferrer"
-                    target="_blank"
-                  >
-                    <p className="font-medium">{source.label}</p>
-                    <p className="truncate text-xs text-muted-foreground">
-                      {source.url}
-                    </p>
-                  </a>
-                ))}
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                Source links will be extracted once the final report includes
-                citations.
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+      <DeepResearchArtifactsRail
+        activeRateLimitRetry={activeRateLimitRetry}
+        citedSources={citedSources}
+        preResearchPlan={preResearchPlan}
+        run={run}
+        selectedDocuments={run?.selectedDocuments ?? []}
+        workspaceName={run?.workspace?.name ?? workspace?.name}
+      />
     </div>
   )
 }

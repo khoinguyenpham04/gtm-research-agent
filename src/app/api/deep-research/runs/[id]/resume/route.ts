@@ -1,6 +1,8 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 
+import { scheduleDeepResearchTask } from "@/lib/deep-research/background";
 import {
+  canResumeDeepResearchRunFromCheckpoint,
   getDeepResearchRun,
   processDeepResearchRun,
 } from "@/lib/deep-research/service";
@@ -16,9 +18,6 @@ export async function POST(
 ) {
   try {
     const { id } = await context.params;
-    const payload = resumeDeepResearchRunRequestSchema.parse(
-      await request.json(),
-    );
     const run = await getDeepResearchRun(id);
 
     if (!run) {
@@ -28,27 +27,59 @@ export async function POST(
       );
     }
 
-    if (run.status !== "needs_clarification") {
+    if (run.status === "needs_clarification") {
+      const payload = resumeDeepResearchRunRequestSchema.parse(
+        await request.json(),
+      );
+
+      scheduleDeepResearchTask(
+        () =>
+          processDeepResearchRun(id, {
+            clarificationResponse: payload.clarificationResponse,
+          }),
+        "Deep research clarification resume failed:",
+      );
+
+      return NextResponse.json({
+        ...run,
+        status: "running",
+        clarificationQuestion: undefined,
+      });
+    }
+
+    if (!["failed", "timed_out"].includes(run.status)) {
       return NextResponse.json(
-        { error: "This run is not waiting for clarification." },
+        {
+          error:
+            "Only clarification-paused, failed, or timed out runs can be resumed.",
+        },
         { status: 409 },
       );
     }
 
-    after(async () => {
-      try {
-        await processDeepResearchRun(id, {
-          clarificationResponse: payload.clarificationResponse,
-        });
-      } catch (error) {
-        console.error("Deep research clarification resume failed:", error);
-      }
-    });
+    const checkpointAvailable = await canResumeDeepResearchRunFromCheckpoint(id);
+    if (!checkpointAvailable) {
+      return NextResponse.json(
+        {
+          error:
+            "No checkpoint is available for this run. Retry it instead.",
+        },
+        { status: 409 },
+      );
+    }
+
+    scheduleDeepResearchTask(
+      () =>
+        processDeepResearchRun(id, {
+          resumeFromCheckpoint: true,
+        }),
+      "Deep research checkpoint resume failed:",
+    );
 
     return NextResponse.json({
       ...run,
       status: "running",
-      clarificationQuestion: undefined,
+      errorMessage: undefined,
     });
   } catch (error) {
     const message =

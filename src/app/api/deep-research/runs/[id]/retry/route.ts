@@ -1,5 +1,6 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 
+import { scheduleDeepResearchTask } from "@/lib/deep-research/background";
 import {
   getDeepResearchRun,
   processDeepResearchRun,
@@ -31,13 +32,10 @@ export async function POST(
       );
     }
 
-    after(async () => {
-      try {
-        await processDeepResearchRun(id, { retry: true });
-      } catch (error) {
-        console.error("Deep research retry failed:", error);
-      }
-    });
+    scheduleDeepResearchTask(
+      () => processDeepResearchRun(id, { retry: true }),
+      "Deep research retry failed:",
+    );
 
     return NextResponse.json({
       ...run,

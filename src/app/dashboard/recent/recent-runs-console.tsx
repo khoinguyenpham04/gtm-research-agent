@@ -9,6 +9,10 @@ import type {
   DeepResearchRunSummary,
 } from "@/lib/deep-research/types"
 import type { WorkspaceSummary } from "@/lib/workspaces"
+import {
+  extractSourcesFromReport,
+  formatTimestamp,
+} from "@/components/deep-research/utils"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { RunActivityStagePill } from "@/components/ui/run-activity-stage-pill"
@@ -27,40 +31,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-
-function extractSourcesFromReport(markdown?: string) {
-  if (!markdown) {
-    return []
-  }
-
-  const linkPattern = /\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g
-  const sources = new Map<string, { label: string; url: string }>()
-  for (const match of markdown.matchAll(linkPattern)) {
-    const [, label, url] = match
-    if (!sources.has(url)) {
-      sources.set(url, { label, url })
-    }
-  }
-
-  return Array.from(sources.values())
-}
-
-function formatTimestamp(value: string) {
-  if (!value) {
-    return "Unknown"
-  }
-
-  const date = new Date(value)
-  return Number.isNaN(date.getTime())
-    ? value
-    : date.toLocaleString("en-GB", {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      })
-}
 
 export function RecentRunsConsole({
   initialRecentRuns,
@@ -336,6 +306,12 @@ export function RecentRunsConsole({
                     </p>
                   ) : null}
                 </div>
+                <Button asChild className="w-fit" variant="outline">
+                  <Link href={`/dashboard/chat/runs/${run.id}`}>
+                    Open thread
+                    <ArrowRight className="size-4" />
+                  </Link>
+                </Button>
                 {run.selectedDocuments.length ? (
                   <div className="flex flex-wrap gap-2">
                     {run.selectedDocuments.map((document) => (

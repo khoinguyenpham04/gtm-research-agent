@@ -46,8 +46,12 @@ function buildInitialUserMessage(topic: string, objective?: string | null) {
   return `Topic: ${topic}\n\nObjective: ${objective}`;
 }
 
-async function getRuntime(runId: string, selectedDocumentIds: string[]) {
-  const cacheKey = runId;
+async function getRuntime(
+  threadId: string,
+  canonicalRunId: string,
+  selectedDocumentIds: string[],
+) {
+  const cacheKey = threadId;
   const existing = runtimePromises.get(cacheKey);
   if (existing) {
     return existing;
@@ -56,7 +60,7 @@ async function getRuntime(runId: string, selectedDocumentIds: string[]) {
   const runtimePromise = (async () => {
       await ensureDeepResearchDatabase();
       const runtimeConfig = getDeepResearchRuntimeConfig(
-        runId,
+        threadId,
         selectedDocumentIds,
       );
       const checkpointer = await getDeepResearchCheckpointer();
@@ -68,7 +72,7 @@ async function getRuntime(runId: string, selectedDocumentIds: string[]) {
           runtimeConfig.openAiApiKey,
           {
             onRateLimitRetry: async (context) => {
-              await appendDeepResearchRunEvent(runId, {
+              await appendDeepResearchRunEvent(canonicalRunId, {
                 stage: "throttled",
                 eventType: "rate_limit_retry_scheduled",
                 message: "OpenAI rate limit hit. Retrying with backoff.",
@@ -80,7 +84,7 @@ async function getRuntime(runId: string, selectedDocumentIds: string[]) {
                   errorMessage: context.errorMessage,
                 },
               });
-              await updateDeepResearchRun(runId, {
+              await updateDeepResearchRun(canonicalRunId, {
                 last_progress_at: new Date().toISOString(),
               });
             },
@@ -89,13 +93,21 @@ async function getRuntime(runId: string, selectedDocumentIds: string[]) {
         openAiApiKey: runtimeConfig.openAiApiKey,
         tavilyApiKey: runtimeConfig.tavilyApiKey,
         logEvent: async (eventRunId, stage, eventType, message, payload) => {
-          await appendDeepResearchRunEvent(eventRunId, {
+          const normalizedPayload =
+            eventRunId && eventRunId !== canonicalRunId
+              ? {
+                  ...(payload ?? {}),
+                  graphRunId: eventRunId,
+                }
+              : payload;
+
+          await appendDeepResearchRunEvent(canonicalRunId, {
             stage,
             eventType,
             message,
-            payload,
+            payload: normalizedPayload,
           });
-          await updateDeepResearchRun(eventRunId, {
+          await updateDeepResearchRun(canonicalRunId, {
             last_progress_at: new Date().toISOString(),
           });
         },
@@ -129,10 +141,11 @@ async function hasCheckpoint(
 
 async function finalizeRunFromGraphState(
   runId: string,
+  threadId: string,
   graph: Awaited<ReturnType<typeof getRuntime>>["deepResearchGraph"],
 ) {
   const snapshot = await graph.getState({
-    configurable: { thread_id: runId },
+    configurable: { thread_id: threadId },
   });
 
   const interrupt = snapshot.tasks
@@ -188,20 +201,39 @@ async function finalizeRunFromGraphState(
 
 export async function createDeepResearchRun(
   input: CreateDeepResearchRunRequest,
-): Promise<DeepResearchRunResponse> {
+): Promise<{ created: boolean; run: DeepResearchRunResponse }> {
   await ensureDeepResearchDatabase();
-  const run = await createDeepResearchRunRecord(input);
-  const response = await getDeepResearchRunResponse(run.id);
+  const result = await createDeepResearchRunRecord(input);
+  const response = await getDeepResearchRunResponse(result.run.id);
   if (!response) {
     throw new Error("Failed to load the deep research run after creation.");
   }
 
-  return response;
+  return {
+    created: result.created,
+    run: response,
+  };
 }
 
 export async function getDeepResearchRun(runId: string) {
   await ensureDeepResearchDatabase();
   return getDeepResearchRunResponse(runId);
+}
+
+export async function canResumeDeepResearchRunFromCheckpoint(runId: string) {
+  await ensureDeepResearchDatabase();
+
+  const run = await getDeepResearchRunRecord(runId);
+  if (!run) {
+    throw new Error(`Deep research run ${runId} was not found.`);
+  }
+
+  const runResponse = await getDeepResearchRunResponse(runId);
+  const selectedDocumentIds =
+    runResponse?.selectedDocuments.map((document) => document.id) ?? [];
+  const runtime = await getRuntime(run.thread_id, run.id, selectedDocumentIds);
+
+  return hasCheckpoint(runtime.deepResearchGraph, run.thread_id);
 }
 
 export async function listDeepResearchRuns(options?: {
@@ -223,6 +255,7 @@ export async function processDeepResearchRun(
   runId: string,
   options?: {
     clarificationResponse?: string;
+    resumeFromCheckpoint?: boolean;
     retry?: boolean;
   },
 ) {
@@ -239,7 +272,7 @@ export async function processDeepResearchRun(
     run.thread_id,
     selectedDocumentIds,
   );
-  const runtime = await getRuntime(run.thread_id, selectedDocumentIds);
+  const runtime = await getRuntime(run.thread_id, run.id, selectedDocumentIds);
 
   await markDeepResearchRunStatus(runId, "running", {
     clarification_question: null,
@@ -249,11 +282,15 @@ export async function processDeepResearchRun(
     stage: "running",
     eventType: options?.clarificationResponse
       ? "run_resumed"
+      : options?.resumeFromCheckpoint
+        ? "run_resumed_from_checkpoint"
       : options?.retry
         ? "run_retried"
         : "run_started",
     message: options?.clarificationResponse
       ? "Deep research run resumed."
+      : options?.resumeFromCheckpoint
+        ? "Deep research run resumed from checkpoint."
       : options?.retry
         ? "Deep research run retried."
         : "Deep research run started.",
@@ -272,6 +309,19 @@ export async function processDeepResearchRun(
         new Command({ resume: options.clarificationResponse }),
         config,
       );
+    } else if (options?.resumeFromCheckpoint) {
+      const checkpointExists = await hasCheckpoint(
+        runtime.deepResearchGraph,
+        runtimeConfig.threadId,
+      );
+
+      if (!checkpointExists) {
+        throw new Error(
+          "No checkpoint is available for this run. Retry it instead.",
+        );
+      }
+
+      await runtime.deepResearchGraph.invoke(undefined as never, config);
     } else if (options?.retry) {
       const checkpointExists = await hasCheckpoint(
         runtime.deepResearchGraph,
@@ -316,7 +366,11 @@ export async function processDeepResearchRun(
       );
     }
 
-    await finalizeRunFromGraphState(runId, runtime.deepResearchGraph);
+    await finalizeRunFromGraphState(
+      runId,
+      runtimeConfig.threadId,
+      runtime.deepResearchGraph,
+    );
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Unknown deep research failure.";

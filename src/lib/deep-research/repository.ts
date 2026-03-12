@@ -117,6 +117,11 @@ interface DeepResearchRunSectionEvidenceLinkRecord {
   role: SectionEvidenceLink["role"];
 }
 
+type CreateDeepResearchRunRecordResult = {
+  created: boolean;
+  run: DeepResearchRunRecord;
+};
+
 function mapEvent(row: DeepResearchRunEventRow): DeepResearchRunEvent {
   return {
     id: row.id,
@@ -286,10 +291,21 @@ async function getRunEvents(runId: string) {
 
 export async function createDeepResearchRunRecord(
   input: CreateDeepResearchRunRequest,
-) {
+): Promise<CreateDeepResearchRunRecordResult> {
   const { supabaseAdmin } = createSupabaseClients();
   const id = crypto.randomUUID();
   const timestamp = new Date().toISOString();
+  const threadId = input.launchKey ?? id;
+
+  if (input.launchKey) {
+    const existingRun = await getDeepResearchRunRecordByThreadId(input.launchKey);
+    if (existingRun) {
+      return {
+        created: false,
+        run: existingRun,
+      };
+    }
+  }
 
   const workspace = await assertWorkspaceDocumentSelection(
     input.workspaceId,
@@ -300,7 +316,7 @@ export async function createDeepResearchRunRecord(
     .from("deep_research_runs")
     .insert({
       id,
-      thread_id: id,
+      thread_id: threadId,
       workspace_id: workspace.id,
       topic: input.topic,
       objective: input.objective ?? null,
@@ -312,6 +328,22 @@ export async function createDeepResearchRunRecord(
     .single();
 
   if (error) {
+    if (
+      input.launchKey &&
+      typeof error === "object" &&
+      error &&
+      "code" in error &&
+      error.code === "23505"
+    ) {
+      const existingRun = await getDeepResearchRunRecordByThreadId(input.launchKey);
+      if (existingRun) {
+        return {
+          created: false,
+          run: existingRun,
+        };
+      }
+    }
+
     throw new Error(error.message);
   }
 
@@ -344,7 +376,10 @@ export async function createDeepResearchRunRecord(
     },
   });
 
-  return data as DeepResearchRunRecord;
+  return {
+    created: true,
+    run: data as DeepResearchRunRecord,
+  };
 }
 
 export async function appendDeepResearchRunEvent(
@@ -398,6 +433,25 @@ export async function getDeepResearchRunRecord(runId: string) {
     .from("deep_research_runs")
     .select(deepResearchRunSelect)
     .eq("id", runId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return data as DeepResearchRunRecord;
+}
+
+export async function getDeepResearchRunRecordByThreadId(threadId: string) {
+  const { supabaseAdmin } = createSupabaseClients();
+  const { data, error } = await supabaseAdmin
+    .from("deep_research_runs")
+    .select(deepResearchRunSelect)
+    .eq("thread_id", threadId)
     .maybeSingle();
 
   if (error) {
