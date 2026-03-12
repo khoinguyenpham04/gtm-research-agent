@@ -61,6 +61,7 @@ export default async function DeepResearchNewChatPage({
   const objective = readSearchParam(resolvedSearchParams.objective)?.trim() ?? ""
   const workspaceId =
     readSearchParam(resolvedSearchParams.workspaceId)?.trim() ?? ""
+  const sessionId = readSearchParam(resolvedSearchParams.sessionId)?.trim() ?? ""
   const selectedDocumentIds = (
     readSearchParam(resolvedSearchParams.selectedDocumentIds)?.trim() ?? ""
   )
@@ -83,20 +84,21 @@ export default async function DeepResearchNewChatPage({
   return (
     <>
       <SiteHeader
-        title="Deep Research"
-        description="A dedicated thread for this workspace-scoped research launch."
+        title="New Session"
+        description="Draft a new workspace-scoped research thread before it becomes a persisted session."
       />
       <div className="flex flex-1 flex-col">
         <div className="@container/main flex flex-1 flex-col px-4 py-4 lg:px-6 lg:py-6">
           <DeepResearchChatLauncher
             fallbackHref={fallbackHref}
             launchKey={launchKey}
-          objective={objective || undefined}
-          initialWorkspace={initialWorkspace}
-          initialWorkspaces={initialWorkspaces}
-          selectedDocumentIds={selectedDocumentIds}
-          selectedDocuments={selectedDocuments}
-          topic={topic}
+            objective={objective || undefined}
+            initialWorkspace={initialWorkspace}
+            initialWorkspaces={initialWorkspaces}
+            sessionId={sessionId || undefined}
+            selectedDocumentIds={selectedDocumentIds}
+            selectedDocuments={selectedDocuments}
+            topic={topic}
             workspaceId={workspaceId}
             workspaceName={initialWorkspace?.name}
           />

@@ -23,6 +23,7 @@ export function DeepResearchThreadLauncher({
   initialWorkspaces,
   navigationMode = "push",
   objective,
+  sessionId,
 }: {
   initialWorkspaceId: string
   initialWorkspace: WorkspaceDetail | null
@@ -30,6 +31,7 @@ export function DeepResearchThreadLauncher({
   initialSelectedDocumentIds?: string[]
   initialTopic?: string
   objective?: string
+  sessionId?: string
   navigationMode?: "push" | "replace"
 }) {
   return (
@@ -41,6 +43,7 @@ export function DeepResearchThreadLauncher({
         initialWorkspaces={initialWorkspaces}
         navigationMode={navigationMode}
         objective={objective}
+        sessionId={sessionId}
       />
     </PromptInputProvider>
   )
@@ -53,12 +56,14 @@ function DeepResearchThreadLauncherInner({
   initialWorkspaces,
   navigationMode,
   objective,
+  sessionId,
 }: {
   initialWorkspaceId: string
   initialWorkspace: WorkspaceDetail | null
   initialWorkspaces: WorkspaceSummary[]
   initialSelectedDocumentIds?: string[]
   objective?: string
+  sessionId?: string
   navigationMode: "push" | "replace"
 }) {
   const router = useRouter()
@@ -66,7 +71,9 @@ function DeepResearchThreadLauncherInner({
   const [workspace, setWorkspace] = useState<WorkspaceDetail | null>(initialWorkspace)
   const [workspaces, setWorkspaces] = useState(initialWorkspaces)
   const [selectedDocumentIds, setSelectedDocumentIds] = useState(
-    initialSelectedDocumentIds ?? [],
+    initialSelectedDocumentIds && initialSelectedDocumentIds.length > 0
+      ? initialSelectedDocumentIds
+      : initialWorkspace?.documents.map((attachment) => attachment.documentId) ?? [],
   )
 
   const refreshWorkspaceContext = useCallback(async (workspaceId: string) => {
@@ -145,6 +152,7 @@ function DeepResearchThreadLauncherInner({
           const href = buildDeepResearchChatNewHref({
             launchKey: crypto.randomUUID(),
             objective,
+            sessionId,
             selectedDocumentIds,
             topic: nextTopic,
             workspaceId: activeWorkspaceId,

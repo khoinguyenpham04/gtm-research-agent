@@ -10,6 +10,7 @@ import type {
 } from "@/lib/deep-research/types"
 import type { WorkspaceSummary } from "@/lib/workspaces"
 import {
+  buildSessionThreadHref,
   extractSourcesFromReport,
   formatTimestamp,
 } from "@/components/deep-research/utils"
@@ -307,7 +308,16 @@ export function RecentRunsConsole({
                   ) : null}
                 </div>
                 <Button asChild className="w-fit" variant="outline">
-                  <Link href={`/dashboard/chat/runs/${run.id}`}>
+                  <Link
+                    href={
+                      run.sessionId
+                        ? buildSessionThreadHref({
+                            runId: run.id,
+                            sessionId: run.sessionId,
+                          })
+                        : `/dashboard/chat/runs/${run.id}`
+                    }
+                  >
                     Open thread
                     <ArrowRight className="size-4" />
                   </Link>

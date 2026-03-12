@@ -15,13 +15,16 @@ import {
   Telescope01Icon,
 } from "@hugeicons/core-free-icons"
 
-import type { DeepResearchRunSummary } from "@/lib/deep-research/types"
+import type { SessionSummary } from "@/lib/deep-research/types"
 import type { WorkspaceDetail, WorkspaceSummary } from "@/lib/workspaces"
 import {
   PromptInputProvider,
   usePromptInputController,
 } from "@/components/ai-elements/prompt-input"
-import { buildDeepResearchChatNewHref } from "@/components/deep-research/utils"
+import {
+  buildDeepResearchChatNewHref,
+  buildSessionThreadHref,
+} from "@/components/deep-research/utils"
 import {
   DashboardResearchLauncher,
   type ResearchPlay,
@@ -103,11 +106,11 @@ function HomeIcon({
 }
 
 function DashboardHomeContent({
-  initialRecentRuns,
+  initialSessions,
   initialWorkspace,
   initialWorkspaces,
 }: {
-  initialRecentRuns: DeepResearchRunSummary[]
+  initialSessions: SessionSummary[]
   initialWorkspace: WorkspaceDetail | null
   initialWorkspaces: WorkspaceSummary[]
 }) {
@@ -120,72 +123,69 @@ function DashboardHomeContent({
     initialWorkspace,
   )
   const [workspaces, setWorkspaces] = useState(initialWorkspaces)
-  const [recentRuns, setRecentRuns] = useState(initialRecentRuns)
+  const [sessions, setSessions] = useState(initialSessions)
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>(
     initialWorkspace?.documents.map((attachment) => attachment.documentId) ?? [],
   )
   const [loadingWorkspace, setLoadingWorkspace] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const refreshWorkspaceContext = useCallback(
-    async (workspaceId: string) => {
-      if (!workspaceId) {
-        startTransition(() => {
-          setWorkspace(null)
-          setRecentRuns([])
-        })
-        return
+  const refreshWorkspaceContext = useCallback(async (workspaceId: string) => {
+    if (!workspaceId) {
+      startTransition(() => {
+        setWorkspace(null)
+        setSessions([])
+      })
+      return
+    }
+
+    setLoadingWorkspace(true)
+    setError(null)
+
+    try {
+      const [workspaceResponse, sessionsResponse] = await Promise.all([
+        fetch(`/api/workspaces/${workspaceId}`, {
+          cache: "no-store",
+        }),
+        fetch(`/api/sessions?workspaceId=${workspaceId}`, {
+          cache: "no-store",
+        }),
+      ])
+
+      const [workspacePayload, sessionsPayload] = await Promise.all([
+        workspaceResponse.json(),
+        sessionsResponse.json(),
+      ])
+
+      if (!workspaceResponse.ok) {
+        throw new Error(workspacePayload.error || "Failed to load workspace.")
       }
 
-      setLoadingWorkspace(true)
-      setError(null)
+      if (!sessionsResponse.ok) {
+        throw new Error(sessionsPayload.error || "Failed to load sessions.")
+      }
 
-      try {
-        const [workspaceResponse, runsResponse] = await Promise.all([
-          fetch(`/api/workspaces/${workspaceId}`, {
-            cache: "no-store",
-          }),
-          fetch(`/api/deep-research/runs?workspaceId=${workspaceId}`, {
-            cache: "no-store",
-          }),
-        ])
-
-        const [workspacePayload, runsPayload] = await Promise.all([
-          workspaceResponse.json(),
-          runsResponse.json(),
-        ])
-
-        if (!workspaceResponse.ok) {
-          throw new Error(workspacePayload.error || "Failed to load workspace.")
-        }
-
-        if (!runsResponse.ok) {
-          throw new Error(runsPayload.error || "Failed to load recent runs.")
-        }
-
-        startTransition(() => {
-          setWorkspace(workspacePayload)
-          setRecentRuns(runsPayload)
-          setSelectedDocumentIds(
-            workspacePayload.documents.map(
-              (attachment: WorkspaceDetail["documents"][number]) =>
-                attachment.documentId,
-            ),
-          )
-        })
-      } catch (workspaceError) {
-        setError(
-          workspaceError instanceof Error
-            ? workspaceError.message
-            : "Failed to load workspace context.",
+      startTransition(() => {
+        setWorkspace(workspacePayload)
+        setSessions(sessionsPayload)
+        setSelectedDocumentIds(
+          workspacePayload.documents.map(
+            (attachment: WorkspaceDetail["documents"][number]) =>
+              attachment.documentId,
+          ),
         )
-        throw workspaceError
-      } finally {
-        setLoadingWorkspace(false)
-      }
-    },
-    [],
-  )
+      })
+    } catch (workspaceError) {
+      setError(
+        workspaceError instanceof Error
+          ? workspaceError.message
+          : "Failed to load workspace context.",
+      )
+      throw workspaceError
+    } finally {
+      setLoadingWorkspace(false)
+    }
+  }, [])
 
   const refreshWorkspaces = useCallback(async () => {
     const response = await fetch("/api/workspaces", {
@@ -216,7 +216,7 @@ function DashboardHomeContent({
     if (!activeWorkspaceId) {
       startTransition(() => {
         setWorkspace(null)
-        setRecentRuns([])
+        setSessions([])
       })
       return
     }
@@ -238,9 +238,18 @@ function DashboardHomeContent({
     }
   }, [activeWorkspaceId, refreshWorkspaceContext, workspace?.id])
 
-  const latestRun = useMemo(() => recentRuns[0] ?? null, [recentRuns])
+  const latestSession = useMemo(() => sessions[0] ?? null, [sessions])
   const topic = promptController.textInput.value
   const workspaceDocumentCount = workspace?.documents.length ?? 0
+  const newSessionHref = useMemo(
+    () =>
+      buildDeepResearchChatNewHref({
+        selectedDocumentIds,
+        topic: "",
+        workspaceId: activeWorkspaceId,
+      }),
+    [activeWorkspaceId, selectedDocumentIds],
+  )
 
   const handleLaunch = (submittedTopic?: string) => {
     const nextTopic = (submittedTopic ?? topic).trim()
@@ -278,181 +287,190 @@ function DashboardHomeContent({
 
   return (
     <div className="flex flex-1 flex-col py-2 lg:py-4">
-      <div className="relative mx-auto flex w-full max-w-6xl flex-1 flex-col gap-12 px-1 sm:px-2">
-        <section className="mx-auto flex w-full max-w-4xl flex-col items-center gap-4 pt-8 text-center lg:pt-14">
-          <div className="flex size-12 items-center justify-center rounded-full bg-muted/35 text-foreground/80">
-            <HomeIcon
-              icon={Telescope01Icon}
-              className="text-foreground/80"
-              size={24}
-            />
-          </div>
+      <div className="mx-auto flex w-full max-w-[92rem] flex-1 px-1 sm:px-2">
+        <div className="relative flex min-w-0 flex-1 flex-col gap-12">
+          <section className="mx-auto flex w-full max-w-4xl flex-col items-center gap-4 pt-8 text-center lg:pt-14">
+            <div className="flex size-12 items-center justify-center rounded-full bg-muted/35 text-foreground/80">
+              <HomeIcon
+                className="text-foreground/80"
+                icon={Telescope01Icon}
+                size={24}
+              />
+            </div>
 
-          <div className="max-w-3xl space-y-3">
-            <h1 className="text-balance text-5xl font-semibold leading-[0.97] tracking-[-0.04em] text-foreground">
-              What market question should we answer?
-            </h1>
-            <p className="mx-auto max-w-2xl text-pretty text-[1rem] leading-8 text-muted-foreground sm:text-[1.06rem]">
-              Ask a complex question. Get a full report, with sources.
-            </p>
-          </div>
+            <div className="max-w-3xl space-y-3">
+              <h1 className="text-balance text-5xl font-semibold leading-[0.97] tracking-[-0.04em] text-foreground">
+                What market question should we answer?
+              </h1>
+              <p className="mx-auto max-w-2xl text-pretty text-[1rem] leading-8 text-muted-foreground sm:text-[1.06rem]">
+                Ask a complex question. Get a full report, with sources.
+              </p>
+            </div>
 
-          <div className="w-full max-w-4xl space-y-6">
-            <DashboardResearchLauncher
-              activeWorkspaceId={activeWorkspaceId}
-              onWorkspaceRefresh={handleWorkspaceRefresh}
-              onSelectedDocumentIdsChange={setSelectedDocumentIds}
-              onSubmit={handleLaunch}
-              onWorkspaceChange={setActiveWorkspaceId}
-              selectedDocumentIds={selectedDocumentIds}
-              workspace={workspace}
-              workspaceDocumentCount={workspaceDocumentCount}
-              workspaces={workspaces}
-            />
+            <div className="w-full max-w-4xl space-y-6">
+              <DashboardResearchLauncher
+                activeWorkspaceId={activeWorkspaceId}
+                onSelectedDocumentIdsChange={setSelectedDocumentIds}
+                onSubmit={handleLaunch}
+                onWorkspaceChange={setActiveWorkspaceId}
+                onWorkspaceRefresh={handleWorkspaceRefresh}
+                selectedDocumentIds={selectedDocumentIds}
+                workspace={workspace}
+                workspaceDocumentCount={workspaceDocumentCount}
+                workspaces={workspaces}
+              />
 
-            {error ? (
-              <div className="mx-auto max-w-3xl rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-left text-sm text-destructive">
-                {error}
-              </div>
-            ) : null}
-
-            <section className="rounded-[1.75rem] border border-border/60 bg-background/70 px-5 py-5 text-left shadow-[0_10px_30px_rgba(15,23,42,0.035)] sm:px-6 sm:py-6">
-              <div className="space-y-5">
-              <div className="space-y-2">
-                <p className="text-[0.68rem] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-                  Workspace Snapshot
-                </p>
-                <h2 className="text-[1.55rem] font-semibold tracking-tight text-foreground">
-                  {workspace?.name ?? "No workspace selected"}
-                </h2>
-                <p className="text-[0.98rem] leading-7 text-muted-foreground">
-                  {loadingWorkspace ? "Loading workspace context…" : `${workspaceDocumentCount} attached docs · ${recentRuns.length} saved runs`}
-                </p>
-              </div>
-
-              <div className="grid gap-x-8 gap-y-4 sm:grid-cols-3">
-                <div className="space-y-1.5">
-                  <p className="text-[0.68rem] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-                    Attached Docs
-                  </p>
-                  <p className="text-[1.05rem] font-semibold tabular-nums text-foreground">
-                    {loadingWorkspace ? "…" : workspaceDocumentCount}
-                  </p>
+              {error ? (
+                <div className="mx-auto max-w-3xl rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-left text-sm text-destructive">
+                  {error}
                 </div>
-                <div className="space-y-1.5">
-                  <p className="text-[0.68rem] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-                    Saved Runs
-                  </p>
-                  <p className="text-[1.05rem] font-semibold tabular-nums text-foreground">
-                    {recentRuns.length}
-                  </p>
-                </div>
-                <div className="space-y-1.5">
-                  <p className="text-[0.68rem] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-                    Latest Status
-                  </p>
-                  <div>
-                    {latestRun ? (
-                      <StatusPill status={latestRun.status} />
+              ) : null}
+
+              <section className="rounded-[1.75rem] border border-border/60 bg-background/70 px-5 py-5 text-left shadow-[0_10px_30px_rgba(15,23,42,0.035)] sm:px-6 sm:py-6">
+                <div className="space-y-5">
+                  <div className="space-y-2">
+                    <p className="text-[0.68rem] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                      Workspace Snapshot
+                    </p>
+                    <h2 className="text-[1.55rem] font-semibold tracking-tight text-foreground">
+                      {workspace?.name ?? "No workspace selected"}
+                    </h2>
+                    <p className="text-[0.98rem] leading-7 text-muted-foreground">
+                      {loadingWorkspace
+                        ? "Loading workspace context…"
+                        : `${workspaceDocumentCount} attached docs · ${sessions.length} active sessions`}
+                    </p>
+                  </div>
+
+                  <div className="grid gap-x-8 gap-y-4 sm:grid-cols-3">
+                    <div className="space-y-1.5">
+                      <p className="text-[0.68rem] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                        Attached Docs
+                      </p>
+                      <p className="text-[1.05rem] font-semibold tabular-nums text-foreground">
+                        {loadingWorkspace ? "…" : workspaceDocumentCount}
+                      </p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <p className="text-[0.68rem] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                        Active Sessions
+                      </p>
+                      <p className="text-[1.05rem] font-semibold tabular-nums text-foreground">
+                        {sessions.length}
+                      </p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <p className="text-[0.68rem] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                        Latest Status
+                      </p>
+                      <div>
+                        {latestSession?.latestRunStatus ? (
+                          <StatusPill status={latestSession.latestRunStatus} />
+                        ) : (
+                          <span className="text-sm text-muted-foreground">
+                            No session activity
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-border/55 pt-4">
+                    <Button asChild>
+                      <Link href={newSessionHref}>New Session</Link>
+                    </Button>
+                    <Button asChild className="px-0 text-[0.98rem]" variant="link">
+                      <Link href="/dashboard/recent">Recent Runs</Link>
+                    </Button>
+                    <Button asChild className="px-0 text-[0.98rem]" variant="link">
+                      <Link href="/dashboard/data-library">Data Library</Link>
+                    </Button>
+                  </div>
+
+                  <div className="border-t border-border/55 pt-4">
+                    {latestSession ? (
+                      <Link
+                        className="group flex items-start justify-between gap-4 rounded-2xl px-1 py-1 outline-none motion-safe:transition-colors motion-safe:duration-200 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
+                        href={buildSessionThreadHref({
+                          runId: latestSession.latestRunId,
+                          sessionId: latestSession.id,
+                        })}
+                      >
+                        <div className="min-w-0">
+                          <p className="text-[0.68rem] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                            Latest Session
+                          </p>
+                          <p className="mt-1 line-clamp-2 text-[1rem] leading-7 text-foreground">
+                            {latestSession.title}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2 pt-0.5">
+                          {latestSession.latestRunStatus ? (
+                            <StatusPill status={latestSession.latestRunStatus} />
+                          ) : null}
+                          <div className="text-muted-foreground/70 transition-colors group-hover:text-foreground">
+                            <HomeIcon icon={ArrowRight01Icon} size={16} />
+                          </div>
+                        </div>
+                      </Link>
                     ) : (
-                      <span className="text-sm text-muted-foreground">
-                        No runs
-                      </span>
+                      <div className="text-[0.98rem] leading-7 text-muted-foreground">
+                        No sessions yet.
+                      </div>
                     )}
                   </div>
                 </div>
-              </div>
+              </section>
+            </div>
+          </section>
 
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-border/55 pt-4">
-                <Button asChild>
-                  <Link href="/dashboard/deepresearch">Open Deep Research</Link>
-                </Button>
-                <Button asChild className="px-0 text-[0.98rem]" variant="link">
-                  <Link href="/dashboard/recent">Recent Runs</Link>
-                </Button>
-                <Button asChild className="px-0 text-[0.98rem]" variant="link">
-                  <Link href="/dashboard/data-library">Data Library</Link>
-                </Button>
-              </div>
+          <section className="mx-auto w-full max-w-4xl space-y-5 pb-8">
+            <div className="space-y-2">
+              <h2 className="text-[1.22rem] font-semibold tracking-tight text-foreground">
+                Suggested Research Plays
+              </h2>
+              <p className="text-[0.98rem] leading-7 text-muted-foreground">
+                Start from a familiar GTM task, then adjust the topic before you
+                launch.
+              </p>
+            </div>
 
-              <div className="border-t border-border/55 pt-4">
-                {latestRun ? (
-                  <Link
-                    className="group flex items-start justify-between gap-4 rounded-2xl px-1 py-1 outline-none motion-safe:transition-colors motion-safe:duration-200 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
-                    href={`/dashboard/chat/runs/${latestRun.id}`}
-                  >
-                    <div className="min-w-0">
-                      <p className="text-[0.68rem] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-                        Latest Output
-                      </p>
-                      <p className="mt-1 line-clamp-2 text-[1rem] leading-7 text-foreground">
-                        {latestRun.topic}
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2 pt-0.5">
-                      <StatusPill status={latestRun.status} />
-                      <div className="text-muted-foreground/70 transition-colors group-hover:text-foreground">
-                        <HomeIcon icon={ArrowRight01Icon} size={16} />
-                      </div>
-                    </div>
-                  </Link>
-                ) : (
-                  <div className="text-[0.98rem] leading-7 text-muted-foreground">
-                    No saved runs yet.
+            <div className="divide-y divide-border/60">
+              {researchPlays.map((play) => (
+                <button
+                  key={play.title}
+                  className={cn(
+                    "group flex w-full items-start gap-4 rounded-2xl px-2 py-4 text-left outline-none motion-safe:transition-colors motion-safe:duration-200 hover:bg-muted/30 focus-visible:bg-muted/30",
+                  )}
+                  onClick={() => applyResearchPlay(play)}
+                  type="button"
+                >
+                  <div className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-2xl bg-muted/45 text-foreground/80">
+                    <HomeIcon icon={play.icon} size={18} />
                   </div>
-                )}
-              </div>
-              </div>
-            </section>
-          </div>
-        </section>
-
-        <section className="mx-auto w-full max-w-4xl space-y-5 pb-8">
-          <div className="space-y-2">
-            <h2 className="text-[1.22rem] font-semibold tracking-tight text-foreground">
-              Suggested Research Plays
-            </h2>
-            <p className="text-[0.98rem] leading-7 text-muted-foreground">
-              Start from a familiar GTM task, then adjust the topic before you
-              launch.
-            </p>
-          </div>
-
-          <div className="divide-y divide-border/60">
-            {researchPlays.map((play) => (
-              <button
-                key={play.title}
-                className={cn(
-                  "group flex w-full items-start gap-4 rounded-2xl px-2 py-4 text-left outline-none motion-safe:transition-colors motion-safe:duration-200 hover:bg-muted/30 focus-visible:bg-muted/30",
-                )}
-                onClick={() => applyResearchPlay(play)}
-                type="button"
-              >
-                <div className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-2xl bg-muted/45 text-foreground/80">
-                  <HomeIcon icon={play.icon} size={18} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-[1.02rem] font-medium leading-6 text-foreground">
-                    {play.title}
-                  </p>
-                  <p className="mt-1 text-[0.96rem] leading-7 text-muted-foreground">
-                    {play.description}
-                  </p>
-                </div>
-                <div className="pt-1 text-muted-foreground/70">
-                  <HomeIcon icon={ArrowRight01Icon} size={16} />
-                </div>
-              </button>
-            ))}
-          </div>
-        </section>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[1.02rem] font-medium leading-6 text-foreground">
+                      {play.title}
+                    </p>
+                    <p className="mt-1 text-[0.96rem] leading-7 text-muted-foreground">
+                      {play.description}
+                    </p>
+                  </div>
+                  <div className="pt-1 text-muted-foreground/70">
+                    <HomeIcon icon={ArrowRight01Icon} size={16} />
+                  </div>
+                </button>
+              ))}
+            </div>
+          </section>
+        </div>
       </div>
     </div>
   )
 }
 
 export function DashboardHome(props: {
-  initialRecentRuns: DeepResearchRunSummary[]
+  initialSessions: SessionSummary[]
   initialWorkspace: WorkspaceDetail | null
   initialWorkspaces: WorkspaceSummary[]
 }) {

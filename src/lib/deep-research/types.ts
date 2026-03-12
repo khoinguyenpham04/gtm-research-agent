@@ -402,6 +402,11 @@ export type DeepResearchBudgets = z.infer<typeof deepResearchBudgetsSchema>;
 
 export const createDeepResearchRunRequestSchema = z.object({
   workspaceId: z.string().trim().min(1, "Workspace is required."),
+  sessionId: z
+    .string()
+    .trim()
+    .optional()
+    .transform((value) => (value ? value : undefined)),
   topic: z.string().trim().min(1, "Topic is required."),
   objective: z
     .string()
@@ -433,6 +438,24 @@ export type ResumeDeepResearchRunRequest = z.infer<
   typeof resumeDeepResearchRunRequestSchema
 >;
 
+export const sessionRoleValues = ["user", "assistant", "system"] as const;
+export type SessionRole = (typeof sessionRoleValues)[number];
+export const sessionRoleSchema = z.enum(sessionRoleValues);
+
+export const sessionMessageTypeValues = [
+  "deep_research_request",
+  "chat",
+  "system_note",
+] as const;
+export type SessionMessageType = (typeof sessionMessageTypeValues)[number];
+export const sessionMessageTypeSchema = z.enum(sessionMessageTypeValues);
+
+export const updateSessionRequestSchema = z.object({
+  title: z.string().trim().min(1, "Session title is required."),
+});
+
+export type UpdateSessionRequest = z.infer<typeof updateSessionRequestSchema>;
+
 export interface DeepResearchRunEvent {
   id: string;
   runId: string;
@@ -446,6 +469,8 @@ export interface DeepResearchRunEvent {
 export interface DeepResearchRunRecord {
   id: string;
   thread_id: string;
+  session_id: string | null;
+  origin_message_id: string | null;
   workspace_id: string | null;
   planner_type: string | null;
   report_plan_version: number | null;
@@ -463,6 +488,7 @@ export interface DeepResearchRunRecord {
 
 export interface DeepResearchRunResponse {
   id: string;
+  sessionId?: string;
   status: DeepResearchRunStatus;
   workspaceId?: string;
   workspace?: WorkspaceSummary;
@@ -479,6 +505,7 @@ export interface DeepResearchRunResponse {
 
 export interface DeepResearchRunSummary {
   id: string;
+  sessionId?: string;
   status: DeepResearchRunStatus;
   workspaceId?: string;
   workspace?: WorkspaceSummary;
@@ -542,4 +569,58 @@ export interface SearchMatch {
   content: string;
   metadata: Record<string, unknown>;
   similarity: number;
+}
+
+export interface SessionRecord {
+  id: string;
+  workspace_id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  archived_at: string | null;
+}
+
+export interface SessionMessageRecord {
+  id: string;
+  session_id: string;
+  role: SessionRole;
+  message_type: SessionMessageType;
+  content_markdown: string;
+  metadata_json: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface SessionSummary {
+  id: string;
+  workspaceId: string;
+  title: string;
+  latestRunId?: string;
+  latestRunStatus?: DeepResearchRunStatus;
+  createdAt: string;
+  updatedAt: string;
+  archivedAt?: string;
+}
+
+export interface SessionMessage {
+  id: string;
+  sessionId: string;
+  role: SessionRole;
+  messageType: SessionMessageType;
+  contentMarkdown: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  linkedRun?: DeepResearchRunResponse;
+}
+
+export interface SessionThreadResponse {
+  session: SessionSummary;
+  workspace?: WorkspaceSummary;
+  messages: SessionMessage[];
+}
+
+export interface SessionNavigationWorkspaceGroup {
+  workspaceId: string;
+  workspaceName: string;
+  workspaceUpdatedAt: string;
+  sessions: SessionSummary[];
 }

@@ -419,7 +419,7 @@ export function DeepResearchFinalReport({
   )
 }
 
-function DeepResearchArtifactsPanel({
+export function DeepResearchArtifactsPanel({
   activeRateLimitRetry,
   citedSources,
   preResearchPlan,

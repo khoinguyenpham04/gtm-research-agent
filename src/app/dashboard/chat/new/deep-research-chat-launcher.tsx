@@ -15,6 +15,7 @@ import {
 import type { DocumentSummary } from "@/lib/documents"
 import { DeepResearchThreadLauncher } from "@/app/dashboard/chat/deep-research-thread-launcher"
 import { DeepResearchThreadShell } from "@/components/deep-research/thread-ui"
+import { buildSessionThreadHref } from "@/components/deep-research/utils"
 import type {
   WorkspaceDetail,
   WorkspaceSummary,
@@ -26,6 +27,7 @@ export function DeepResearchChatLauncher({
   objective,
   initialWorkspace,
   initialWorkspaces,
+  sessionId,
   selectedDocumentIds,
   selectedDocuments,
   topic,
@@ -42,6 +44,7 @@ export function DeepResearchChatLauncher({
   fallbackHref: string
   selectedDocumentIds: string[]
   selectedDocuments: DocumentSummary[]
+  sessionId?: string
 }) {
   const router = useRouter()
   const startedRef = useRef(false)
@@ -87,6 +90,7 @@ export function DeepResearchChatLauncher({
           body: JSON.stringify({
             launchKey,
             objective: objective || undefined,
+            sessionId,
             selectedDocumentIds,
             topic: trimmedTopic,
             workspaceId,
@@ -99,8 +103,18 @@ export function DeepResearchChatLauncher({
           throw new Error(payload.error || "Failed to create research run.")
         }
 
+        if (!payload.sessionId) {
+          throw new Error("Research run did not return an owning session.")
+        }
+
+        window.dispatchEvent(new Event("sessions-updated"))
         startTransition(() => {
-          router.replace(`/dashboard/chat/runs/${payload.id}`)
+          router.replace(
+            buildSessionThreadHref({
+              runId: payload.id,
+              sessionId: payload.sessionId,
+            }),
+          )
         })
       } catch (createError) {
         setError(
@@ -115,7 +129,7 @@ export function DeepResearchChatLauncher({
         setIsCreating(false)
       }
     },
-    [launchKey, objective, router, selectedDocumentIds, workspaceId],
+    [launchKey, objective, router, selectedDocumentIds, sessionId, workspaceId],
   )
 
   useEffect(() => {
@@ -158,6 +172,7 @@ export function DeepResearchChatLauncher({
           initialWorkspaces={initialWorkspaces}
           navigationMode="replace"
           objective={objective}
+          sessionId={sessionId}
         />
       }
     />

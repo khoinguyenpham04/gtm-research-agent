@@ -136,6 +136,7 @@ export function extractActiveRateLimitRetry(
 export function buildDeepResearchChatNewHref({
   launchKey,
   objective,
+  sessionId,
   selectedDocumentIds,
   topic,
   workspaceId,
@@ -145,6 +146,7 @@ export function buildDeepResearchChatNewHref({
   selectedDocumentIds: string[]
   launchKey?: string
   objective?: string
+  sessionId?: string
 }) {
   const searchParams = new URLSearchParams()
 
@@ -171,5 +173,33 @@ export function buildDeepResearchChatNewHref({
     searchParams.set("objective", trimmedObjective)
   }
 
+  const trimmedSessionId = sessionId?.trim()
+  if (trimmedSessionId) {
+    searchParams.set("sessionId", trimmedSessionId)
+  }
+
   return `/dashboard/chat/new?${searchParams.toString()}`
+}
+
+export function buildSessionThreadHref({
+  runId,
+  sessionId,
+}: {
+  sessionId: string
+  runId?: string
+}) {
+  const trimmedSessionId = sessionId.trim()
+  if (!trimmedSessionId) {
+    return "/dashboard"
+  }
+
+  const searchParams = new URLSearchParams()
+  const trimmedRunId = runId?.trim()
+  if (trimmedRunId) {
+    searchParams.set("runId", trimmedRunId)
+  }
+
+  return searchParams.size
+    ? `/dashboard/chat/sessions/${trimmedSessionId}?${searchParams.toString()}`
+    : `/dashboard/chat/sessions/${trimmedSessionId}`
 }

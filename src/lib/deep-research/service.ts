@@ -16,9 +16,14 @@ import {
   getDeepResearchRunEvidenceResponse,
   getDeepResearchRunRecord,
   getDeepResearchRunResponse,
+  listSessionNavigationGroups,
+  getSessionSummary,
+  getSessionThreadResponse,
   listDeepResearchRunSummaries,
+  listSessionSummaries,
   markDeepResearchRunStatus,
   persistDeepResearchRunArtifacts,
+  renameSession,
   updateDeepResearchRun,
 } from "@/lib/deep-research/repository";
 import type {
@@ -31,6 +36,9 @@ import type {
   ReportPlan,
   SectionEvidenceLink,
   SectionValidation,
+  SessionSummary,
+  SessionNavigationWorkspaceGroup,
+  SessionThreadResponse,
 } from "@/lib/deep-research/types";
 
 const runtimePromises = new Map<
@@ -242,6 +250,39 @@ export async function listDeepResearchRuns(options?: {
 }): Promise<DeepResearchRunSummary[]> {
   await ensureDeepResearchDatabase();
   return listDeepResearchRunSummaries(options);
+}
+
+export async function listSessions(options: {
+  workspaceId: string;
+  limit?: number;
+}): Promise<SessionSummary[]> {
+  await ensureDeepResearchDatabase();
+  return listSessionSummaries(options);
+}
+
+export async function listSessionNavigation(options?: {
+  limitPerWorkspace?: number;
+  workspaceLimit?: number;
+}): Promise<SessionNavigationWorkspaceGroup[]> {
+  await ensureDeepResearchDatabase();
+  return listSessionNavigationGroups(options);
+}
+
+export async function getSessionThread(
+  sessionId: string,
+): Promise<SessionThreadResponse | null> {
+  await ensureDeepResearchDatabase();
+  return getSessionThreadResponse(sessionId);
+}
+
+export async function getSession(sessionId: string): Promise<SessionSummary | null> {
+  await ensureDeepResearchDatabase();
+  return getSessionSummary(sessionId);
+}
+
+export async function updateSessionTitle(sessionId: string, title: string) {
+  await ensureDeepResearchDatabase();
+  return renameSession(sessionId, title);
 }
 
 export async function getDeepResearchRunEvidence(
