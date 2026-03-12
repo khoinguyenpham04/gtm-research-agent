@@ -11,6 +11,8 @@ import type {
 import type { WorkspaceSummary } from "@/lib/workspaces"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { RunActivityStagePill } from "@/components/ui/run-activity-stage-pill"
+import { StatusPill } from "@/components/ui/status-pill"
 import {
   Card,
   CardContent,
@@ -25,18 +27,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-
-function statusVariant(status: DeepResearchRunResponse["status"]) {
-  switch (status) {
-    case "completed":
-      return "default"
-    case "failed":
-    case "timed_out":
-      return "destructive"
-    default:
-      return "secondary"
-  }
-}
 
 function extractSourcesFromReport(markdown?: string) {
   if (!markdown) {
@@ -292,9 +282,7 @@ export function RecentRunsConsole({
                       type="button"
                     >
                       <div className="flex flex-wrap items-center gap-2">
-                        <Badge variant={statusVariant(item.status)}>
-                          {item.status}
-                        </Badge>
+                        <StatusPill status={item.status} />
                         <span className="text-xs text-muted-foreground">
                           {formatTimestamp(item.updatedAt)}
                         </span>
@@ -335,7 +323,7 @@ export function RecentRunsConsole({
             {run ? (
               <>
                 <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant={statusVariant(run.status)}>{run.status}</Badge>
+                  <StatusPill status={run.status} />
                   <span className="text-xs text-muted-foreground">
                     Updated {formatTimestamp(run.updatedAt)}
                   </span>
@@ -382,7 +370,7 @@ export function RecentRunsConsole({
                     className="rounded-xl border border-border/60 bg-background px-3 py-3"
                   >
                     <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="outline">{event.stage}</Badge>
+                      <RunActivityStagePill stage={event.stage} />
                       <p className="text-sm font-medium">{event.message}</p>
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground">

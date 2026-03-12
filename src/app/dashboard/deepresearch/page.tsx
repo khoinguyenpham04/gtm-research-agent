@@ -36,6 +36,12 @@ export default async function DeepResearchPage({
   const initialTopic = readSearchParam(resolvedSearchParams.topic)?.trim() ?? ""
   const initialObjective =
     readSearchParam(resolvedSearchParams.objective)?.trim() ?? ""
+  const initialSelectedDocumentIds = (
+    readSearchParam(resolvedSearchParams.selectedDocumentIds)?.trim() ?? ""
+  )
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
 
   return (
     <>
@@ -48,6 +54,7 @@ export default async function DeepResearchPage({
           <DeepResearchConsole
             initialDocuments={initialDocuments}
             initialObjective={initialObjective}
+            initialSelectedDocumentIds={initialSelectedDocumentIds}
             initialTopic={initialTopic}
             initialWorkspace={initialWorkspace}
             initialWorkspaceId={initialWorkspaceId}

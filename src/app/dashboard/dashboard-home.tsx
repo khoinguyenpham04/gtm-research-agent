@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { startTransition, useEffect, useMemo, useState } from "react"
+import { startTransition, useCallback, useEffect, useMemo, useState } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import {
   ArrowRight01Icon,
@@ -25,8 +25,8 @@ import {
   DashboardResearchLauncher,
   type ResearchPlay,
 } from "@/app/dashboard/dashboard-research-launcher"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { StatusPill } from "@/components/ui/status-pill"
 import { cn } from "@/lib/utils"
 
 const researchPlays: ResearchPlay[] = [
@@ -80,18 +80,6 @@ const researchPlays: ResearchPlay[] = [
   },
 ]
 
-function statusVariant(status?: DeepResearchRunSummary["status"]) {
-  switch (status) {
-    case "completed":
-      return "default"
-    case "failed":
-    case "timed_out":
-      return "destructive"
-    default:
-      return "secondary"
-  }
-}
-
 function HomeIcon({
   icon,
   className,
@@ -130,35 +118,33 @@ function DashboardHomeContent({
   const [workspace, setWorkspace] = useState<WorkspaceDetail | null>(
     initialWorkspace,
   )
+  const [workspaces, setWorkspaces] = useState(initialWorkspaces)
   const [recentRuns, setRecentRuns] = useState(initialRecentRuns)
+  const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>(
+    initialWorkspace?.documents.map((attachment) => attachment.documentId) ?? [],
+  )
   const [loadingWorkspace, setLoadingWorkspace] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (!activeWorkspaceId) {
-      startTransition(() => {
-        setWorkspace(null)
-        setRecentRuns([])
-      })
-      return
-    }
+  const refreshWorkspaceContext = useCallback(
+    async (workspaceId: string) => {
+      if (!workspaceId) {
+        startTransition(() => {
+          setWorkspace(null)
+          setRecentRuns([])
+        })
+        return
+      }
 
-    if (workspace?.id === activeWorkspaceId) {
-      return
-    }
+      setLoadingWorkspace(true)
+      setError(null)
 
-    let cancelled = false
-
-    const loadWorkspaceContext = async () => {
       try {
-        setLoadingWorkspace(true)
-        setError(null)
-
         const [workspaceResponse, runsResponse] = await Promise.all([
-          fetch(`/api/workspaces/${activeWorkspaceId}`, {
+          fetch(`/api/workspaces/${workspaceId}`, {
             cache: "no-store",
           }),
-          fetch(`/api/deep-research/runs?workspaceId=${activeWorkspaceId}`, {
+          fetch(`/api/deep-research/runs?workspaceId=${workspaceId}`, {
             cache: "no-store",
           }),
         ])
@@ -176,35 +162,80 @@ function DashboardHomeContent({
           throw new Error(runsPayload.error || "Failed to load recent runs.")
         }
 
-        if (cancelled) {
-          return
-        }
-
         startTransition(() => {
           setWorkspace(workspacePayload)
           setRecentRuns(runsPayload)
+          setSelectedDocumentIds(
+            workspacePayload.documents.map(
+              (attachment: WorkspaceDetail["documents"][number]) =>
+                attachment.documentId,
+            ),
+          )
         })
       } catch (workspaceError) {
-        if (!cancelled) {
-          setError(
-            workspaceError instanceof Error
-              ? workspaceError.message
-              : "Failed to load workspace context.",
-          )
-        }
+        setError(
+          workspaceError instanceof Error
+            ? workspaceError.message
+            : "Failed to load workspace context.",
+        )
+        throw workspaceError
       } finally {
-        if (!cancelled) {
-          setLoadingWorkspace(false)
-        }
+        setLoadingWorkspace(false)
       }
+    },
+    [],
+  )
+
+  const refreshWorkspaces = useCallback(async () => {
+    const response = await fetch("/api/workspaces", {
+      cache: "no-store",
+    })
+    const payload = await response.json()
+
+    if (!response.ok) {
+      throw new Error(payload.error || "Failed to load workspaces.")
     }
 
-    void loadWorkspaceContext()
+    startTransition(() => {
+      setWorkspaces(payload.workspaces)
+    })
+  }, [])
+
+  const handleWorkspaceRefresh = useCallback(
+    async (workspaceId: string) => {
+      await Promise.all([
+        refreshWorkspaceContext(workspaceId),
+        refreshWorkspaces(),
+      ])
+    },
+    [refreshWorkspaceContext, refreshWorkspaces],
+  )
+
+  useEffect(() => {
+    if (!activeWorkspaceId) {
+      startTransition(() => {
+        setWorkspace(null)
+        setRecentRuns([])
+      })
+      return
+    }
+
+    if (workspace?.id === activeWorkspaceId) {
+      return
+    }
+
+    let cancelled = false
+
+    void refreshWorkspaceContext(activeWorkspaceId).catch(() => {
+      if (cancelled) {
+        return
+      }
+    })
 
     return () => {
       cancelled = true
     }
-  }, [activeWorkspaceId, workspace?.id])
+  }, [activeWorkspaceId, refreshWorkspaceContext, workspace?.id])
 
   const latestRun = useMemo(() => recentRuns[0] ?? null, [recentRuns])
   const topic = promptController.textInput.value
@@ -221,6 +252,10 @@ function DashboardHomeContent({
 
     if (activeWorkspaceId) {
       searchParams.set("workspaceId", activeWorkspaceId)
+    }
+
+    if (selectedDocumentIds.length > 0) {
+      searchParams.set("selectedDocumentIds", selectedDocumentIds.join(","))
     }
 
     startTransition(() => {
@@ -256,11 +291,14 @@ function DashboardHomeContent({
           <div className="w-full max-w-4xl space-y-6">
             <DashboardResearchLauncher
               activeWorkspaceId={activeWorkspaceId}
+              onWorkspaceRefresh={handleWorkspaceRefresh}
+              onSelectedDocumentIdsChange={setSelectedDocumentIds}
               onSubmit={handleLaunch}
               onWorkspaceChange={setActiveWorkspaceId}
+              selectedDocumentIds={selectedDocumentIds}
               workspace={workspace}
               workspaceDocumentCount={workspaceDocumentCount}
-              workspaces={initialWorkspaces}
+              workspaces={workspaces}
             />
 
             {error ? (
@@ -305,9 +343,13 @@ function DashboardHomeContent({
                     Latest Status
                   </p>
                   <div>
-                    <Badge variant={statusVariant(latestRun?.status)}>
-                      {latestRun?.status ?? "no runs"}
-                    </Badge>
+                    {latestRun ? (
+                      <StatusPill status={latestRun.status} />
+                    ) : (
+                      <span className="text-sm text-muted-foreground">
+                        No runs
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -339,9 +381,7 @@ function DashboardHomeContent({
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-2 pt-0.5">
-                      <Badge variant={statusVariant(latestRun.status)}>
-                        {latestRun.status}
-                      </Badge>
+                      <StatusPill status={latestRun.status} />
                       <div className="text-muted-foreground/70 transition-colors group-hover:text-foreground">
                         <HomeIcon icon={ArrowRight01Icon} size={16} />
                       </div>

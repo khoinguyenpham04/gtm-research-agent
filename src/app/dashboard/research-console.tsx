@@ -13,6 +13,8 @@ import type {
 import type { WorkspaceDetail, WorkspaceSummary } from "@/lib/workspaces"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { RunActivityStagePill } from "@/components/ui/run-activity-stage-pill"
+import { StatusPill } from "@/components/ui/status-pill"
 import {
   Card,
   CardContent,
@@ -30,18 +32,6 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-
-function statusVariant(status: DeepResearchRunResponse["status"]) {
-  switch (status) {
-    case "completed":
-      return "default"
-    case "failed":
-    case "timed_out":
-      return "destructive"
-    default:
-      return "secondary"
-  }
-}
 
 function extractSourcesFromReport(markdown?: string) {
   if (!markdown) {
@@ -165,6 +155,7 @@ function extractActiveRateLimitRetry(
 export function DeepResearchConsole({
   initialDocuments,
   initialObjective = "",
+  initialSelectedDocumentIds = [],
   initialTopic = "",
   initialWorkspace,
   initialWorkspaceId,
@@ -172,6 +163,7 @@ export function DeepResearchConsole({
 }: {
   initialDocuments: DocumentSummary[]
   initialObjective?: string
+  initialSelectedDocumentIds?: string[]
   initialTopic?: string
   initialWorkspace: WorkspaceDetail | null
   initialWorkspaceId?: string
@@ -179,7 +171,9 @@ export function DeepResearchConsole({
 }) {
   const [topic, setTopic] = useState(initialTopic)
   const [objective, setObjective] = useState(initialObjective)
-  const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([])
+  const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>(
+    initialSelectedDocumentIds,
+  )
   const [workspace, setWorkspace] = useState<WorkspaceDetail | null>(
     initialWorkspace,
   )
@@ -686,7 +680,7 @@ export function DeepResearchConsole({
                     className="rounded-xl border border-border/60 bg-background px-3 py-3"
                   >
                     <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="outline">{event.stage}</Badge>
+                      <RunActivityStagePill stage={event.stage} />
                       <p className="text-sm font-medium">{event.message}</p>
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground">
@@ -809,7 +803,7 @@ export function DeepResearchConsole({
             {run ? (
               <>
                 <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant={statusVariant(run.status)}>{run.status}</Badge>
+                  <StatusPill status={run.status} />
                   <span className="text-xs text-muted-foreground">
                     Updated {formatTimestamp(run.updatedAt)}
                   </span>
