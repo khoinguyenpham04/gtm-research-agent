@@ -14,13 +14,15 @@ interface SearchResultRow {
 
 export async function POST(req: Request) {
   try {
-    const { supabase } = createSupabaseClients();
+    const { supabaseAdmin } = createSupabaseClients();
     const { query } = await req.json();
     const emb = await openai.embeddings.create({ model: 'text-embedding-3-small', input: query });
-    const { data: results, error } = await supabase.rpc('match_documents', {
-      query_embedding: JSON.stringify(emb.data[0].embedding),
+    const queryEmbedding = emb.data[0]?.embedding ?? [];
+    const { data: results, error } = await supabaseAdmin.rpc('match_documents', {
+      query_embedding: queryEmbedding,
       match_threshold: 0.0,
       match_count: 5,
+      selected_document_ids: [],
     });
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     const typedResults = (results ?? []) as SearchResultRow[];

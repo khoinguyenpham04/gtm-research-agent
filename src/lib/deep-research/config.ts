@@ -8,19 +8,19 @@ import {
 
 const defaultModelConfig: DeepResearchModelConfig = {
   summarizationModel: "gpt-4.1-mini",
-  summarizationModelMaxTokens: 4096,
+  summarizationModelMaxTokens: 2048,
   researchModel: "gpt-4.1",
-  researchModelMaxTokens: 8000,
-  compressionModel: "gpt-4.1",
-  compressionModelMaxTokens: 8192,
+  researchModelMaxTokens: 4096,
+  compressionModel: "gpt-4.1-mini",
+  compressionModelMaxTokens: 3072,
   finalReportModel: "gpt-4.1",
-  finalReportModelMaxTokens: 10000,
+  finalReportModelMaxTokens: 6000,
   maxStructuredOutputRetries: 3,
-  maxContentLength: 50000,
+  maxContentLength: 30000,
 };
 
 const defaultBudgets: DeepResearchBudgets = {
-  maxConcurrentResearchUnits: 2,
+  maxConcurrentResearchUnits: 1,
   maxResearcherIterations: 3,
   maxReactToolCalls: 4,
 };
@@ -39,6 +39,7 @@ export function getDeepResearchModelConfig(): DeepResearchModelConfig {
   return deepResearchModelConfigSchema.parse({
     summarizationModel:
       process.env.DEEP_RESEARCH_SUMMARIZATION_MODEL ??
+      process.env.RESEARCH_WORKER_MODEL ??
       defaultModelConfig.summarizationModel,
     summarizationModelMaxTokens: readPositiveInt(
       "DEEP_RESEARCH_SUMMARIZATION_MODEL_MAX_TOKENS",
@@ -46,6 +47,7 @@ export function getDeepResearchModelConfig(): DeepResearchModelConfig {
     ),
     researchModel:
       process.env.DEEP_RESEARCH_RESEARCH_MODEL ??
+      process.env.RESEARCH_ORCHESTRATOR_MODEL ??
       defaultModelConfig.researchModel,
     researchModelMaxTokens: readPositiveInt(
       "DEEP_RESEARCH_RESEARCH_MODEL_MAX_TOKENS",
@@ -53,6 +55,7 @@ export function getDeepResearchModelConfig(): DeepResearchModelConfig {
     ),
     compressionModel:
       process.env.DEEP_RESEARCH_COMPRESSION_MODEL ??
+      process.env.RESEARCH_WORKER_MODEL ??
       defaultModelConfig.compressionModel,
     compressionModelMaxTokens: readPositiveInt(
       "DEEP_RESEARCH_COMPRESSION_MODEL_MAX_TOKENS",
@@ -60,6 +63,7 @@ export function getDeepResearchModelConfig(): DeepResearchModelConfig {
     ),
     finalReportModel:
       process.env.DEEP_RESEARCH_FINAL_REPORT_MODEL ??
+      process.env.RESEARCH_ORCHESTRATOR_MODEL ??
       defaultModelConfig.finalReportModel,
     finalReportModelMaxTokens: readPositiveInt(
       "DEEP_RESEARCH_FINAL_REPORT_MODEL_MAX_TOKENS",

@@ -2,10 +2,17 @@ import type { DocumentSummary } from "@/lib/documents";
 import { listDocumentsByIds } from "@/lib/documents";
 import type {
   CreateDeepResearchRunRequest,
+  DeepResearchRunEvidenceResponse,
   DeepResearchRunEvent,
   DeepResearchRunRecord,
   DeepResearchRunResponse,
+  DeepResearchRunSummary,
   DeepResearchRunStatus,
+  EvidenceResolution,
+  EvidenceRow,
+  ReportPlan,
+  SectionEvidenceLink,
+  SectionValidation,
 } from "@/lib/deep-research/types";
 import { createSupabaseClients } from "@/lib/supabase";
 import {
@@ -22,8 +29,29 @@ type RunUpdate = Partial<
     | "final_report_markdown"
     | "error_message"
     | "last_progress_at"
+    | "planner_type"
+    | "report_plan_version"
+    | "report_plan_json"
   >
 > & { updated_at?: string };
+
+const deepResearchRunSelect = `
+  id,
+  thread_id,
+  workspace_id,
+  planner_type,
+  report_plan_version,
+  report_plan_json,
+  topic,
+  objective,
+  status,
+  clarification_question,
+  final_report_markdown,
+  error_message,
+  created_at,
+  updated_at,
+  last_progress_at
+`;
 
 interface DeepResearchRunEventRow {
   id: string;
@@ -40,6 +68,55 @@ interface DeepResearchRunDocumentRow {
   file_name: string | null;
 }
 
+interface DeepResearchRunEvidenceRowRecord {
+  id: string;
+  run_id: string;
+  claim: string;
+  claim_type: EvidenceRow["claimType"];
+  value: string;
+  unit: string | null;
+  entity: string | null;
+  segment: string | null;
+  geography: string | null;
+  timeframe: string | null;
+  source_type: EvidenceRow["sourceType"];
+  source_tier: EvidenceRow["sourceTier"];
+  source_title: string | null;
+  source_url: string | null;
+  document_id: string | null;
+  chunk_index: number | null;
+  confidence: EvidenceRow["confidence"];
+  conflict_group: string | null;
+  allowed_for_final: boolean | null;
+  resolution_id: string | null;
+  metadata_json: Record<string, unknown> | null;
+}
+
+interface DeepResearchRunEvidenceResolutionRecord {
+  id: string;
+  run_id: string;
+  conflict_group: string;
+  winning_evidence_row_ids: string[];
+  discarded_evidence_row_ids: string[];
+  resolution_note: string;
+  resolved_by: string;
+  created_at: string;
+}
+
+interface DeepResearchRunSectionValidationRecord {
+  section_key: string;
+  support: SectionValidation["support"];
+  reason: string | null;
+  evidence_count: number | null;
+  top_source_tier: SectionValidation["topSourceTier"] | null;
+}
+
+interface DeepResearchRunSectionEvidenceLinkRecord {
+  section_key: string;
+  evidence_row_id: string;
+  role: SectionEvidenceLink["role"];
+}
+
 function mapEvent(row: DeepResearchRunEventRow): DeepResearchRunEvent {
   return {
     id: row.id,
@@ -49,6 +126,75 @@ function mapEvent(row: DeepResearchRunEventRow): DeepResearchRunEvent {
     message: row.message,
     payload: row.payload_json ?? {},
     createdAt: row.created_at,
+  };
+}
+
+function mapEvidenceRow(
+  row: DeepResearchRunEvidenceRowRecord,
+): EvidenceRow {
+  return {
+    id: row.id,
+    claim: row.claim,
+    claimType: row.claim_type,
+    value: row.value,
+    unit: row.unit ?? undefined,
+    entity: row.entity ?? undefined,
+    segment: row.segment ?? undefined,
+    geography: row.geography ?? undefined,
+    timeframe: row.timeframe ?? undefined,
+    sourceType: row.source_type,
+    sourceTier: row.source_tier,
+    sourceTitle: row.source_title ?? undefined,
+    sourceUrl: row.source_url ?? undefined,
+    documentId: row.document_id ?? undefined,
+    chunkIndex:
+      typeof row.chunk_index === "number" ? row.chunk_index : undefined,
+    confidence: row.confidence,
+    conflictGroup: row.conflict_group ?? undefined,
+    allowedForFinal:
+      typeof row.allowed_for_final === "boolean"
+        ? row.allowed_for_final
+        : undefined,
+    resolutionId: row.resolution_id ?? undefined,
+    metadata: row.metadata_json ?? {},
+  };
+}
+
+function mapEvidenceResolution(
+  row: DeepResearchRunEvidenceResolutionRecord,
+): EvidenceResolution {
+  return {
+    id: row.id,
+    runId: row.run_id,
+    conflictGroup: row.conflict_group,
+    winningEvidenceRowIds: row.winning_evidence_row_ids,
+    discardedEvidenceRowIds: row.discarded_evidence_row_ids,
+    resolutionNote: row.resolution_note,
+    resolvedBy: row.resolved_by,
+    createdAt: row.created_at,
+  };
+}
+
+function mapSectionValidation(
+  row: DeepResearchRunSectionValidationRecord,
+): SectionValidation {
+  return {
+    key: row.section_key,
+    support: row.support,
+    reason: row.reason ?? undefined,
+    evidenceCount:
+      typeof row.evidence_count === "number" ? row.evidence_count : undefined,
+    topSourceTier: row.top_source_tier ?? undefined,
+  };
+}
+
+function mapSectionEvidenceLink(
+  row: DeepResearchRunSectionEvidenceLinkRecord,
+): SectionEvidenceLink {
+  return {
+    sectionKey: row.section_key,
+    evidenceRowId: row.evidence_row_id,
+    role: row.role,
   };
 }
 
@@ -69,6 +215,23 @@ function mapRunResponse(
     selectedDocuments,
     events,
     finalReportMarkdown: run.final_report_markdown ?? undefined,
+    errorMessage: run.error_message ?? undefined,
+    updatedAt: run.updated_at,
+    createdAt: run.created_at,
+  };
+}
+
+function mapRunSummary(
+  run: DeepResearchRunRecord,
+  workspace: WorkspaceSummary | undefined,
+): DeepResearchRunSummary {
+  return {
+    id: run.id,
+    status: run.status,
+    workspaceId: run.workspace_id ?? undefined,
+    workspace,
+    topic: run.topic,
+    objective: run.objective ?? undefined,
     errorMessage: run.error_message ?? undefined,
     updatedAt: run.updated_at,
     createdAt: run.created_at,
@@ -145,9 +308,7 @@ export async function createDeepResearchRunRecord(
       updated_at: timestamp,
       last_progress_at: timestamp,
     })
-    .select(
-      "id, thread_id, workspace_id, topic, objective, status, clarification_question, final_report_markdown, error_message, created_at, updated_at, last_progress_at",
-    )
+    .select(deepResearchRunSelect)
     .single();
 
   if (error) {
@@ -221,9 +382,7 @@ export async function updateDeepResearchRun(
       updated_at: update.updated_at ?? new Date().toISOString(),
     })
     .eq("id", runId)
-    .select(
-      "id, thread_id, workspace_id, topic, objective, status, clarification_question, final_report_markdown, error_message, created_at, updated_at, last_progress_at",
-    )
+    .select(deepResearchRunSelect)
     .single();
 
   if (error) {
@@ -237,9 +396,7 @@ export async function getDeepResearchRunRecord(runId: string) {
   const { supabaseAdmin } = createSupabaseClients();
   const { data, error } = await supabaseAdmin
     .from("deep_research_runs")
-    .select(
-      "id, thread_id, workspace_id, topic, objective, status, clarification_question, final_report_markdown, error_message, created_at, updated_at, last_progress_at",
-    )
+    .select(deepResearchRunSelect)
     .eq("id", runId)
     .maybeSingle();
 
@@ -271,6 +428,39 @@ export async function getDeepResearchRunResponse(runId: string) {
   return mapRunResponse(run, workspace, selectedDocuments, events);
 }
 
+export async function listDeepResearchRunSummaries(options?: {
+  workspaceId?: string;
+  limit?: number;
+}) {
+  const { supabaseAdmin } = createSupabaseClients();
+  let query = supabaseAdmin
+    .from("deep_research_runs")
+    .select(deepResearchRunSelect)
+    .order("updated_at", { ascending: false })
+    .limit(options?.limit ?? 10);
+
+  if (options?.workspaceId) {
+    query = query.eq("workspace_id", options.workspaceId);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const runs = (data ?? []) as DeepResearchRunRecord[];
+  const workspaces = await listWorkspaces();
+  const workspaceById = new Map(workspaces.map((workspace) => [workspace.id, workspace]));
+
+  return runs.map((run) =>
+    mapRunSummary(
+      run,
+      run.workspace_id ? workspaceById.get(run.workspace_id) : undefined,
+    ),
+  );
+}
+
 export async function markDeepResearchRunStatus(
   runId: string,
   status: DeepResearchRunStatus,
@@ -281,4 +471,194 @@ export async function markDeepResearchRunStatus(
     last_progress_at: new Date().toISOString(),
     ...extras,
   });
+}
+
+export async function persistDeepResearchRunArtifacts(
+  runId: string,
+  artifacts: {
+    reportPlan?: ReportPlan;
+    sectionSupport?: SectionValidation[];
+    evidenceRows?: EvidenceRow[];
+    evidenceResolutions?: EvidenceResolution[];
+    sectionEvidenceLinks?: SectionEvidenceLink[];
+  },
+) {
+  const { supabaseAdmin } = createSupabaseClients();
+
+  await updateDeepResearchRun(runId, {
+    planner_type: artifacts.reportPlan?.plannerType ?? null,
+    report_plan_version: artifacts.reportPlan?.reportPlanVersion ?? null,
+    report_plan_json: artifacts.reportPlan ?? null,
+  });
+
+  const deleteTables = [
+    "deep_research_run_section_evidence_links",
+    "deep_research_run_section_validations",
+    "deep_research_run_evidence_rows",
+    "deep_research_run_evidence_resolutions",
+  ] as const;
+
+  for (const table of deleteTables) {
+    const { error } = await supabaseAdmin.from(table).delete().eq("run_id", runId);
+    if (error) {
+      throw new Error(error.message);
+    }
+  }
+
+  if (artifacts.evidenceResolutions && artifacts.evidenceResolutions.length > 0) {
+    const { error } = await supabaseAdmin
+      .from("deep_research_run_evidence_resolutions")
+      .insert(
+        artifacts.evidenceResolutions.map((resolution) => ({
+          id: resolution.id,
+          run_id: resolution.runId,
+          conflict_group: resolution.conflictGroup,
+          winning_evidence_row_ids: resolution.winningEvidenceRowIds,
+          discarded_evidence_row_ids: resolution.discardedEvidenceRowIds,
+          resolution_note: resolution.resolutionNote,
+          resolved_by: resolution.resolvedBy,
+          created_at: resolution.createdAt,
+        })),
+      );
+
+    if (error) {
+      throw new Error(error.message);
+    }
+  }
+
+  if (artifacts.evidenceRows && artifacts.evidenceRows.length > 0) {
+    const { error } = await supabaseAdmin
+      .from("deep_research_run_evidence_rows")
+      .insert(
+        artifacts.evidenceRows.map((row) => ({
+          id: row.id,
+          run_id: runId,
+          claim: row.claim,
+          claim_type: row.claimType,
+          value: row.value,
+          unit: row.unit ?? null,
+          entity: row.entity ?? null,
+          segment: row.segment ?? null,
+          geography: row.geography ?? null,
+          timeframe: row.timeframe ?? null,
+          source_type: row.sourceType,
+          source_tier: row.sourceTier,
+          source_title: row.sourceTitle ?? null,
+          source_url: row.sourceUrl ?? null,
+          document_id: row.documentId ?? null,
+          chunk_index: row.chunkIndex ?? null,
+          confidence: row.confidence,
+          conflict_group: row.conflictGroup ?? null,
+          allowed_for_final:
+            typeof row.allowedForFinal === "boolean"
+              ? row.allowedForFinal
+              : null,
+          resolution_id: row.resolutionId ?? null,
+          metadata_json: row.metadata ?? {},
+        })),
+      );
+
+    if (error) {
+      throw new Error(error.message);
+    }
+  }
+
+  if (artifacts.sectionSupport && artifacts.sectionSupport.length > 0) {
+    const { error } = await supabaseAdmin
+      .from("deep_research_run_section_validations")
+      .insert(
+        artifacts.sectionSupport.map((section) => ({
+          run_id: runId,
+          section_key: section.key,
+          support: section.support,
+          reason: section.reason ?? null,
+          evidence_count: section.evidenceCount ?? null,
+          top_source_tier: section.topSourceTier ?? null,
+        })),
+      );
+
+    if (error) {
+      throw new Error(error.message);
+    }
+  }
+
+  if (artifacts.sectionEvidenceLinks && artifacts.sectionEvidenceLinks.length > 0) {
+    const { error } = await supabaseAdmin
+      .from("deep_research_run_section_evidence_links")
+      .insert(
+        artifacts.sectionEvidenceLinks.map((link) => ({
+          run_id: runId,
+          section_key: link.sectionKey,
+          evidence_row_id: link.evidenceRowId,
+          role: link.role,
+        })),
+      );
+
+    if (error) {
+      throw new Error(error.message);
+    }
+  }
+}
+
+export async function getDeepResearchRunEvidenceResponse(
+  runId: string,
+): Promise<DeepResearchRunEvidenceResponse | null> {
+  const run = await getDeepResearchRunRecord(runId);
+  if (!run) {
+    return null;
+  }
+
+  const { supabaseAdmin } = createSupabaseClients();
+  const [sectionValidationResult, evidenceRowsResult, resolutionsResult, linksResult] =
+    await Promise.all([
+      supabaseAdmin
+        .from("deep_research_run_section_validations")
+        .select(
+          "section_key, support, reason, evidence_count, top_source_tier",
+        )
+        .eq("run_id", runId),
+      supabaseAdmin
+        .from("deep_research_run_evidence_rows")
+        .select(
+          "id, run_id, claim, claim_type, value, unit, entity, segment, geography, timeframe, source_type, source_tier, source_title, source_url, document_id, chunk_index, confidence, conflict_group, allowed_for_final, resolution_id, metadata_json",
+        )
+        .eq("run_id", runId),
+      supabaseAdmin
+        .from("deep_research_run_evidence_resolutions")
+        .select(
+          "id, run_id, conflict_group, winning_evidence_row_ids, discarded_evidence_row_ids, resolution_note, resolved_by, created_at",
+        )
+        .eq("run_id", runId),
+      supabaseAdmin
+        .from("deep_research_run_section_evidence_links")
+        .select("section_key, evidence_row_id, role")
+        .eq("run_id", runId),
+    ]);
+
+  const possibleErrors = [
+    sectionValidationResult.error,
+    evidenceRowsResult.error,
+    resolutionsResult.error,
+    linksResult.error,
+  ].filter(Boolean);
+  if (possibleErrors.length > 0) {
+    throw new Error(possibleErrors[0]?.message ?? "Failed to load run evidence.");
+  }
+
+  return {
+    runId,
+    reportPlan: run.report_plan_json ?? undefined,
+    sectionSupport: (
+      (sectionValidationResult.data ?? []) as DeepResearchRunSectionValidationRecord[]
+    ).map(mapSectionValidation),
+    evidenceRows: (
+      (evidenceRowsResult.data ?? []) as DeepResearchRunEvidenceRowRecord[]
+    ).map(mapEvidenceRow),
+    evidenceResolutions: (
+      (resolutionsResult.data ?? []) as DeepResearchRunEvidenceResolutionRecord[]
+    ).map(mapEvidenceResolution),
+    sectionEvidenceLinks: (
+      (linksResult.data ?? []) as DeepResearchRunSectionEvidenceLinkRecord[]
+    ).map(mapSectionEvidenceLink),
+  };
 }

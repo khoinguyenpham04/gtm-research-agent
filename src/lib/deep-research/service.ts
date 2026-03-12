@@ -13,19 +13,30 @@ import {
 import {
   appendDeepResearchRunEvent,
   createDeepResearchRunRecord,
+  getDeepResearchRunEvidenceResponse,
   getDeepResearchRunRecord,
   getDeepResearchRunResponse,
+  listDeepResearchRunSummaries,
   markDeepResearchRunStatus,
+  persistDeepResearchRunArtifacts,
   updateDeepResearchRun,
 } from "@/lib/deep-research/repository";
 import type {
   CreateDeepResearchRunRequest,
+  DeepResearchRunEvidenceResponse,
   DeepResearchRunResponse,
+  DeepResearchRunSummary,
+  EvidenceResolution,
+  EvidenceRow,
+  ReportPlan,
+  SectionEvidenceLink,
+  SectionValidation,
 } from "@/lib/deep-research/types";
 
-let runtimePromise:
-  | Promise<ReturnType<typeof createDeepResearchGraphs>>
-  | undefined;
+const runtimePromises = new Map<
+  string,
+  Promise<ReturnType<typeof createDeepResearchGraphs>>
+>();
 
 function buildInitialUserMessage(topic: string, objective?: string | null) {
   if (!objective) {
@@ -36,8 +47,13 @@ function buildInitialUserMessage(topic: string, objective?: string | null) {
 }
 
 async function getRuntime(runId: string, selectedDocumentIds: string[]) {
-  if (!runtimePromise) {
-    runtimePromise = (async () => {
+  const cacheKey = runId;
+  const existing = runtimePromises.get(cacheKey);
+  if (existing) {
+    return existing;
+  }
+
+  const runtimePromise = (async () => {
       await ensureDeepResearchDatabase();
       const runtimeConfig = getDeepResearchRuntimeConfig(
         runId,
@@ -50,6 +66,25 @@ async function getRuntime(runId: string, selectedDocumentIds: string[]) {
         models: new OpenAIDeepResearchModelFactory(
           runtimeConfig.modelConfig,
           runtimeConfig.openAiApiKey,
+          {
+            onRateLimitRetry: async (context) => {
+              await appendDeepResearchRunEvent(runId, {
+                stage: "throttled",
+                eventType: "rate_limit_retry_scheduled",
+                message: "OpenAI rate limit hit. Retrying with backoff.",
+                payload: {
+                  role: context.role,
+                  attempt: context.attempt,
+                  maxAttempts: context.maxAttempts,
+                  delayMs: context.delayMs,
+                  errorMessage: context.errorMessage,
+                },
+              });
+              await updateDeepResearchRun(runId, {
+                last_progress_at: new Date().toISOString(),
+              });
+            },
+          },
         ),
         openAiApiKey: runtimeConfig.openAiApiKey,
         tavilyApiKey: runtimeConfig.tavilyApiKey,
@@ -66,11 +101,11 @@ async function getRuntime(runId: string, selectedDocumentIds: string[]) {
         },
       });
     })().catch((error) => {
-      runtimePromise = undefined;
+      runtimePromises.delete(cacheKey);
       throw error;
     });
-  }
 
+  runtimePromises.set(cacheKey, runtimePromise);
   return runtimePromise;
 }
 
@@ -107,7 +142,20 @@ async function finalizeRunFromGraphState(
 
   const values = (snapshot.values ?? {}) as {
     finalReportMarkdown?: string;
+    reportPlan?: ReportPlan;
+    sectionSupport?: SectionValidation[];
+    evidenceRows?: EvidenceRow[];
+    evidenceResolutions?: EvidenceResolution[];
+    sectionEvidenceLinks?: SectionEvidenceLink[];
   };
+
+  await persistDeepResearchRunArtifacts(runId, {
+    reportPlan: values.reportPlan,
+    sectionSupport: values.sectionSupport ?? [],
+    evidenceRows: values.evidenceRows ?? [],
+    evidenceResolutions: values.evidenceResolutions ?? [],
+    sectionEvidenceLinks: values.sectionEvidenceLinks ?? [],
+  });
 
   if (interrupt && typeof interrupt.question === "string") {
     await markDeepResearchRunStatus(runId, "needs_clarification", {
@@ -154,6 +202,21 @@ export async function createDeepResearchRun(
 export async function getDeepResearchRun(runId: string) {
   await ensureDeepResearchDatabase();
   return getDeepResearchRunResponse(runId);
+}
+
+export async function listDeepResearchRuns(options?: {
+  workspaceId?: string;
+  limit?: number;
+}): Promise<DeepResearchRunSummary[]> {
+  await ensureDeepResearchDatabase();
+  return listDeepResearchRunSummaries(options);
+}
+
+export async function getDeepResearchRunEvidence(
+  runId: string,
+): Promise<DeepResearchRunEvidenceResponse | null> {
+  await ensureDeepResearchDatabase();
+  return getDeepResearchRunEvidenceResponse(runId);
 }
 
 export async function processDeepResearchRun(

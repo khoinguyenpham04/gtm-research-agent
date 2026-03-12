@@ -5,7 +5,12 @@ import { startTransition, useEffect, useMemo, useState } from "react"
 import { ArrowRight, Database, FolderOpen, Search } from "lucide-react"
 
 import type { DocumentSummary } from "@/lib/documents"
-import type { DeepResearchRunResponse } from "@/lib/deep-research/types"
+import type {
+  DeepResearchRunEvent,
+  DeepResearchRunResponse,
+  DeepResearchRunSummary,
+  PreResearchPlan,
+} from "@/lib/deep-research/types"
 import type { WorkspaceDetail, WorkspaceSummary } from "@/lib/workspaces"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -85,12 +90,87 @@ function formatFileSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string")
+}
+
+function extractPreResearchPlan(
+  events: DeepResearchRunEvent[] | undefined,
+): PreResearchPlan | null {
+  if (!events || events.length === 0) {
+    return null
+  }
+
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
+    if (event.eventType !== "pre_research_plan_completed") {
+      continue
+    }
+
+    const value = event.payload?.preResearchPlan
+    if (!value || typeof value !== "object") {
+      continue
+    }
+
+    const candidate = value as Partial<PreResearchPlan>
+    if (
+      (candidate.mode === "gtm" ||
+        candidate.mode === "general" ||
+        candidate.mode === "other") &&
+      isStringArray(candidate.coreQuestions) &&
+      isStringArray(candidate.requiredEvidenceCategories) &&
+      isStringArray(candidate.gtmSubquestions) &&
+      isStringArray(candidate.documentResearchPriorities)
+    ) {
+      return candidate as PreResearchPlan
+    }
+  }
+
+  return null
+}
+
+function extractActiveRateLimitRetry(
+  run: DeepResearchRunResponse | null,
+): {
+  attempt: number
+  maxAttempts: number
+  delayMs: number
+  role?: string
+} | null {
+  if (!run || (run.status !== "queued" && run.status !== "running")) {
+    return null
+  }
+
+  const latestEvent = run.events.at(-1)
+  if (latestEvent?.eventType !== "rate_limit_retry_scheduled") {
+    return null
+  }
+
+  const { attempt, maxAttempts, delayMs, role } = latestEvent.payload ?? {}
+  if (
+    typeof attempt !== "number" ||
+    typeof maxAttempts !== "number" ||
+    typeof delayMs !== "number"
+  ) {
+    return null
+  }
+
+  return {
+    attempt,
+    maxAttempts,
+    delayMs,
+    role: typeof role === "string" ? role : undefined,
+  }
+}
+
 export function DeepResearchConsole({
   initialDocuments,
+  initialRecentRuns,
   initialWorkspace,
   initialWorkspaces,
 }: {
   initialDocuments: DocumentSummary[]
+  initialRecentRuns: DeepResearchRunSummary[]
   initialWorkspace: WorkspaceDetail | null
   initialWorkspaces: WorkspaceSummary[]
 }) {
@@ -105,6 +185,7 @@ export function DeepResearchConsole({
     initialWorkspace?.id ?? initialWorkspaces[0]?.id ?? "",
   )
   const [workspaceName, setWorkspaceName] = useState("")
+  const [recentRuns, setRecentRuns] = useState(initialRecentRuns)
   const [run, setRun] = useState<DeepResearchRunResponse | null>(null)
   const [clarificationResponse, setClarificationResponse] = useState("")
   const [submitting, setSubmitting] = useState(false)
@@ -116,10 +197,94 @@ export function DeepResearchConsole({
     () => extractSourcesFromReport(run?.finalReportMarkdown),
     [run?.finalReportMarkdown],
   )
+  const preResearchPlan = useMemo(
+    () => extractPreResearchPlan(run?.events),
+    [run?.events],
+  )
+  const activeRateLimitRetry = useMemo(
+    () => extractActiveRateLimitRetry(run),
+    [run],
+  )
   const selectedDocumentIdSet = useMemo(
     () => new Set(selectedDocumentIds),
     [selectedDocumentIds],
   )
+
+  useEffect(() => {
+    let cancelled = false
+
+    const loadRuns = async () => {
+      try {
+        const searchParams = new URLSearchParams()
+        if (activeWorkspaceId) {
+          searchParams.set("workspaceId", activeWorkspaceId)
+        }
+
+        const response = await fetch(
+          `/api/deep-research/runs${searchParams.size ? `?${searchParams.toString()}` : ""}`,
+          {
+            cache: "no-store",
+          },
+        )
+        const payload = await response.json()
+        if (!response.ok) {
+          throw new Error(payload.error || "Failed to load recent runs.")
+        }
+
+        if (cancelled) {
+          return
+        }
+
+        startTransition(() => {
+          setRecentRuns(payload)
+        })
+      } catch (runsError) {
+        if (!cancelled) {
+          setError(
+            runsError instanceof Error
+              ? runsError.message
+              : "Failed to load recent runs.",
+          )
+        }
+      }
+    }
+
+    void loadRuns()
+
+    return () => {
+      cancelled = true
+    }
+  }, [activeWorkspaceId])
+
+  useEffect(() => {
+    if (!run) {
+      return
+    }
+
+    if (activeWorkspaceId && run.workspaceId !== activeWorkspaceId) {
+      return
+    }
+
+    const summary: DeepResearchRunSummary = {
+      id: run.id,
+      status: run.status,
+      workspaceId: run.workspaceId,
+      workspace: run.workspace,
+      topic: run.topic,
+      objective: run.objective,
+      errorMessage: run.errorMessage,
+      updatedAt: run.updatedAt,
+      createdAt: run.createdAt,
+    }
+
+    setRecentRuns((current) => {
+      const next = [
+        summary,
+        ...current.filter((item) => item.id !== summary.id),
+      ]
+      return next.slice(0, 12)
+    })
+  }, [activeWorkspaceId, run])
 
   useEffect(() => {
     if (!run?.id || !activeRun) {
@@ -358,6 +523,33 @@ export function DeepResearchConsole({
         retryError instanceof Error
           ? retryError.message
           : "Failed to retry research run.",
+      )
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const handleOpenSavedRun = async (runId: string) => {
+    setSubmitting(true)
+    setError(null)
+
+    try {
+      const response = await fetch(`/api/deep-research/runs/${runId}`, {
+        cache: "no-store",
+      })
+      const payload = await response.json()
+      if (!response.ok) {
+        throw new Error(payload.error || "Failed to load saved research run.")
+      }
+
+      startTransition(() => {
+        setRun(payload)
+      })
+    } catch (loadError) {
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Failed to load saved research run.",
       )
     } finally {
       setSubmitting(false)
@@ -633,6 +825,128 @@ export function DeepResearchConsole({
       <div className="space-y-6">
         <Card className="border border-border/60">
           <CardHeader>
+            <CardTitle>Recent runs</CardTitle>
+            <CardDescription>
+              Reopen saved deep-research runs for the active workspace.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {recentRuns.length ? (
+              <div className="space-y-3">
+                {recentRuns.map((item) => {
+                  const isActive = run?.id === item.id
+
+                  return (
+                    <button
+                      key={item.id}
+                      className={`block w-full rounded-xl border px-3 py-3 text-left transition-colors ${
+                        isActive
+                          ? "border-primary/40 bg-primary/5"
+                          : "border-border/60 bg-background hover:bg-muted/30"
+                      }`}
+                      onClick={() => void handleOpenSavedRun(item.id)}
+                      type="button"
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant={statusVariant(item.status)}>
+                          {item.status}
+                        </Badge>
+                        <span className="text-xs text-muted-foreground">
+                          {formatTimestamp(item.updatedAt)}
+                        </span>
+                      </div>
+                      <p className="mt-2 line-clamp-2 text-sm font-medium">
+                        {item.topic}
+                      </p>
+                      {item.objective ? (
+                        <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                          {item.objective}
+                        </p>
+                      ) : null}
+                    </button>
+                  )
+                })}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                No saved runs for this workspace yet.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="border border-border/60">
+          <CardHeader>
+            <CardTitle>Research focus</CardTitle>
+            <CardDescription>
+              The pre-research plan that shaped the supervisor and sub-agent
+              research loop.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {preResearchPlan ? (
+              <div className="space-y-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="outline">{preResearchPlan.mode}</Badge>
+                  <span className="text-xs text-muted-foreground">
+                    {preResearchPlan.coreQuestions.length} core questions
+                  </span>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">Core questions</p>
+                  <ul className="space-y-2 text-sm text-muted-foreground">
+                    {preResearchPlan.coreQuestions.map((question) => (
+                      <li
+                        key={question}
+                        className="rounded-lg border border-border/60 bg-background px-3 py-2"
+                      >
+                        {question}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">Evidence categories</p>
+                  <div className="flex flex-wrap gap-2">
+                    {preResearchPlan.requiredEvidenceCategories.map(
+                      (category) => (
+                        <Badge key={category} variant="secondary">
+                          {category}
+                        </Badge>
+                      ),
+                    )}
+                  </div>
+                </div>
+
+                {preResearchPlan.gtmSubquestions.length > 0 ? (
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">GTM sub-questions</p>
+                    <ul className="space-y-2 text-sm text-muted-foreground">
+                      {preResearchPlan.gtmSubquestions.map((question) => (
+                        <li
+                          key={question}
+                          className="rounded-lg border border-border/60 bg-background px-3 py-2"
+                        >
+                          {question}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Start a run to see the focused research questions and evidence
+                categories here.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="border border-border/60">
+          <CardHeader>
             <CardTitle>Current run</CardTitle>
             <CardDescription>
               Polling status for the latest deep research execution.
@@ -647,6 +961,26 @@ export function DeepResearchConsole({
                     Updated {formatTimestamp(run.updatedAt)}
                   </span>
                 </div>
+                {activeRateLimitRetry ? (
+                  <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="outline">rate limited</Badge>
+                      <p className="text-sm font-medium">
+                        Retrying with backoff
+                      </p>
+                    </div>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Attempt {activeRateLimitRetry.attempt} of{" "}
+                      {activeRateLimitRetry.maxAttempts}
+                      {activeRateLimitRetry.role
+                        ? ` · ${activeRateLimitRetry.role} model call`
+                        : ""}
+                      {` · waiting about ${(
+                        activeRateLimitRetry.delayMs / 1000
+                      ).toFixed(activeRateLimitRetry.delayMs >= 1000 ? 1 : 2)}s before retry`}
+                    </p>
+                  </div>
+                ) : null}
                 <div className="space-y-1">
                   <p className="text-sm font-medium">{run.topic}</p>
                   {run.objective ? (

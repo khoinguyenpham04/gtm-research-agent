@@ -37,10 +37,40 @@ Guidelines:
 5. Prefer primary sources and official sources where possible.
 `;
 
+export const preResearchPlanningPrompt = `You are preparing a lightweight research plan before any tool-based research starts.
+
+<ResearchBrief>
+{researchBrief}
+</ResearchBrief>
+
+<Messages>
+{messages}
+</Messages>
+
+Today's date is {date}.
+
+Return a structured research plan that will shape what the supervisor and sub-agents investigate.
+
+Rules:
+1. mode must be "gtm", "general", or "other".
+2. coreQuestions should be the 3-8 most important questions the research must answer.
+3. requiredEvidenceCategories should describe the kinds of evidence the agent must gather.
+4. documentResearchPriorities should explain what to extract from the selected uploaded documents before relying on web search.
+5. If mode = "gtm", gtmSubquestions must explicitly cover:
+   - market size inputs
+   - adoption evidence
+   - buyer segments
+   - competitor or pricing evidence
+   - compliance constraints
+6. Prefer asking for sourced inputs over neat final numbers.
+7. Do not invent certainty. If some dimensions are not clearly relevant, leave them out instead of padding.
+`;
+
 export const leadResearcherPrompt = `You are a research supervisor. Your job is to conduct research by calling the "ConductResearch" tool. For context, today's date is {date}.
 
 <Task>
 Your focus is to call the "ConductResearch" tool to conduct research against the overall research question passed in by the user.
+Use the provided pre-research plan to break the work into sharper sub-questions and evidence requests instead of repeating the broad brief.
 When you are completely satisfied with the research findings returned from the tool calls, then call the "ResearchComplete" tool.
 </Task>
 
@@ -56,6 +86,8 @@ CRITICAL: Use thinkTool before calling ConductResearch to plan your approach, an
 - Bias toward a single sub-agent unless the task clearly benefits from parallel work
 - Always stop after {maxResearcherIterations} supervisor tool iterations
 - Maximum {maxConcurrentResearchUnits} parallel research units per iteration
+- Prefer delegations that target one or two concrete evidence gaps at a time
+- For GTM work, prioritize market size inputs, adoption signals, buyer evidence, competitor or pricing evidence, and compliance constraints
 </Hard Limits>
 `;
 
@@ -64,6 +96,7 @@ export const researchSystemPrompt = `You are a research assistant conducting res
 <Task>
 Your job is to use tools to gather information about the user's input topic.
 Use the selected uploaded documents first for grounded evidence, then use Tavily web search to fill gaps or validate claims.
+Follow the supplied research-plan questions and evidence categories rather than answering only at a broad summary level.
 </Task>
 
 <Available Tools>
@@ -79,6 +112,7 @@ CRITICAL: Use thinkTool after searches to reflect on results. Do not call thinkT
 - Simple queries: 2-3 search tool calls maximum
 - Complex queries: up to 5 search tool calls maximum
 - Always stop when you can answer confidently or after 5 search tool calls
+- For GTM research, collect sourced inputs and explicit assumptions before estimating TAM, SAM, or SOM
 </Hard Limits>
 `;
 
@@ -100,6 +134,164 @@ export const compressResearchSimpleHumanMessage = `All above messages are about 
 
 DO NOT summarize away important details. Preserve all relevant information and source references.`;
 
+export const buildReportPlanPrompt = `You are designing the final report structure for a research task.
+
+<ResearchBrief>
+{researchBrief}
+</ResearchBrief>
+
+<PreResearchPlan>
+{preResearchPlan}
+</PreResearchPlan>
+
+<Messages>
+{messages}
+</Messages>
+
+Today's date is {date}.
+
+Return a report plan that fits the actual task.
+
+Rules:
+1. Use mode "gtm" only when the user clearly wants go-to-market, market-entry, ICP, competitor, pricing, or launch planning analysis.
+2. Use mode "general" for broad research or analysis that does not require GTM framing.
+3. Use mode "other" only when the task is neither clearly GTM nor clearly general.
+4. Do not force GTM-only sections like TAM/SAM/SOM, ICP, competitors, or 90-day GTM plans unless they are clearly relevant.
+5. Create 4-8 sections maximum.
+6. Each section must have a stable key, user-facing title, and a short objective.
+7. Set plannerType to "adaptive" and reportPlanVersion to 1.
+8. fallbackRule should explain how the writer should behave when evidence is weak or missing.
+9. If GTM market sizing is relevant, prefer a market sizing or scenario section that can separate sourced inputs, assumptions, and inferred estimates.
+`;
+
+export const scoreSectionSupportPrompt = `You are assessing whether the research findings support the planned report sections.
+
+<ResearchBrief>
+{researchBrief}
+</ResearchBrief>
+
+<PreResearchPlan>
+{preResearchPlan}
+</PreResearchPlan>
+
+<ReportPlan>
+{reportPlan}
+</ReportPlan>
+
+<RetrievedEvidenceAndToolOutputs>
+{rawFindings}
+</RetrievedEvidenceAndToolOutputs>
+
+<CompressedFindings>
+{compressedFindings}
+</CompressedFindings>
+
+Today's date is {date}.
+
+Rules:
+1. Score support from evidence coverage and provenance, not from writing quality.
+2. "strong" means the section has enough relevant evidence to write confidently.
+3. "weak" means there is some evidence, but it is partial, indirect, or low-quality.
+4. "missing" means the evidence is not sufficient and the section should say "insufficient evidence".
+5. evidenceCount should estimate how many distinct pieces of relevant evidence support the section.
+6. topSourceTier should be the highest-quality tier seen for the section.
+`;
+
+export const extractEvidenceLedgerPrompt = `You are extracting reusable evidence rows from research findings.
+
+<ResearchBrief>
+{researchBrief}
+</ResearchBrief>
+
+<PreResearchPlan>
+{preResearchPlan}
+</PreResearchPlan>
+
+<ReportPlan>
+{reportPlan}
+</ReportPlan>
+
+<RetrievedEvidenceAndToolOutputs>
+{rawFindings}
+</RetrievedEvidenceAndToolOutputs>
+
+<CompressedFindings>
+{compressedFindings}
+</CompressedFindings>
+
+Today's date is {date}.
+
+Extract only material, reusable facts.
+
+Rules:
+1. Each row must be a reusable fact, not a section-specific summary.
+2. Prefer facts with explicit provenance, URLs, document ids, or chunk indices when available.
+3. Keep rows concise and factual.
+4. For numeric claims, populate value and unit clearly.
+5. sourceType should reflect provenance such as uploaded_document or web.
+6. sourceTier should reflect trust level using only: selected_document, primary, analyst, trade_press, vendor, blog, unknown.
+7. claimType should distinguish market_stat, pricing_signal, competitor_fact, risk, compliance, recommendation, qualitative_insight, or other.
+8. Do not set allowedForFinal or resolutionId.
+9. Create conflictGroup only when multiple rows are likely to disagree about the same fact, metric, or entity.
+10. For GTM research, prefer extracting market sizing inputs, adoption facts, buyer evidence, competitor or pricing facts, and compliance constraints instead of a single final estimate.
+`;
+
+export const resolveEvidenceConflictsPrompt = `You are resolving conflicts among candidate evidence rows.
+
+<EvidenceRows>
+{evidenceRows}
+</EvidenceRows>
+
+Today's date is {date}.
+
+Rules:
+1. Only create resolutions for real conflicts where rows in the same conflictGroup disagree materially.
+2. Prefer higher sourceTier, more recent timeframe, clearer provenance, and more directly relevant evidence.
+3. winningEvidenceRowIds must contain the row ids that should survive the conflict.
+4. discardedEvidenceRowIds should contain row ids rejected by the resolution.
+5. resolutionNote must explain the decision briefly and concretely.
+6. resolvedBy should be "llm_conflict_resolver_v1".
+`;
+
+export const validateEvidenceForFinalPrompt = `You are validating candidate evidence rows for final report use.
+
+<ResearchBrief>
+{researchBrief}
+</ResearchBrief>
+
+<PreResearchPlan>
+{preResearchPlan}
+</PreResearchPlan>
+
+<ReportPlan>
+{reportPlan}
+</ReportPlan>
+
+<InitialSectionSupport>
+{sectionSupport}
+</InitialSectionSupport>
+
+<EvidenceRows>
+{evidenceRows}
+</EvidenceRows>
+
+<EvidenceResolutions>
+{evidenceResolutions}
+</EvidenceResolutions>
+
+Today's date is {date}.
+
+Rules:
+1. You are the only stage allowed to decide which rows are allowedForFinal.
+2. No unsupported numeric claim should be allowed for final use.
+3. Do not allow rows that lose a conflict resolution.
+4. sectionSupport must reflect evidence coverage, not writing quality.
+5. If a section lacks enough supporting evidence, mark it missing and explain why.
+6. sectionEvidenceLinks must connect planned sections to the evidence rows that support them.
+7. Use role "primary" for core evidence and "supporting" for secondary evidence.
+8. For GTM market sizing sections, treat sourced inputs separately from assumption-driven estimates.
+`;
+
 export const finalReportGenerationPrompt = `Based on all the research conducted, create a comprehensive, well-structured answer to the overall research brief:
 <Research Brief>
 {researchBrief}
@@ -112,16 +304,44 @@ For more context, here are the messages so far:
 
 Today's date is {date}.
 
-Here are the findings from the research that you conducted:
-<Findings>
-{findings}
-</Findings>
+<PreResearchPlan>
+{preResearchPlan}
+</PreResearchPlan>
+
+<ReportPlan>
+{reportPlan}
+</ReportPlan>
+
+<SectionSupport>
+{sectionSupport}
+</SectionSupport>
+
+<ValidatedEvidenceRows>
+{validatedEvidence}
+</ValidatedEvidenceRows>
+
+<SectionEvidenceLinks>
+{sectionEvidenceLinks}
+</SectionEvidenceLinks>
 
 Please create a detailed answer that:
 1. Uses proper Markdown headings
-2. Includes specific facts and insights from the research
-3. References relevant sources using [Title](URL) format when URLs exist
-4. Includes a Sources section at the end
+2. Writes only the sections present in the report plan
+3. If a section is missing support, write "insufficient evidence" for that section instead of inventing content
+4. If a section is weakly supported, write cautiously and state the uncertainty
+5. Uses validated evidence rows for all factual claims
+6. For every important analytical section, separate the content into:
+   - Sourced Facts
+   - Assumptions
+   - Inferred Estimates
+7. Never present inferred estimates as direct sourced facts
+8. For GTM market sizing sections, do not output one fake-precise TAM, SAM, or SOM unless it is directly supported. Instead:
+   - produce low, base, and high scenarios
+   - list the assumptions driving each scenario
+   - mark which assumptions are weakly supported
+   - show the sourced inputs separately from the inferred scenario outputs
+9. References relevant sources using [Title](URL) format when URLs exist
+10. Includes a Sources section at the end
 `;
 
 export const summarizeWebpagePrompt = `Summarize the following webpage content for research use.

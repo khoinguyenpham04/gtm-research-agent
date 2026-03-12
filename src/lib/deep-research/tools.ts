@@ -456,13 +456,22 @@ export function createResearcherTools(context: ResearchToolContext) {
         queries,
         matchCount ?? 5,
       );
+      const matchedDocumentIds = new Set(
+        matches
+          .map((match) => match.metadata.document_id)
+          .filter((documentId): documentId is string => typeof documentId === "string"),
+      );
 
       await context.logEvent?.(
         context.runId,
         "retrieving",
         "document_search_completed",
-        `Retrieved ${matches.length} document matches.`,
-        { queries, matchCount: matches.length },
+        `Retrieved ${matches.length} evidence matches across ${matchedDocumentIds.size} selected documents.`,
+        {
+          queries,
+          matchCount: matches.length,
+          matchedDocumentCount: matchedDocumentIds.size,
+        },
       );
 
       return formatDocumentSearchResults(matches);

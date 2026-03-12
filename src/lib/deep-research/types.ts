@@ -17,6 +17,190 @@ export type DeepResearchRunStatus =
 
 export const deepResearchRunStatusSchema = z.enum(deepResearchRunStatusValues);
 
+export const researchModeValues = ["gtm", "general", "other"] as const;
+export type ResearchMode = (typeof researchModeValues)[number];
+export const researchModeSchema = z.enum(researchModeValues);
+
+export const preResearchPlanSchema = z.object({
+  mode: researchModeSchema,
+  coreQuestions: z.array(z.string().trim().min(1)).min(3).max(8),
+  requiredEvidenceCategories: z
+    .array(z.string().trim().min(1))
+    .min(3)
+    .max(8),
+  gtmSubquestions: z.array(z.string().trim().min(1)).max(8).default([]),
+  documentResearchPriorities: z
+    .array(z.string().trim().min(1))
+    .max(5)
+    .default([]),
+});
+
+export type PreResearchPlan = z.infer<typeof preResearchPlanSchema>;
+
+export const sectionSupportValues = ["strong", "weak", "missing"] as const;
+export type SectionSupportLevel = (typeof sectionSupportValues)[number];
+export const sectionSupportSchema = z.enum(sectionSupportValues);
+
+export const sourceTierValues = [
+  "selected_document",
+  "primary",
+  "analyst",
+  "trade_press",
+  "vendor",
+  "blog",
+  "unknown",
+] as const;
+export type SourceTier = (typeof sourceTierValues)[number];
+export const sourceTierSchema = z.enum(sourceTierValues);
+
+export const evidenceSourceTypeValues = [
+  "uploaded_document",
+  "web",
+  "unknown",
+] as const;
+export type EvidenceSourceType = (typeof evidenceSourceTypeValues)[number];
+export const evidenceSourceTypeSchema = z.enum(evidenceSourceTypeValues);
+
+export const evidenceClaimTypeValues = [
+  "market_stat",
+  "pricing_signal",
+  "competitor_fact",
+  "risk",
+  "compliance",
+  "recommendation",
+  "qualitative_insight",
+  "other",
+] as const;
+export type EvidenceClaimType = (typeof evidenceClaimTypeValues)[number];
+export const evidenceClaimTypeSchema = z.enum(evidenceClaimTypeValues);
+
+export const evidenceConfidenceValues = ["high", "medium", "low"] as const;
+export type EvidenceConfidence = (typeof evidenceConfidenceValues)[number];
+export const evidenceConfidenceSchema = z.enum(evidenceConfidenceValues);
+
+export const sectionEvidenceRoleValues = ["primary", "supporting"] as const;
+export type SectionEvidenceRole = (typeof sectionEvidenceRoleValues)[number];
+export const sectionEvidenceRoleSchema = z.enum(sectionEvidenceRoleValues);
+
+export const reportPlanSectionSchema = z.object({
+  key: z.string().trim().min(1),
+  title: z.string().trim().min(1),
+  objective: z.string().trim().min(1),
+  relevanceReason: z.string().trim().optional(),
+});
+
+export type ReportPlanSection = z.infer<typeof reportPlanSectionSchema>;
+
+export const reportPlanSchema = z.object({
+  mode: researchModeSchema,
+  sections: z.array(reportPlanSectionSchema).min(1),
+  fallbackRule: z.string().trim().min(1),
+  plannerType: z.string().trim().min(1),
+  reportPlanVersion: z.number().int().positive(),
+});
+
+export type ReportPlan = z.infer<typeof reportPlanSchema>;
+
+export const sectionSupportEntrySchema = z.object({
+  key: z.string().trim().min(1),
+  support: sectionSupportSchema,
+  reason: z.string().trim().optional(),
+  evidenceCount: z.number().int().min(0).optional(),
+  topSourceTier: sourceTierSchema.optional(),
+});
+
+export type SectionSupport = z.infer<typeof sectionSupportEntrySchema>;
+export type SectionValidation = SectionSupport;
+
+export const sectionSupportResultSchema = z.object({
+  sectionSupport: z.array(sectionSupportEntrySchema),
+});
+
+export type SectionSupportResult = z.infer<typeof sectionSupportResultSchema>;
+
+export const candidateEvidenceRowSchema = z.object({
+  claim: z.string().trim().min(1),
+  claimType: evidenceClaimTypeSchema,
+  value: z.string().trim().min(1),
+  unit: z.string().trim().optional(),
+  entity: z.string().trim().optional(),
+  segment: z.string().trim().optional(),
+  geography: z.string().trim().optional(),
+  timeframe: z.string().trim().optional(),
+  sourceType: evidenceSourceTypeSchema,
+  sourceTier: sourceTierSchema,
+  sourceTitle: z.string().trim().optional(),
+  sourceUrl: z.string().trim().url().optional(),
+  documentId: z.string().trim().optional(),
+  chunkIndex: z.number().int().nonnegative().optional(),
+  confidence: evidenceConfidenceSchema,
+  conflictGroup: z.string().trim().optional(),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+});
+
+export type CandidateEvidenceRow = z.infer<typeof candidateEvidenceRowSchema>;
+
+export const evidenceRowSchema = candidateEvidenceRowSchema.extend({
+  id: z.string().trim().min(1),
+  allowedForFinal: z.boolean().optional(),
+  resolutionId: z.string().trim().optional(),
+});
+
+export type EvidenceRow = z.infer<typeof evidenceRowSchema>;
+
+export const evidenceResolutionSchema = z.object({
+  id: z.string().trim().min(1),
+  runId: z.string().trim().min(1),
+  conflictGroup: z.string().trim().min(1),
+  winningEvidenceRowIds: z.array(z.string().trim().min(1)).min(1),
+  discardedEvidenceRowIds: z.array(z.string().trim().min(1)),
+  resolutionNote: z.string().trim().min(1),
+  resolvedBy: z.string().trim().min(1),
+  createdAt: z.string().trim().min(1),
+});
+
+export type EvidenceResolution = z.infer<typeof evidenceResolutionSchema>;
+
+export const sectionEvidenceLinkSchema = z.object({
+  sectionKey: z.string().trim().min(1),
+  evidenceRowId: z.string().trim().min(1),
+  role: sectionEvidenceRoleSchema,
+});
+
+export type SectionEvidenceLink = z.infer<typeof sectionEvidenceLinkSchema>;
+
+export const evidenceExtractionSchema = z.object({
+  rows: z.array(candidateEvidenceRowSchema).max(30),
+});
+
+export type EvidenceExtractionResult = z.infer<typeof evidenceExtractionSchema>;
+
+export const evidenceConflictResolutionSchema = z.object({
+  resolutions: z
+    .array(
+      z.object({
+        conflictGroup: z.string().trim().min(1),
+        winningEvidenceRowIds: z.array(z.string().trim().min(1)).min(1),
+        discardedEvidenceRowIds: z.array(z.string().trim().min(1)),
+        resolutionNote: z.string().trim().min(1),
+        resolvedBy: z.string().trim().min(1),
+      }),
+    )
+    .max(20),
+});
+
+export type EvidenceConflictResolutionResult = z.infer<
+  typeof evidenceConflictResolutionSchema
+>;
+
+export const evidenceValidationSchema = z.object({
+  allowedEvidenceRowIds: z.array(z.string().trim().min(1)),
+  sectionSupport: z.array(sectionSupportEntrySchema),
+  sectionEvidenceLinks: z.array(sectionEvidenceLinkSchema).max(100),
+});
+
+export type EvidenceValidationResult = z.infer<typeof evidenceValidationSchema>;
+
 export const deepResearchModelConfigSchema = z.object({
   summarizationModel: z.string().min(1),
   summarizationModelMaxTokens: z.number().int().positive(),
@@ -84,6 +268,9 @@ export interface DeepResearchRunRecord {
   id: string;
   thread_id: string;
   workspace_id: string | null;
+  planner_type: string | null;
+  report_plan_version: number | null;
+  report_plan_json: ReportPlan | null;
   topic: string;
   objective: string | null;
   status: DeepResearchRunStatus;
@@ -109,6 +296,27 @@ export interface DeepResearchRunResponse {
   errorMessage?: string;
   updatedAt: string;
   createdAt: string;
+}
+
+export interface DeepResearchRunSummary {
+  id: string;
+  status: DeepResearchRunStatus;
+  workspaceId?: string;
+  workspace?: WorkspaceSummary;
+  topic: string;
+  objective?: string;
+  errorMessage?: string;
+  updatedAt: string;
+  createdAt: string;
+}
+
+export interface DeepResearchRunEvidenceResponse {
+  runId: string;
+  reportPlan?: ReportPlan;
+  sectionSupport: SectionValidation[];
+  evidenceRows: EvidenceRow[];
+  evidenceResolutions: EvidenceResolution[];
+  sectionEvidenceLinks: SectionEvidenceLink[];
 }
 
 export interface DeepResearchRuntimeConfig {
