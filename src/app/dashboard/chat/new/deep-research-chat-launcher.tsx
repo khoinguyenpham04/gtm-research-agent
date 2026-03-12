@@ -107,6 +107,7 @@ export function DeepResearchChatLauncher({
         startTransition(() => {
           router.replace(
             buildSessionThreadHref({
+              mode: "research",
               runId: payload.id,
               sessionId: payload.sessionId,
             }),

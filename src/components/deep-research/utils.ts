@@ -2,6 +2,7 @@ import type {
   DeepResearchRunEvent,
   DeepResearchRunResponse,
   PreResearchPlan,
+  SessionComposerMode,
 } from "@/lib/deep-research/types"
 
 export type DeepResearchSourceLink = {
@@ -182,10 +183,12 @@ export function buildDeepResearchChatNewHref({
 }
 
 export function buildSessionThreadHref({
+  mode,
   runId,
   sessionId,
 }: {
   sessionId: string
+  mode?: SessionComposerMode
   runId?: string
 }) {
   const trimmedSessionId = sessionId.trim()
@@ -197,6 +200,10 @@ export function buildSessionThreadHref({
   const trimmedRunId = runId?.trim()
   if (trimmedRunId) {
     searchParams.set("runId", trimmedRunId)
+  }
+
+  if (mode) {
+    searchParams.set("mode", mode)
   }
 
   return searchParams.size

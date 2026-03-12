@@ -1,3 +1,4 @@
+import type { UIMessage } from "ai";
 import { z } from "zod";
 
 import type { DocumentSummary } from "@/lib/documents";
@@ -449,6 +450,67 @@ export const sessionMessageTypeValues = [
 export type SessionMessageType = (typeof sessionMessageTypeValues)[number];
 export const sessionMessageTypeSchema = z.enum(sessionMessageTypeValues);
 
+export const sessionComposerModeValues = ["chat", "research"] as const;
+export type SessionComposerMode = (typeof sessionComposerModeValues)[number];
+export const sessionComposerModeSchema = z.enum(sessionComposerModeValues);
+
+export const workspaceChatCitationSourceTypeValues = [
+  "workspace_document",
+  "research_report",
+] as const;
+export type WorkspaceChatCitationSourceType =
+  (typeof workspaceChatCitationSourceTypeValues)[number];
+export const workspaceChatCitationSourceTypeSchema = z.enum(
+  workspaceChatCitationSourceTypeValues,
+);
+
+export const workspaceChatCitationSchema = z.object({
+  id: z.string().trim().min(1),
+  sourceType: workspaceChatCitationSourceTypeSchema,
+  title: z.string().trim().min(1),
+  excerpt: z.string().trim().min(1),
+  locationLabel: z.string().trim().optional(),
+  url: z.string().trim().url().optional(),
+  documentId: z.string().trim().optional(),
+  fileName: z.string().trim().optional(),
+  chunkIndex: z.number().int().nonnegative().optional(),
+  totalChunks: z.number().int().positive().optional(),
+  runId: z.string().trim().optional(),
+  runTopic: z.string().trim().optional(),
+  sectionTitle: z.string().trim().optional(),
+  similarity: z.number().min(0).max(1).optional(),
+});
+
+export type WorkspaceChatCitation = z.infer<
+  typeof workspaceChatCitationSchema
+>;
+
+export const workspaceChatMessageMetadataSchema = z.object({
+  mode: z.literal("workspace_chat"),
+  selectedDocumentIds: z.array(z.string().trim().min(1)).default([]),
+  citations: z.array(workspaceChatCitationSchema).default([]),
+  model: z.string().trim().optional(),
+  sourceCount: z.number().int().nonnegative().default(0),
+  createdAt: z.string().trim().optional(),
+  finishedAt: z.string().trim().optional(),
+});
+
+export type WorkspaceChatMessageMetadata = z.infer<
+  typeof workspaceChatMessageMetadataSchema
+>;
+
+export type SessionMessageMetadata =
+  | Record<string, unknown>
+  | WorkspaceChatMessageMetadata;
+
+export type WorkspaceChatUIMessage = UIMessage<WorkspaceChatMessageMetadata>;
+
+export function isWorkspaceChatMessageMetadata(
+  value: unknown,
+): value is WorkspaceChatMessageMetadata {
+  return workspaceChatMessageMetadataSchema.safeParse(value).success;
+}
+
 export const updateSessionRequestSchema = z.object({
   title: z.string().trim().min(1, "Session title is required."),
 });
@@ -585,7 +647,7 @@ export interface SessionMessageRecord {
   role: SessionRole;
   message_type: SessionMessageType;
   content_markdown: string;
-  metadata_json: Record<string, unknown>;
+  metadata_json: SessionMessageMetadata;
   created_at: string;
 }
 
@@ -606,7 +668,7 @@ export interface SessionMessage {
   role: SessionRole;
   messageType: SessionMessageType;
   contentMarkdown: string;
-  metadata: Record<string, unknown>;
+  metadata: SessionMessageMetadata;
   createdAt: string;
   linkedRun?: DeepResearchRunResponse;
 }

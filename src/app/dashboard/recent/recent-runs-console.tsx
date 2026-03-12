@@ -312,6 +312,7 @@ export function RecentRunsConsole({
                     href={
                       run.sessionId
                         ? buildSessionThreadHref({
+                            mode: "research",
                             runId: run.id,
                             sessionId: run.sessionId,
                           })

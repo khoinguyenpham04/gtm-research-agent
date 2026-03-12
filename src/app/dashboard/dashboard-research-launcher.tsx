@@ -1,5 +1,6 @@
 "use client"
 
+import type { ChatStatus } from "ai"
 import { useMemo, useState } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import {
@@ -40,6 +41,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
+import type { SessionComposerMode } from "@/lib/deep-research/types"
 export type ResearchPlay = {
   title: string
   description: string
@@ -96,6 +98,12 @@ export function DashboardResearchLauncher({
   onSelectedDocumentIdsChange,
   onSubmit,
   onWorkspaceChange,
+  allowWorkspaceChange = true,
+  isSubmitting = false,
+  mode = "research",
+  onModeChange,
+  onStop,
+  submitStatus,
 }: {
   activeWorkspaceId: string
   workspace: WorkspaceDetail | null
@@ -104,8 +112,14 @@ export function DashboardResearchLauncher({
   onWorkspaceRefresh: (workspaceId: string) => Promise<void>
   selectedDocumentIds?: string[]
   onSelectedDocumentIdsChange: (documentIds: string[]) => void
-  onSubmit: (text?: string) => void
+  onSubmit: (text?: string) => void | Promise<void>
   onWorkspaceChange: (workspaceId: string) => void
+  allowWorkspaceChange?: boolean
+  isSubmitting?: boolean
+  mode?: SessionComposerMode
+  onModeChange?: (mode: SessionComposerMode) => void
+  onStop?: () => void
+  submitStatus?: ChatStatus
 }) {
   const promptController = usePromptInputController()
   const attachments = usePromptInputAttachments()
@@ -122,11 +136,14 @@ export function DashboardResearchLauncher({
   const pendingUploads = attachments.files
   const hasPendingUploads = pendingUploads.length > 0
   const missingWorkspace = activeWorkspaceId.trim().length === 0
+  const isStopState =
+    submitStatus === "submitted" || submitStatus === "streaming"
   const submitDisabled =
     topic.trim().length === 0 ||
     hasPendingUploads ||
     uploadState === "uploading" ||
-    missingWorkspace
+    missingWorkspace ||
+    (isSubmitting && !isStopState)
   const attachedDocuments = workspace?.documents ?? []
   const selectedDocumentIdSet = useMemo(
     () => new Set(selectedDocumentIds),
@@ -135,11 +152,17 @@ export function DashboardResearchLauncher({
   const visibleWorkspaces = workspaces.slice(0, 4)
   const overflowWorkspaces = workspaces.slice(4)
   const selectedDocLabel =
-    selectedDocumentIds.length > 0 && workspaceDocumentCount > 0
-      ? `${selectedDocumentIds.length} of ${workspaceDocumentCount} docs + web`
-      : workspaceDocumentCount > 0
-        ? "web only"
-        : "web only"
+    mode === "chat"
+      ? selectedDocumentIds.length > 0 && workspaceDocumentCount > 0
+        ? `${selectedDocumentIds.length} of ${workspaceDocumentCount} docs`
+        : workspaceDocumentCount > 0
+          ? `all ${workspaceDocumentCount} docs`
+          : "reports only"
+      : selectedDocumentIds.length > 0 && workspaceDocumentCount > 0
+        ? `${selectedDocumentIds.length} of ${workspaceDocumentCount} docs + web`
+        : workspaceDocumentCount > 0
+          ? "web only"
+          : "web only"
 
   const workspaceSummary = useMemo(() => {
     const name = (workspace?.name ?? "No workspace").trim()
@@ -299,7 +322,7 @@ export function DashboardResearchLauncher({
   return (
     <PromptInput
       accept={ACCEPTED_DOCUMENT_TYPES}
-      className="w-full rounded-[1.9rem] bg-background shadow-[0_12px_36px_rgba(15,23,42,0.06)] [&_[data-slot=input-group]]:rounded-[1.9rem]"
+      className="w-full rounded-[1.9rem] bg-background shadow-[0_12px_36px_rgba(15,23,42,0.06)] [&_[data-slot=input-group]]:rounded-[1.9rem] [&_[data-slot=input-group]]:has-disabled:bg-background [&_[data-slot=input-group]]:has-disabled:opacity-100 dark:[&_[data-slot=input-group]]:has-disabled:bg-background"
       multiple
       onError={({ message }) => {
         setUploadState("error")
@@ -322,7 +345,13 @@ export function DashboardResearchLauncher({
         }
 
         if (!text.trim()) {
-          return Promise.reject(new Error("Enter a research topic first."))
+          return Promise.reject(
+            new Error(
+              mode === "chat"
+                ? "Enter a workspace question first."
+                : "Enter a research topic first.",
+            ),
+          )
         }
 
         if (missingWorkspace) {
@@ -333,15 +362,18 @@ export function DashboardResearchLauncher({
           )
         }
 
-        onSubmit(text)
-        return Promise.resolve()
+        return Promise.resolve(onSubmit(text))
       }}
     >
       <PromptInputBody>
         <PromptInputTextarea
-          aria-label="Research topic"
+          aria-label={mode === "chat" ? "Workspace question" : "Research topic"}
           className="min-h-24 px-5 pt-5 text-base leading-7 placeholder:text-[0.98rem] placeholder:text-muted-foreground/72 sm:min-h-32 sm:px-6 sm:text-[1.05rem]"
-          placeholder="Ask for a market entry brief, competitive scan, ICP analysis, pricing review, or regulatory scan…"
+          placeholder={
+            mode === "chat"
+              ? "Ask what the workspace documents and completed research reports support…"
+              : "Ask for a market entry brief, competitive scan, ICP analysis, pricing review, or regulatory scan…"
+          }
         />
       </PromptInputBody>
 
@@ -403,10 +435,41 @@ export function DashboardResearchLauncher({
 
       <PromptInputFooter className="flex-col items-stretch gap-3 pt-3 sm:flex-row sm:items-center">
         <PromptInputTools className="w-full flex-wrap items-center gap-2 sm:w-auto">
-          <div className="inline-flex h-9 items-center gap-2 rounded-full bg-[#EAF1FF] px-3 text-sm font-medium text-[#246BFF]">
-            <LauncherIcon icon={Telescope01Icon} size={18} />
-            <span>Deep Research</span>
-          </div>
+          {onModeChange ? (
+            <div className="inline-flex h-10 items-center rounded-full border border-border/60 bg-muted/35 p-1">
+              <button
+                className={cn(
+                  "inline-flex h-8 items-center gap-2 rounded-full px-3 text-sm font-medium transition-colors",
+                  mode === "chat"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+                onClick={() => onModeChange("chat")}
+                type="button"
+              >
+                <LauncherIcon icon={FolderLibraryIcon} size={16} />
+                <span>Ask Workspace</span>
+              </button>
+              <button
+                className={cn(
+                  "inline-flex h-8 items-center gap-2 rounded-full px-3 text-sm font-medium transition-colors",
+                  mode === "research"
+                    ? "bg-[#EAF1FF] text-[#246BFF]"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+                onClick={() => onModeChange("research")}
+                type="button"
+              >
+                <LauncherIcon icon={Telescope01Icon} size={16} />
+                <span>Deep Research</span>
+              </button>
+            </div>
+          ) : (
+            <div className="inline-flex h-9 items-center gap-2 rounded-full bg-[#EAF1FF] px-3 text-sm font-medium text-[#246BFF]">
+              <LauncherIcon icon={Telescope01Icon} size={18} />
+              <span>Deep Research</span>
+            </div>
+          )}
 
           <Popover onOpenChange={setWorkspacePopoverOpen} open={workspacePopoverOpen}>
             <PopoverTrigger asChild>
@@ -440,139 +503,155 @@ export function DashboardResearchLauncher({
                       Workspace context
                     </p>
                     <p className="text-xs leading-5 text-muted-foreground">
-                      Switch workspace and choose which attached docs to use for this launch.
+                      {mode === "chat"
+                        ? "Choose which attached docs to search for this answer."
+                        : allowWorkspaceChange
+                          ? "Switch workspace and choose which attached docs to use for this launch."
+                          : "Choose which attached docs to use for this research run."}
                     </p>
                   </div>
-                  <Button
-                    className="h-8 rounded-full px-3 text-xs"
-                    onClick={handleCreateWorkspace}
-                    size="sm"
-                    type="button"
-                    variant="outline"
-                  >
-                    <PlusIcon className="size-3.5" />
-                    Add workspace
-                  </Button>
+                  {allowWorkspaceChange ? (
+                    <Button
+                      className="h-8 rounded-full px-3 text-xs"
+                      onClick={handleCreateWorkspace}
+                      size="sm"
+                      type="button"
+                      variant="outline"
+                    >
+                      <PlusIcon className="size-3.5" />
+                      Add workspace
+                    </Button>
+                  ) : null}
                 </div>
-                <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                  <Input
-                    className="h-9 rounded-full"
-                    onChange={(event) => setWorkspaceDraftName(event.target.value)}
-                    placeholder="Quick workspace name"
-                    value={workspaceDraftName}
-                  />
-                </div>
+                {allowWorkspaceChange ? (
+                  <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                    <Input
+                      className="h-9 rounded-full"
+                      onChange={(event) => setWorkspaceDraftName(event.target.value)}
+                      placeholder="Quick workspace name"
+                      value={workspaceDraftName}
+                    />
+                  </div>
+                ) : (
+                  <div className="mt-3 inline-flex items-center rounded-full border border-border/60 bg-muted/35 px-3 py-1.5 text-sm font-medium text-foreground">
+                    {workspace?.name ?? "Workspace"}
+                  </div>
+                )}
               </div>
 
               <div className="overflow-y-auto p-4">
                 <div className="space-y-5">
-                  <section className="space-y-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                        Workspaces
-                      </p>
-                      <span className="text-xs text-muted-foreground">
-                        {workspaces.length} total
-                      </span>
-                    </div>
-
-                    <div className="space-y-2">
-                      {visibleWorkspaces.map((item) => {
-                        const isActive = item.id === activeWorkspaceId
-                        return (
-                          <button
-                            className={cn(
-                              "flex w-full items-center gap-3 rounded-2xl border px-3 py-3 text-left transition-colors",
-                              isActive
-                                ? "border-border bg-muted/45"
-                                : "border-border/55 bg-background hover:bg-muted/30",
-                            )}
-                            key={item.id}
-                            onClick={() => onWorkspaceChange(item.id)}
-                            type="button"
-                          >
-                            <LauncherIcon
-                              className="text-muted-foreground"
-                              icon={DashboardSquare02Icon}
-                              size={16}
-                            />
-                            <div className="min-w-0 flex-1">
-                              <p className="truncate text-sm font-medium text-foreground">
-                                {item.name}
-                              </p>
-                              <p className="text-xs text-muted-foreground">
-                                {item.documentCount} docs
-                              </p>
-                            </div>
-                            {isActive ? (
-                              <CheckIcon className="size-4 shrink-0 text-foreground" />
-                            ) : null}
-                          </button>
-                        )
-                      })}
-                    </div>
-
-                    {overflowWorkspaces.length > 0 ? (
-                      <div className="rounded-2xl border border-border/55">
-                        <button
-                          className="flex w-full items-center justify-between px-3 py-3 text-left text-sm font-medium text-foreground"
-                          onClick={() => setShowMoreWorkspaces((current) => !current)}
-                          type="button"
-                        >
-                          <span>
-                            {showMoreWorkspaces ? "Hide" : "Show"}{" "}
-                            {overflowWorkspaces.length} more workspace
-                            {overflowWorkspaces.length === 1 ? "" : "s"}
+                  {allowWorkspaceChange ? (
+                    <>
+                      <section className="space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                            Workspaces
+                          </p>
+                          <span className="text-xs text-muted-foreground">
+                            {workspaces.length} total
                           </span>
-                          <ChevronDownIcon
-                            className={cn(
-                              "size-4 text-muted-foreground transition-transform",
-                              showMoreWorkspaces ? "rotate-180" : "",
-                            )}
-                          />
-                        </button>
-                        {showMoreWorkspaces ? (
-                          <div className="space-y-2 border-t border-border/55 px-3 pb-3 pt-2">
-                            {overflowWorkspaces.map((item) => {
-                              const isActive = item.id === activeWorkspaceId
-                              return (
-                                <button
-                                  className={cn(
-                                    "flex w-full items-center gap-3 rounded-2xl border px-3 py-3 text-left transition-colors",
-                                    isActive
-                                      ? "border-border bg-muted/45"
-                                      : "border-border/55 bg-background hover:bg-muted/30",
-                                  )}
-                                  key={item.id}
-                                  onClick={() => onWorkspaceChange(item.id)}
-                                  type="button"
-                                >
-                                  <LauncherIcon
-                                    className="text-muted-foreground"
-                                    icon={DashboardSquare02Icon}
-                                    size={16}
-                                  />
-                                  <div className="min-w-0 flex-1">
-                                    <p className="truncate text-sm font-medium text-foreground">
-                                      {item.name}
-                                    </p>
-                                    <p className="text-xs text-muted-foreground">
-                                      {item.documentCount} docs
-                                    </p>
-                                  </div>
-                                  {isActive ? (
-                                    <CheckIcon className="size-4 shrink-0 text-foreground" />
-                                  ) : null}
-                                </button>
-                              )
-                            })}
+                        </div>
+
+                        <div className="space-y-2">
+                          {visibleWorkspaces.map((item) => {
+                            const isActive = item.id === activeWorkspaceId
+                            return (
+                              <button
+                                className={cn(
+                                  "flex w-full items-center gap-3 rounded-2xl border px-3 py-3 text-left transition-colors",
+                                  isActive
+                                    ? "border-border bg-muted/45"
+                                    : "border-border/55 bg-background hover:bg-muted/30",
+                                )}
+                                key={item.id}
+                                onClick={() => onWorkspaceChange(item.id)}
+                                type="button"
+                              >
+                                <LauncherIcon
+                                  className="text-muted-foreground"
+                                  icon={DashboardSquare02Icon}
+                                  size={16}
+                                />
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate text-sm font-medium text-foreground">
+                                    {item.name}
+                                  </p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {item.documentCount} docs
+                                  </p>
+                                </div>
+                                {isActive ? (
+                                  <CheckIcon className="size-4 shrink-0 text-foreground" />
+                                ) : null}
+                              </button>
+                            )
+                          })}
+                        </div>
+
+                        {overflowWorkspaces.length > 0 ? (
+                          <div className="rounded-2xl border border-border/55">
+                            <button
+                              className="flex w-full items-center justify-between px-3 py-3 text-left text-sm font-medium text-foreground"
+                              onClick={() => setShowMoreWorkspaces((current) => !current)}
+                              type="button"
+                            >
+                              <span>
+                                {showMoreWorkspaces ? "Hide" : "Show"}{" "}
+                                {overflowWorkspaces.length} more workspace
+                                {overflowWorkspaces.length === 1 ? "" : "s"}
+                              </span>
+                              <ChevronDownIcon
+                                className={cn(
+                                  "size-4 text-muted-foreground transition-transform",
+                                  showMoreWorkspaces ? "rotate-180" : "",
+                                )}
+                              />
+                            </button>
+                            {showMoreWorkspaces ? (
+                              <div className="space-y-2 border-t border-border/55 px-3 pb-3 pt-2">
+                                {overflowWorkspaces.map((item) => {
+                                  const isActive = item.id === activeWorkspaceId
+                                  return (
+                                    <button
+                                      className={cn(
+                                        "flex w-full items-center gap-3 rounded-2xl border px-3 py-3 text-left transition-colors",
+                                        isActive
+                                          ? "border-border bg-muted/45"
+                                          : "border-border/55 bg-background hover:bg-muted/30",
+                                      )}
+                                      key={item.id}
+                                      onClick={() => onWorkspaceChange(item.id)}
+                                      type="button"
+                                    >
+                                      <LauncherIcon
+                                        className="text-muted-foreground"
+                                        icon={DashboardSquare02Icon}
+                                        size={16}
+                                      />
+                                      <div className="min-w-0 flex-1">
+                                        <p className="truncate text-sm font-medium text-foreground">
+                                          {item.name}
+                                        </p>
+                                        <p className="text-xs text-muted-foreground">
+                                          {item.documentCount} docs
+                                        </p>
+                                      </div>
+                                      {isActive ? (
+                                        <CheckIcon className="size-4 shrink-0 text-foreground" />
+                                      ) : null}
+                                    </button>
+                                  )
+                                })}
+                              </div>
+                            ) : null}
                           </div>
                         ) : null}
-                      </div>
-                    ) : null}
-                  </section>
+                      </section>
 
-                  <div className="h-px bg-border/60" />
+                      <div className="h-px bg-border/60" />
+                    </>
+                  ) : null}
 
                   <section className="space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -581,9 +660,15 @@ export function DashboardResearchLauncher({
                           Attached documents
                         </p>
                         <p className="mt-1 text-sm text-muted-foreground">
-                          {selectedDocumentIds.length > 0
-                            ? `${selectedDocumentIds.length} selected for this launch`
-                            : "No workspace docs selected. Research will use web sources only."}
+                          {mode === "chat"
+                            ? selectedDocumentIds.length > 0
+                              ? `${selectedDocumentIds.length} selected for this answer`
+                              : attachedDocuments.length > 0
+                                ? "No subset selected. Chat will search all workspace docs."
+                                : "No workspace docs are attached yet. Chat can only rely on completed research reports."
+                            : selectedDocumentIds.length > 0
+                              ? `${selectedDocumentIds.length} selected for this launch`
+                              : "No workspace docs selected. Research will use web sources only."}
                         </p>
                       </div>
                       {attachedDocuments.length > 0 ? (
@@ -693,9 +778,12 @@ export function DashboardResearchLauncher({
 
         <PromptInputSubmit
           aria-disabled={submitDisabled}
+          disabled={submitDisabled}
           className="ml-auto size-10 rounded-full bg-foreground text-background hover:bg-foreground/90 sm:ml-0"
+          onStop={onStop}
+          status={submitStatus}
         >
-          <LauncherIcon icon={ArrowRight01Icon} size={18} />
+          {!isStopState ? <LauncherIcon icon={ArrowRight01Icon} size={18} /> : null}
         </PromptInputSubmit>
       </PromptInputFooter>
     </PromptInput>

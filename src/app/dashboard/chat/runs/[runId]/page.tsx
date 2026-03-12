@@ -29,6 +29,7 @@ export default async function DeepResearchRunThreadPage({
   if (initialRun?.sessionId) {
     redirect(
       buildSessionThreadHref({
+        mode: "research",
         runId,
         sessionId: initialRun.sessionId,
       }),

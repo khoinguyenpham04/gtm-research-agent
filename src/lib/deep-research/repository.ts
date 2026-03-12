@@ -15,9 +15,12 @@ import type {
   SectionEvidenceLink,
   SectionValidation,
   SessionMessage,
+  SessionMessageMetadata,
   SessionMessageRecord,
   SessionNavigationWorkspaceGroup,
   SessionRecord,
+  SessionRole,
+  SessionMessageType,
   SessionSummary,
   SessionThreadResponse,
 } from "@/lib/deep-research/types";
@@ -151,8 +154,26 @@ interface SessionMessageRow {
   role: SessionMessageRecord["role"];
   message_type: SessionMessageRecord["message_type"];
   content_markdown: string;
-  metadata_json: Record<string, unknown> | null;
+  metadata_json: SessionMessageMetadata | null;
   created_at: string;
+}
+
+interface SessionCompletedReportRow {
+  id: string;
+  session_id: string | null;
+  topic: string;
+  final_report_markdown: string | null;
+  updated_at: string;
+  created_at: string;
+}
+
+export interface SessionCompletedReport {
+  runId: string;
+  sessionId: string;
+  topic: string;
+  finalReportMarkdown: string;
+  updatedAt: string;
+  createdAt: string;
 }
 
 type CreateDeepResearchRunRecordResult = {
@@ -469,6 +490,140 @@ async function touchSession(sessionId: string) {
   if (error) {
     throw new Error(error.message);
   }
+}
+
+export async function appendSessionMessage(input: {
+  sessionId: string;
+  role: SessionRole;
+  messageType: SessionMessageType;
+  contentMarkdown: string;
+  metadata?: SessionMessageMetadata;
+  createdAt?: string;
+  id?: string;
+}) {
+  const timestamp = input.createdAt ?? new Date().toISOString();
+  const messageId = input.id?.trim() || crypto.randomUUID();
+
+  await withPgTransaction(async (client) => {
+    const sessionResult = await client.query<SessionRow>(
+      `
+        select ${sessionSelect}
+        from public.sessions
+        where id = $1
+        for update
+      `,
+      [input.sessionId],
+    );
+
+    const session = sessionResult.rows[0];
+    if (!session) {
+      throw new Error("Session not found.");
+    }
+
+    if (session.archived_at) {
+      throw new Error("Archived sessions cannot accept new messages.");
+    }
+
+    await client.query(
+      `
+        insert into public.session_messages (
+          id,
+          session_id,
+          role,
+          message_type,
+          content_markdown,
+          metadata_json,
+          created_at
+        )
+        values ($1, $2, $3, $4, $5, $6::jsonb, $7)
+        on conflict (id) do update
+        set
+          content_markdown = excluded.content_markdown,
+          metadata_json = excluded.metadata_json
+      `,
+      [
+        messageId,
+        input.sessionId,
+        input.role,
+        input.messageType,
+        input.contentMarkdown,
+        JSON.stringify(input.metadata ?? {}),
+        timestamp,
+      ],
+    );
+
+    await client.query(
+      `
+        update public.sessions
+        set updated_at = $2
+        where id = $1
+      `,
+      [input.sessionId, timestamp],
+    );
+  });
+
+  return messageId;
+}
+
+export async function listRecentSessionChatMessages(
+  sessionId: string,
+  limit = 12,
+) {
+  const { supabaseAdmin } = createSupabaseClients();
+  const { data, error } = await supabaseAdmin
+    .from("session_messages")
+    .select("id, session_id, role, message_type, content_markdown, metadata_json, created_at")
+    .eq("session_id", sessionId)
+    .eq("message_type", "chat")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return ((data ?? []) as SessionMessageRow[])
+    .map(
+      (row) =>
+        ({
+          ...row,
+          metadata_json: row.metadata_json ?? {},
+        }) as SessionMessageRecord,
+    )
+    .reverse();
+}
+
+export async function listCompletedSessionReports(
+  sessionId: string,
+): Promise<SessionCompletedReport[]> {
+  const { supabaseAdmin } = createSupabaseClients();
+  const { data, error } = await supabaseAdmin
+    .from("deep_research_runs")
+    .select("id, session_id, topic, final_report_markdown, updated_at, created_at")
+    .eq("session_id", sessionId)
+    .eq("status", "completed")
+    .not("final_report_markdown", "is", null)
+    .order("updated_at", { ascending: false });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return ((data ?? []) as SessionCompletedReportRow[])
+    .filter(
+      (row): row is SessionCompletedReportRow & { session_id: string; final_report_markdown: string } =>
+        typeof row.session_id === "string" &&
+        typeof row.final_report_markdown === "string" &&
+        row.final_report_markdown.trim().length > 0,
+    )
+    .map((row) => ({
+      runId: row.id,
+      sessionId: row.session_id,
+      topic: row.topic,
+      finalReportMarkdown: row.final_report_markdown,
+      updatedAt: row.updated_at,
+      createdAt: row.created_at,
+    }));
 }
 
 export async function createDeepResearchRunRecord(

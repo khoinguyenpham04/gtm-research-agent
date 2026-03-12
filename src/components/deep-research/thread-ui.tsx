@@ -11,7 +11,13 @@ import {
   type RefObject,
   type ReactNode,
 } from "react"
-import { ChevronDownIcon, ChevronUpIcon } from "lucide-react"
+import {
+  CheckIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
+  CopyIcon,
+  FileDownIcon,
+} from "lucide-react"
 
 import type { DocumentSummary } from "@/lib/documents"
 import type {
@@ -623,17 +629,146 @@ export function DeepResearchFinalReport({
 }: {
   markdown?: string
 }) {
+  const reportRef = useRef<HTMLElement | null>(null)
+  const copyTimeoutRef = useRef<number>(0)
+  const [isCopied, setIsCopied] = useState(false)
+  const [isSavingPdf, setIsSavingPdf] = useState(false)
+
+  useEffect(
+    () => () => {
+      window.clearTimeout(copyTimeoutRef.current)
+    },
+    [],
+  )
+
+  const handleCopyMarkdown = async () => {
+    if (!markdown || typeof window === "undefined") {
+      return
+    }
+
+    if (!navigator?.clipboard?.writeText) {
+      return
+    }
+
+    try {
+      await navigator.clipboard.writeText(markdown)
+      setIsCopied(true)
+      window.clearTimeout(copyTimeoutRef.current)
+      copyTimeoutRef.current = window.setTimeout(() => {
+        setIsCopied(false)
+      }, 2000)
+    } catch {
+      // Silently ignore clipboard failures for now.
+    }
+  }
+
+  const handleDownloadPdf = async () => {
+    if (!markdown || typeof window === "undefined") {
+      return
+    }
+
+    const reportText = reportRef.current?.innerText?.trim() || markdown.trim()
+    if (!reportText) {
+      return
+    }
+
+    setIsSavingPdf(true)
+
+    try {
+      const { jsPDF } = await import("jspdf")
+      const document = new jsPDF({
+        format: "letter",
+        unit: "pt",
+      })
+
+      const pageWidth = document.internal.pageSize.getWidth()
+      const pageHeight = document.internal.pageSize.getHeight()
+      const margin = 48
+      const contentWidth = pageWidth - margin * 2
+      const lineHeight = 18
+      const paragraphSpacing = 10
+      let currentY = margin
+
+      document.setFont("helvetica", "bold")
+      document.setFontSize(18)
+      document.text("Deep Research Final Report", margin, currentY)
+      currentY += 28
+
+      document.setFont("helvetica", "normal")
+      document.setFontSize(11)
+
+      const paragraphs = reportText
+        .split(/\n{2,}/)
+        .map((paragraph) => paragraph.replace(/\n/g, " ").trim())
+        .filter(Boolean)
+
+      for (const paragraph of paragraphs) {
+        const lines = document.splitTextToSize(paragraph, contentWidth)
+
+        for (const line of lines) {
+          if (currentY > pageHeight - margin) {
+            document.addPage()
+            currentY = margin
+          }
+
+          document.text(line, margin, currentY)
+          currentY += lineHeight
+        }
+
+        currentY += paragraphSpacing
+      }
+
+      document.save("deep-research-final-report.pdf")
+    } finally {
+      setIsSavingPdf(false)
+    }
+  }
+
   return (
     <Card className={THREAD_SURFACE_CARD_CLASS}>
-      <CardHeader>
-        <CardTitle>Final report</CardTitle>
-        <CardDescription>
-          Key findings with cited sources and grounded uploaded documents.
-        </CardDescription>
+      <CardHeader className="gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="space-y-1">
+          <CardTitle>Final report</CardTitle>
+          <CardDescription>
+            Key findings with cited sources and grounded uploaded documents.
+          </CardDescription>
+        </div>
+        {markdown ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              className="rounded-full"
+              onClick={() => void handleCopyMarkdown()}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              {isCopied ? (
+                <CheckIcon className="size-4" />
+              ) : (
+                <CopyIcon className="size-4" />
+              )}
+              {isCopied ? "Copied" : "Copy markdown"}
+            </Button>
+            <Button
+              className="rounded-full"
+              disabled={isSavingPdf}
+              onClick={() => void handleDownloadPdf()}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              <FileDownIcon className="size-4" />
+              {isSavingPdf ? "Saving PDF..." : "Save PDF"}
+            </Button>
+          </div>
+        ) : null}
       </CardHeader>
       <CardContent>
         {markdown ? (
-          <article className="max-h-168 overflow-y-auto rounded-xl border border-zinc-200 bg-white px-5 py-5 sm:px-7">
+          <article
+            className="max-h-168 overflow-y-auto rounded-xl border border-zinc-200 bg-white px-5 py-5 sm:px-7"
+            ref={reportRef}
+          >
             <div className={REPORT_MARKDOWN_CLASS}>
               <ReactMarkdown
                 components={REPORT_MARKDOWN_COMPONENTS}

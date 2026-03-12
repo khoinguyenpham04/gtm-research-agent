@@ -37,6 +37,11 @@ function readPositiveInt(name: string, fallback: number) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function readTrimmedEnv(name: string, fallback: string) {
+  const value = process.env[name]?.trim();
+  return value || fallback;
+}
+
 export function getDeepResearchModelConfig(): DeepResearchModelConfig {
   return deepResearchModelConfigSchema.parse({
     summarizationModel:
@@ -126,6 +131,14 @@ export function getDatabaseConnectionString() {
     process.env.DATABASE_URL?.trim() ||
     undefined
   );
+}
+
+export function getWorkspaceChatModel() {
+  return readTrimmedEnv("WORKSPACE_CHAT_MODEL", "gpt-4.1-mini");
+}
+
+export function getWorkspaceChatMaxOutputTokens() {
+  return readPositiveInt("WORKSPACE_CHAT_MAX_OUTPUT_TOKENS", 900);
 }
 
 export function getDeepResearchRuntimeConfig(
