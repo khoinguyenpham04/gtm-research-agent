@@ -114,12 +114,10 @@ function HomeIcon({
 }
 
 function DashboardHomeContent({
-  globalDocumentCount,
   initialRecentRuns,
   initialWorkspace,
   initialWorkspaces,
 }: {
-  globalDocumentCount: number
   initialRecentRuns: DeepResearchRunSummary[]
   initialWorkspace: WorkspaceDetail | null
   initialWorkspaces: WorkspaceSummary[]
@@ -271,19 +269,24 @@ function DashboardHomeContent({
               </div>
             ) : null}
 
-            <div className="space-y-6 border-t border-border/60 pt-6 text-left">
-              <div className="grid gap-x-8 gap-y-5 sm:grid-cols-4">
+            <section className="rounded-[1.75rem] border border-border/60 bg-background/70 px-5 py-5 text-left shadow-[0_10px_30px_rgba(15,23,42,0.035)] sm:px-6 sm:py-6">
+              <div className="space-y-5">
+              <div className="space-y-2">
+                <p className="text-[0.68rem] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                  Workspace Snapshot
+                </p>
+                <h2 className="text-[1.55rem] font-semibold tracking-tight text-foreground">
+                  {workspace?.name ?? "No workspace selected"}
+                </h2>
+                <p className="text-[0.98rem] leading-7 text-muted-foreground">
+                  {loadingWorkspace ? "Loading workspace context…" : `${workspaceDocumentCount} attached docs · ${recentRuns.length} saved runs`}
+                </p>
+              </div>
+
+              <div className="grid gap-x-8 gap-y-4 sm:grid-cols-3">
                 <div className="space-y-1.5">
                   <p className="text-[0.68rem] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-                    Workspace
-                  </p>
-                  <p className="truncate text-[1rem] font-medium leading-6 text-foreground">
-                    {workspace?.name ?? "No workspace selected"}
-                  </p>
-                </div>
-                <div className="space-y-1.5">
-                  <p className="text-[0.68rem] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-                    Attached docs
+                    Attached Docs
                   </p>
                   <p className="text-[1.05rem] font-semibold tabular-nums text-foreground">
                     {loadingWorkspace ? "…" : workspaceDocumentCount}
@@ -291,7 +294,7 @@ function DashboardHomeContent({
                 </div>
                 <div className="space-y-1.5">
                   <p className="text-[0.68rem] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-                    Saved runs
+                    Saved Runs
                   </p>
                   <p className="text-[1.05rem] font-semibold tabular-nums text-foreground">
                     {recentRuns.length}
@@ -299,50 +302,59 @@ function DashboardHomeContent({
                 </div>
                 <div className="space-y-1.5">
                   <p className="text-[0.68rem] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-                    Global docs
+                    Latest Status
                   </p>
-                  <p className="text-[1.05rem] font-semibold tabular-nums text-foreground">
-                    {globalDocumentCount}
-                  </p>
+                  <div>
+                    <Badge variant={statusVariant(latestRun?.status)}>
+                      {latestRun?.status ?? "no runs"}
+                    </Badge>
+                  </div>
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-border/55 pt-4">
                 <Button asChild>
                   <Link href="/dashboard/deepresearch">Open Deep Research</Link>
                 </Button>
-                <Button asChild variant="ghost">
+                <Button asChild className="px-0 text-[0.98rem]" variant="link">
                   <Link href="/dashboard/recent">Recent Runs</Link>
                 </Button>
-                <Button asChild variant="ghost">
+                <Button asChild className="px-0 text-[0.98rem]" variant="link">
                   <Link href="/dashboard/data-library">Data Library</Link>
                 </Button>
               </div>
 
-              {latestRun ? (
-                <Link
-                  className="group flex items-start justify-between gap-4 rounded-2xl bg-muted/25 px-4 py-3 outline-none motion-safe:transition-colors motion-safe:duration-200 hover:bg-muted/35 focus-visible:ring-2 focus-visible:ring-ring/40"
-                  href="/dashboard/recent"
-                >
-                  <div className="min-w-0">
-                    <p className="text-[0.68rem] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-                      Latest output
-                    </p>
-                    <p className="mt-1 line-clamp-2 text-[0.98rem] leading-7 text-foreground">
-                      {latestRun.topic}
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <Badge variant={statusVariant(latestRun.status)}>
-                      {latestRun.status}
-                    </Badge>
-                    <div className="text-muted-foreground/70">
-                      <HomeIcon icon={ArrowRight01Icon} size={16} />
+              <div className="border-t border-border/55 pt-4">
+                {latestRun ? (
+                  <Link
+                    className="group flex items-start justify-between gap-4 rounded-2xl px-1 py-1 outline-none motion-safe:transition-colors motion-safe:duration-200 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
+                    href="/dashboard/recent"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-[0.68rem] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                        Latest Output
+                      </p>
+                      <p className="mt-1 line-clamp-2 text-[1rem] leading-7 text-foreground">
+                        {latestRun.topic}
+                      </p>
                     </div>
+                    <div className="flex shrink-0 items-center gap-2 pt-0.5">
+                      <Badge variant={statusVariant(latestRun.status)}>
+                        {latestRun.status}
+                      </Badge>
+                      <div className="text-muted-foreground/70 transition-colors group-hover:text-foreground">
+                        <HomeIcon icon={ArrowRight01Icon} size={16} />
+                      </div>
+                    </div>
+                  </Link>
+                ) : (
+                  <div className="text-[0.98rem] leading-7 text-muted-foreground">
+                    No saved runs yet.
                   </div>
-                </Link>
-              ) : null}
-            </div>
+                )}
+              </div>
+              </div>
+            </section>
           </div>
         </section>
 
@@ -391,7 +403,6 @@ function DashboardHomeContent({
 }
 
 export function DashboardHome(props: {
-  globalDocumentCount: number
   initialRecentRuns: DeepResearchRunSummary[]
   initialWorkspace: WorkspaceDetail | null
   initialWorkspaces: WorkspaceSummary[]

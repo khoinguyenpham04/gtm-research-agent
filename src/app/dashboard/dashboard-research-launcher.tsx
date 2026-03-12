@@ -96,7 +96,7 @@ export function DashboardResearchLauncher({
 
       <PromptInputFooter className="flex-col items-stretch gap-3 pt-3 sm:flex-row sm:items-center">
         <PromptInputTools className="w-full flex-wrap items-center gap-2 sm:w-auto">
-          <div className="inline-flex h-11 items-center gap-2 rounded-full bg-[#EAF1FF] px-4 text-sm font-medium text-[#246BFF]">
+          <div className="inline-flex h-9 items-center gap-2 rounded-full bg-[#EAF1FF] px-3 text-sm font-medium text-[#246BFF]">
             <LauncherIcon icon={Telescope01Icon} size={18} />
             <span>Deep Research</span>
           </div>
