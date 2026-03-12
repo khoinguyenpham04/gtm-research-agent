@@ -34,7 +34,7 @@ const data = {
   navMain: [
     {
       title: "Deep Research",
-      url: "/dashboard",
+      url: "/dashboard/deepresearch",
       icon: (
         <LayoutDashboardIcon
         />

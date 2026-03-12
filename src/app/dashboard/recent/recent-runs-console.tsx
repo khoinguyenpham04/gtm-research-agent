@@ -246,7 +246,7 @@ export function RecentRunsConsole({
 
             <div className="flex flex-wrap gap-3">
               <Button asChild variant="outline">
-                <Link href="/dashboard">
+                <Link href="/dashboard/deepresearch">
                   Open Deep Research
                   <ArrowRight className="size-4" />
                 </Link>
