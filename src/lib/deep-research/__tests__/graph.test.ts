@@ -4,14 +4,27 @@ import test from "node:test";
 import { AIMessage, HumanMessage } from "@langchain/core/messages";
 import { MemorySaver } from "@langchain/langgraph";
 
-import { createDeepResearchGraphs } from "@/lib/deep-research/graph";
+import {
+  buildDocumentAnchoredFacts,
+  buildSectionEvidencePacksFromArtifacts,
+  buildWebAnchoredFacts,
+  createDeepResearchGraphs,
+  getSourceTierRank,
+  recomputeCoverageBoard,
+  selectGapFillCategories,
+} from "@/lib/deep-research/graph";
 import type {
   DeepResearchModelFactory,
   DeepResearchModelRole,
 } from "@/lib/deep-research/openai-model-factory";
 import type {
+  AnchoredFact,
   DeepResearchBudgets,
   DeepResearchModelConfig,
+  EvidenceRow,
+  ReportPlan,
+  SectionEvidenceLink,
+  SectionSupport,
 } from "@/lib/deep-research/types";
 
 class FakeModelFactory implements DeepResearchModelFactory {
@@ -85,6 +98,8 @@ const budgets: DeepResearchBudgets = {
   maxConcurrentResearchUnits: 2,
   maxResearcherIterations: 3,
   maxReactToolCalls: 4,
+  maxTargetedWebGapFillAttemptsPerCategory: 1,
+  maxTargetedWebGapFillAttemptsPerRun: 3,
 };
 
 function buildCompleteRunStructuredOutputs(overrides?: {
@@ -299,6 +314,337 @@ function buildToolOutputs() {
   ];
 }
 
+test("section evidence packs prefer uploaded documents and keep gaps explicit", () => {
+  const reportPlan: ReportPlan = {
+    mode: "gtm",
+    sections: [
+      {
+        key: "market_opportunity",
+        title: "Market Opportunity",
+        objective: "Assess the market opportunity.",
+      },
+      {
+        key: "competition_and_pricing",
+        title: "Competition and Pricing",
+        objective: "Compare relevant competitors.",
+      },
+      {
+        key: "compliance_constraints",
+        title: "Compliance Constraints",
+        objective: "Describe relevant constraints.",
+      },
+    ],
+    fallbackRule: 'Write "insufficient evidence" when evidence is missing.',
+    plannerType: "adaptive",
+    reportPlanVersion: 1,
+  };
+  const sectionSupport: SectionSupport[] = [
+    {
+      key: "market_opportunity",
+      support: "strong",
+      reason: "Multiple validated rows support the market section.",
+      evidenceCount: 3,
+      topSourceTier: "selected_document",
+    },
+    {
+      key: "competition_and_pricing",
+      support: "weak",
+      reason: "Only partial competitor evidence is available.",
+      evidenceCount: 1,
+      topSourceTier: "vendor",
+    },
+    {
+      key: "compliance_constraints",
+      support: "missing",
+      reason: "No validated compliance evidence was linked.",
+      evidenceCount: 0,
+      topSourceTier: "unknown",
+    },
+  ];
+  const evidenceRows: EvidenceRow[] = [
+    {
+      id: "vendor-row",
+      claim: "A vendor pricing page lists a starting plan.",
+      claimType: "pricing_signal",
+      value: "GBP 25 per seat",
+      unit: "monthly",
+      sourceType: "web",
+      sourceTier: "vendor",
+      sourceTitle: "Vendor pricing",
+      sourceUrl: "https://example.com/vendor",
+      confidence: "medium",
+      allowedForFinal: true,
+      metadata: {},
+    },
+    {
+      id: "document-row",
+      claim: "The uploaded sales report shows growing demand for AI sales tools.",
+      claimType: "market_stat",
+      value: "Demand is rising",
+      sourceType: "uploaded_document",
+      sourceTier: "selected_document",
+      sourceTitle: "Selected report",
+      sourceUrl: "https://example.com/report",
+      documentId: "doc-1",
+      chunkIndex: 3,
+      confidence: "high",
+      allowedForFinal: true,
+      metadata: {},
+    },
+    {
+      id: "primary-row",
+      claim: "An official source reports growth in UK SMB digital adoption.",
+      claimType: "market_stat",
+      value: "Growth continued in 2025",
+      timeframe: "2025",
+      sourceType: "web",
+      sourceTier: "primary",
+      sourceTitle: "Official source",
+      sourceUrl: "https://example.com/official",
+      confidence: "high",
+      allowedForFinal: true,
+      metadata: {},
+    },
+  ];
+  const sectionEvidenceLinks: SectionEvidenceLink[] = [
+    {
+      sectionKey: "market_opportunity",
+      evidenceRowId: "vendor-row",
+      role: "supporting",
+    },
+    {
+      sectionKey: "market_opportunity",
+      evidenceRowId: "document-row",
+      role: "primary",
+    },
+    {
+      sectionKey: "market_opportunity",
+      evidenceRowId: "primary-row",
+      role: "supporting",
+    },
+    {
+      sectionKey: "competition_and_pricing",
+      evidenceRowId: "vendor-row",
+      role: "primary",
+    },
+  ];
+
+  const packs = buildSectionEvidencePacksFromArtifacts(
+    reportPlan,
+    sectionSupport,
+    evidenceRows,
+    sectionEvidenceLinks,
+  );
+
+  assert.equal(getSourceTierRank("selected_document"), 0);
+  assert.equal(getSourceTierRank("vendor"), 4);
+  assert.deepEqual(
+    packs[0].facts.map((fact) => fact.evidenceRowIds[0]),
+    ["document-row", "primary-row", "vendor-row"],
+  );
+  assert.equal(packs[0].facts[0].sourceType, "uploaded_document");
+  assert.equal(packs[0].facts[0].factOrigin, "validated_evidence");
+  assert.match(packs[0].facts[1].statement, /2025/);
+  assert.equal(packs[1].support, "weak");
+  assert.ok(packs[1].facts.length > 0);
+  assert.ok(packs[1].gaps.length > 0);
+  assert.equal(packs[2].support, "missing");
+  assert.equal(packs[2].facts.length, 0);
+  assert.ok(packs[2].gaps.length > 0);
+});
+
+test("deterministic anchored facts drive GTM coverage and bounded gap fill", () => {
+  const documentFacts = buildDocumentAnchoredFacts(
+    ["UK SMB AI meeting assistant adoption evidence"],
+    [
+      {
+        id: 1,
+        excerpt:
+          "UK SMB sales teams are increasing their use of AI assistants for call notes and follow-up workflows in 2025.",
+        similarity: 0.52,
+        documentId: "doc-1",
+        chunkIndex: 0,
+        fileName: "salesforce-state-of-sales-report-2026.pdf",
+        fileUrl: "https://example.com/doc-1.pdf",
+      },
+    ],
+  );
+  const webFacts = buildWebAnchoredFacts(
+    ["UK GDPR meeting recording transcription AI compliance"],
+    [
+      {
+        title: "UK GDPR guidance for AI systems",
+        url: "https://ico.org.uk/guidance",
+        excerpt:
+          "ICO guidance highlights transparency, lawful basis, and data minimisation for AI systems processing personal data.",
+        sourceTier: "primary",
+      },
+    ],
+  );
+
+  const coverage = recomputeCoverageBoard(
+    [...documentFacts, ...webFacts],
+    {
+      totalAttempts: 0,
+      attemptsByCategory: {
+        market_size_inputs: 0,
+        adoption: 0,
+        buyers: 0,
+        competitors_pricing: 0,
+        compliance: 0,
+        recommendations: 0,
+      },
+    },
+    budgets,
+  );
+
+  const adoption = coverage.find((entry) => entry.key === "adoption");
+  const compliance = coverage.find((entry) => entry.key === "compliance");
+  const marketSize = coverage.find((entry) => entry.key === "market_size_inputs");
+
+  assert.ok(documentFacts.length > 0);
+  assert.ok(webFacts.length > 0);
+  assert.equal(adoption?.status, "anchored");
+  assert.equal(compliance?.status, "anchored");
+  assert.equal(marketSize?.status, "missing");
+
+  const gapFillCategories = selectGapFillCategories(
+    coverage,
+    {
+      totalAttempts: 0,
+      attemptsByCategory: {
+        market_size_inputs: 0,
+        adoption: 0,
+        buyers: 0,
+        competitors_pricing: 0,
+        compliance: 0,
+        recommendations: 0,
+      },
+    },
+    budgets,
+  );
+
+  assert.deepEqual(gapFillCategories, [
+    "competitors_pricing",
+    "market_size_inputs",
+  ]);
+});
+
+test("anchored facts can prevent empty GTM section packs when validated evidence is sparse", () => {
+  const reportPlan: ReportPlan = {
+    mode: "gtm",
+    sections: [
+      {
+        key: "executive_summary",
+        title: "Executive Summary",
+        objective: "Summarize the GTM opportunity.",
+      },
+      {
+        key: "competition_and_pricing",
+        title: "Competition and Pricing",
+        objective: "Describe the competition and pricing signals.",
+      },
+      {
+        key: "compliance_constraints",
+        title: "Compliance Constraints",
+        objective: "Describe the compliance constraints.",
+      },
+    ],
+    fallbackRule: 'Write "insufficient evidence" when evidence is missing.',
+    plannerType: "adaptive",
+    reportPlanVersion: 1,
+  };
+
+  const anchoredFacts: AnchoredFact[] = [
+    {
+      id: "doc:doc-1:0",
+      statement: "The uploaded analyst report indicates that UK SMB sales teams are adopting AI note-taking tools.",
+      claimType: "market_stat",
+      sourceType: "uploaded_document",
+      sourceTier: "selected_document",
+      sourceTitle: "salesforce-state-of-sales-report-2026.pdf",
+      sourceUrl: "https://example.com/doc-1.pdf",
+      documentId: "doc-1",
+      chunkIndex: 0,
+      categoryKeys: ["adoption", "buyers"],
+      strength: "strong",
+    },
+    {
+      id: "web:https://example.com/pricing",
+      statement: "Fireflies.ai pricing pages list paid plans for collaborative note-taking and transcription.",
+      claimType: "pricing_signal",
+      sourceType: "web",
+      sourceTier: "vendor",
+      sourceTitle: "Fireflies pricing",
+      sourceUrl: "https://example.com/pricing",
+      categoryKeys: ["competitors_pricing"],
+      strength: "moderate",
+    },
+    {
+      id: "web:https://ico.org.uk/guidance",
+      statement: "ICO guidance highlights transparency and lawful basis requirements for AI systems processing meeting data.",
+      claimType: "compliance",
+      sourceType: "web",
+      sourceTier: "primary",
+      sourceTitle: "ICO guidance",
+      sourceUrl: "https://ico.org.uk/guidance",
+      categoryKeys: ["compliance"],
+      strength: "strong",
+    },
+  ];
+
+  const coverageBoard = recomputeCoverageBoard(
+    anchoredFacts,
+    {
+      totalAttempts: 1,
+      attemptsByCategory: {
+        market_size_inputs: 1,
+        adoption: 0,
+        buyers: 0,
+        competitors_pricing: 0,
+        compliance: 0,
+        recommendations: 0,
+      },
+    },
+    budgets,
+  );
+
+  const packs = buildSectionEvidencePacksFromArtifacts(
+    reportPlan,
+    [
+      {
+        key: "executive_summary",
+        support: "weak",
+        reason: "Validated evidence is sparse.",
+      },
+      {
+        key: "competition_and_pricing",
+        support: "missing",
+        reason: "No validated competitor evidence was linked.",
+      },
+      {
+        key: "compliance_constraints",
+        support: "missing",
+        reason: "No validated compliance evidence was linked.",
+      },
+    ],
+    [],
+    [],
+    {
+      anchoredFacts,
+      coverageBoard,
+    },
+  );
+
+  assert.ok(packs[0].facts.length > 0);
+  assert.ok(
+    packs[1].facts.some((fact) => fact.factOrigin === "anchored_fact"),
+  );
+  assert.ok(
+    packs[2].facts.some((fact) => fact.sourceTitle === "ICO guidance"),
+  );
+});
+
 test("deep research graph pauses for clarification", async () => {
   const fakeModels = new FakeModelFactory(
     [
@@ -447,10 +793,12 @@ test("deep research graph delegates to a researcher and returns a report", async
   );
   assert.match(finalPrompt, /"mode": "gtm"/);
   assert.match(finalPrompt, /"key": "competitors"/);
-  assert.match(finalPrompt, /Sourced Facts/);
-  assert.match(finalPrompt, /Assumptions/);
-  assert.match(finalPrompt, /Inferred Estimates/);
-  assert.match(finalPrompt, /low, base, and high scenarios/i);
+  assert.match(finalPrompt, /<SectionEvidencePacks>/);
+  assert.match(finalPrompt, /deduplicated set of sources/i);
+  assert.doesNotMatch(finalPrompt, /<Messages>/);
+  assert.doesNotMatch(finalPrompt, /<ValidatedEvidenceRows>/);
+  assert.doesNotMatch(finalPrompt, /<SectionEvidenceLinks>/);
+  assert.doesNotMatch(finalPrompt, /<SectionSupport>/);
 
   const supervisorPrompt = String(
     (
@@ -567,6 +915,8 @@ test("general research runs do not force GTM-only sections into the final prompt
 
   assert.match(finalPrompt, /"mode": "general"/);
   assert.doesNotMatch(finalPrompt, /"key": "tam_sam_som"|"key": "90_day_plan"|"key": "icp"/i);
+  assert.match(finalPrompt, /<SectionEvidencePacks>/);
+  assert.doesNotMatch(finalPrompt, /<Messages>/);
 });
 
 test('missing evidence leads the final writer prompt to require "insufficient evidence"', async () => {
@@ -653,5 +1003,6 @@ test('missing evidence leads the final writer prompt to require "insufficient ev
     )?.content ?? "",
   );
   assert.match(finalPrompt, /"support": "missing"/);
+  assert.match(finalPrompt, /"facts": \[\]/);
   assert.match(finalPrompt, /insufficient evidence/i);
 });

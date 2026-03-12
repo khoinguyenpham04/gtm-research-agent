@@ -297,11 +297,6 @@ export const finalReportGenerationPrompt = `Based on all the research conducted,
 {researchBrief}
 </Research Brief>
 
-For more context, here are the messages so far:
-<Messages>
-{messages}
-</Messages>
-
 Today's date is {date}.
 
 <PreResearchPlan>
@@ -312,36 +307,23 @@ Today's date is {date}.
 {reportPlan}
 </ReportPlan>
 
-<SectionSupport>
-{sectionSupport}
-</SectionSupport>
-
-<ValidatedEvidenceRows>
-{validatedEvidence}
-</ValidatedEvidenceRows>
-
-<SectionEvidenceLinks>
-{sectionEvidenceLinks}
-</SectionEvidenceLinks>
+<SectionEvidencePacks>
+{sectionEvidencePacks}
+</SectionEvidencePacks>
 
 Please create a detailed answer that:
 1. Uses proper Markdown headings
 2. Writes only the sections present in the report plan
-3. If a section is missing support, write "insufficient evidence" for that section instead of inventing content
-4. If a section is weakly supported, write cautiously and state the uncertainty
-5. Uses validated evidence rows for all factual claims
-6. For every important analytical section, separate the content into:
-   - Sourced Facts
-   - Assumptions
-   - Inferred Estimates
-7. Never present inferred estimates as direct sourced facts
-8. For GTM market sizing sections, do not output one fake-precise TAM, SAM, or SOM unless it is directly supported. Instead:
-   - produce low, base, and high scenarios
-   - list the assumptions driving each scenario
-   - mark which assumptions are weakly supported
-   - show the sourced inputs separately from the inferred scenario outputs
-9. References relevant sources using [Title](URL) format when URLs exist
-10. Includes a Sources section at the end
+3. Uses only the corresponding section evidence pack for each section
+4. If a section pack has no facts and support is "missing", write "insufficient evidence" for that section instead of inventing content
+5. If a section pack is weakly supported, write cautiously and reflect the listed gaps
+6. Treat facts in the section pack as the only sourced facts available to you
+7. Do not invent assumptions or inferred estimates unless they are explicitly present in the section pack
+8. Only render "Assumptions" or "Inferred Estimates" subsections when the section pack actually contains entries for them
+9. Do not use hidden context, prior messages, or memory as evidence
+10. References relevant sources using [Title](URL) format when URLs exist
+11. The final Sources section must be the deduplicated set of sources derived only from the facts included in the section evidence packs
+12. Do not reconstruct a broader source list from other state, prior messages, or unstated knowledge
 `;
 
 export const summarizeWebpagePrompt = `Summarize the following webpage content for research use.

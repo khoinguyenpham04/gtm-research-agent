@@ -9,9 +9,15 @@ import {
   summarizeWebpagePrompt,
 } from "@/lib/deep-research/prompts";
 import type {
+  DocumentSearchArtifact,
   DeepResearchModelConfig,
+  SearchToolEnvelope,
   SearchMatch,
   SummaryResult,
+  TavilySearchArtifact,
+} from "@/lib/deep-research/types";
+import {
+  searchToolEnvelopeSchema,
 } from "@/lib/deep-research/types";
 import type {
   DeepResearchModelFactory,
@@ -66,6 +72,9 @@ interface ResearchToolContext {
   ) => Promise<void>;
 }
 
+const SEARCH_TOOL_ENVELOPE_START = "<<<DEEP_RESEARCH_SEARCH_TOOL_RESULT_START>>>";
+const SEARCH_TOOL_ENVELOPE_END = "<<<DEEP_RESEARCH_SEARCH_TOOL_RESULT_END>>>";
+
 export interface SearchableDocumentChunk {
   id: number;
   content: string;
@@ -104,6 +113,85 @@ function parseEmbedding(embedding: unknown): number[] | null {
   }
 
   return null;
+}
+
+function normalizeExcerpt(content: string, maxLength = 420) {
+  const normalized = content.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, maxLength).trim()}...`;
+}
+
+function inferSourceTierFromUrl(url: string, title?: string) {
+  const normalized = `${url} ${title ?? ""}`.toLowerCase();
+
+  if (
+    normalized.includes(".gov") ||
+    normalized.includes("gov.uk") ||
+    normalized.includes("ico.org.uk") ||
+    normalized.includes("ons.gov.uk") ||
+    normalized.includes("fca")
+  ) {
+    return "primary" as const;
+  }
+
+  if (
+    normalized.includes("gartner") ||
+    normalized.includes("forrester") ||
+    normalized.includes("mckinsey") ||
+    normalized.includes("statista")
+  ) {
+    return "analyst" as const;
+  }
+
+  if (
+    normalized.includes("reuters") ||
+    normalized.includes("computerweekly") ||
+    normalized.includes("ft.com") ||
+    normalized.includes("techcrunch")
+  ) {
+    return "trade_press" as const;
+  }
+
+  if (
+    normalized.includes("salesforce") ||
+    normalized.includes("hubspot") ||
+    normalized.includes("otter.ai") ||
+    normalized.includes("fireflies.ai") ||
+    normalized.includes("avoma") ||
+    normalized.includes("microsoft")
+  ) {
+    return "vendor" as const;
+  }
+
+  if (normalized.includes("blog")) {
+    return "blog" as const;
+  }
+
+  return "unknown" as const;
+}
+
+function encodeSearchToolEnvelope(envelope: SearchToolEnvelope) {
+  return `${envelope.renderedText}\n\n${SEARCH_TOOL_ENVELOPE_START}\n${JSON.stringify(envelope)}\n${SEARCH_TOOL_ENVELOPE_END}`;
+}
+
+export function parseSearchToolEnvelope(raw: string): SearchToolEnvelope | null {
+  const startIndex = raw.lastIndexOf(SEARCH_TOOL_ENVELOPE_START);
+  const endIndex = raw.lastIndexOf(SEARCH_TOOL_ENVELOPE_END);
+  if (startIndex === -1 || endIndex === -1 || endIndex <= startIndex) {
+    return null;
+  }
+
+  const payload = raw
+    .slice(startIndex + SEARCH_TOOL_ENVELOPE_START.length, endIndex)
+    .trim();
+  try {
+    return searchToolEnvelopeSchema.parse(JSON.parse(payload));
+  } catch {
+    return null;
+  }
 }
 
 function cosineSimilarity(left: number[], right: number[]) {
@@ -355,7 +443,11 @@ async function searchTavily(
   matchCount = 5,
 ) {
   if (!context.tavilyApiKey) {
-    return "Tavily search is unavailable because TAVILY_API_KEY is not configured.";
+    return {
+      renderedText:
+        "Tavily search is unavailable because TAVILY_API_KEY is not configured.",
+      results: [] satisfies TavilySearchArtifact["results"],
+    };
   }
 
   const searchResponses = await Promise.all(
@@ -364,7 +456,14 @@ async function searchTavily(
     ),
   );
 
-  const uniqueResults = new Map<string, { title: string; content: string }>();
+  const uniqueResults = new Map<
+    string,
+    {
+      title: string;
+      content: string;
+      sourceTier: TavilySearchArtifact["results"][number]["sourceTier"];
+    }
+  >();
   for (const response of searchResponses) {
     for (const result of response.results) {
       if (!result.url || uniqueResults.has(result.url)) {
@@ -382,11 +481,27 @@ async function searchTavily(
       uniqueResults.set(result.url, {
         title: result.title,
         content: summary,
+        sourceTier: inferSourceTierFromUrl(result.url, result.title),
       });
     }
   }
 
-  return formatTavilyResults(uniqueResults);
+  return {
+    renderedText: formatTavilyResults(
+      new Map(
+        Array.from(uniqueResults.entries()).map(([url, result]) => [
+          url,
+          { title: result.title, content: result.content },
+        ]),
+      ),
+    ),
+    results: Array.from(uniqueResults.entries()).map(([url, result]) => ({
+      title: result.title,
+      url,
+      excerpt: normalizeExcerpt(result.content),
+      sourceTier: result.sourceTier,
+    })),
+  };
 }
 
 export function createSupervisorTools() {
@@ -474,7 +589,39 @@ export function createResearcherTools(context: ResearchToolContext) {
         },
       );
 
-      return formatDocumentSearchResults(matches);
+      const renderedText = formatDocumentSearchResults(matches);
+      const artifact: DocumentSearchArtifact = {
+        queries,
+        matches: matches.map((match) => ({
+          id: Number(match.id),
+          excerpt: normalizeExcerpt(match.content),
+          similarity: Number(match.similarity ?? 0),
+          documentId:
+            typeof match.metadata.document_id === "string"
+              ? match.metadata.document_id
+              : undefined,
+          chunkIndex:
+            typeof match.metadata.chunk_index === "number"
+              ? match.metadata.chunk_index
+              : Number.isFinite(Number(match.metadata.chunk_index))
+                ? Number(match.metadata.chunk_index)
+                : undefined,
+          fileName:
+            typeof match.metadata.file_name === "string"
+              ? match.metadata.file_name
+              : undefined,
+          fileUrl:
+            typeof match.metadata.file_url === "string"
+              ? match.metadata.file_url
+              : undefined,
+        })),
+      };
+
+      return encodeSearchToolEnvelope({
+        toolName: "selectedDocumentsSearch",
+        renderedText,
+        artifact,
+      });
     },
     {
       name: "selectedDocumentsSearch",
@@ -504,7 +651,14 @@ export function createResearcherTools(context: ResearchToolContext) {
         { queries },
       );
 
-      return result;
+      return encodeSearchToolEnvelope({
+        toolName: "tavilySearch",
+        renderedText: result.renderedText,
+        artifact: {
+          queries,
+          results: result.results,
+        },
+      });
     },
     {
       name: "tavilySearch",

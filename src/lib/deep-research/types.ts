@@ -169,11 +169,167 @@ export const sectionEvidenceLinkSchema = z.object({
 
 export type SectionEvidenceLink = z.infer<typeof sectionEvidenceLinkSchema>;
 
+export const sectionPackFactOriginValues = [
+  "validated_evidence",
+  "anchored_fact",
+] as const;
+export type SectionPackFactOrigin =
+  (typeof sectionPackFactOriginValues)[number];
+export const sectionPackFactOriginSchema = z.enum(sectionPackFactOriginValues);
+
+export const sectionPackFactSchema = z.object({
+  statement: z.string().trim().min(1),
+  factOrigin: sectionPackFactOriginSchema,
+  evidenceRowIds: z.array(z.string().trim().min(1)).default([]),
+  anchoredFactIds: z.array(z.string().trim().min(1)).default([]),
+  sourceTier: sourceTierSchema,
+  sourceType: evidenceSourceTypeSchema,
+  sourceTitle: z.string().trim().optional(),
+  sourceUrl: z.string().trim().url().optional(),
+  documentId: z.string().trim().optional(),
+  chunkIndex: z.number().int().nonnegative().optional(),
+});
+
+export type SectionPackFact = z.infer<typeof sectionPackFactSchema>;
+
+export const sectionEvidencePackSchema = z.object({
+  sectionKey: z.string().trim().min(1),
+  title: z.string().trim().min(1),
+  support: sectionSupportSchema,
+  facts: z.array(sectionPackFactSchema),
+  assumptions: z.array(z.string().trim().min(1)).default([]),
+  estimates: z.array(z.string().trim().min(1)).default([]),
+  gaps: z.array(z.string().trim().min(1)).default([]),
+});
+
+export type SectionEvidencePack = z.infer<typeof sectionEvidencePackSchema>;
+
 export const evidenceExtractionSchema = z.object({
   rows: z.array(candidateEvidenceRowSchema).max(30),
 });
 
 export type EvidenceExtractionResult = z.infer<typeof evidenceExtractionSchema>;
+
+export const gtmCoverageCategoryValues = [
+  "market_size_inputs",
+  "adoption",
+  "buyers",
+  "competitors_pricing",
+  "compliance",
+  "recommendations",
+] as const;
+export type GtmCoverageCategoryKey =
+  (typeof gtmCoverageCategoryValues)[number];
+export const gtmCoverageCategorySchema = z.enum(gtmCoverageCategoryValues);
+
+export const coverageStatusValues = [
+  "missing",
+  "partial",
+  "anchored",
+  "exhausted",
+] as const;
+export type CoverageStatus = (typeof coverageStatusValues)[number];
+export const coverageStatusSchema = z.enum(coverageStatusValues);
+
+export const anchoredFactStrengthValues = [
+  "weak",
+  "moderate",
+  "strong",
+] as const;
+export type AnchoredFactStrength = (typeof anchoredFactStrengthValues)[number];
+export const anchoredFactStrengthSchema = z.enum(anchoredFactStrengthValues);
+
+export const coverageBoardEntrySchema = z.object({
+  key: gtmCoverageCategorySchema,
+  status: coverageStatusSchema,
+  documentHits: z.number().int().nonnegative(),
+  webHits: z.number().int().nonnegative(),
+  sourceTiersSeen: z.array(sourceTierSchema),
+  notes: z.array(z.string().trim().min(1)).default([]),
+  gapFillAttempts: z.number().int().nonnegative(),
+});
+
+export type CoverageBoardEntry = z.infer<typeof coverageBoardEntrySchema>;
+
+export const gapFillStatsSchema = z.object({
+  totalAttempts: z.number().int().nonnegative(),
+  attemptsByCategory: z.object({
+    market_size_inputs: z.number().int().nonnegative(),
+    adoption: z.number().int().nonnegative(),
+    buyers: z.number().int().nonnegative(),
+    competitors_pricing: z.number().int().nonnegative(),
+    compliance: z.number().int().nonnegative(),
+    recommendations: z.number().int().nonnegative(),
+  }),
+});
+
+export type GapFillStats = z.infer<typeof gapFillStatsSchema>;
+
+export const anchoredFactSchema = z.object({
+  id: z.string().trim().min(1),
+  statement: z.string().trim().min(1),
+  claimType: evidenceClaimTypeSchema,
+  sourceType: evidenceSourceTypeSchema,
+  sourceTier: sourceTierSchema,
+  sourceTitle: z.string().trim().optional(),
+  sourceUrl: z.string().trim().url().optional(),
+  documentId: z.string().trim().optional(),
+  chunkIndex: z.number().int().nonnegative().optional(),
+  categoryKeys: z.array(gtmCoverageCategorySchema).default([]),
+  numericValue: z.number().optional(),
+  unit: z.string().trim().optional(),
+  timeframe: z.string().trim().optional(),
+  entity: z.string().trim().optional(),
+  strength: anchoredFactStrengthSchema,
+});
+
+export type AnchoredFact = z.infer<typeof anchoredFactSchema>;
+
+export const documentSearchArtifactSchema = z.object({
+  queries: z.array(z.string().trim().min(1)).min(1),
+  matches: z.array(
+    z.object({
+      id: z.number().int(),
+      excerpt: z.string().trim().min(1),
+      similarity: z.number(),
+      documentId: z.string().trim().optional(),
+      chunkIndex: z.number().int().nonnegative().optional(),
+      fileName: z.string().trim().optional(),
+      fileUrl: z.string().trim().url().optional(),
+    }),
+  ),
+});
+
+export type DocumentSearchArtifact = z.infer<typeof documentSearchArtifactSchema>;
+
+export const tavilySearchArtifactSchema = z.object({
+  queries: z.array(z.string().trim().min(1)).min(1),
+  results: z.array(
+    z.object({
+      title: z.string().trim().min(1),
+      url: z.string().trim().url(),
+      excerpt: z.string().trim().min(1),
+      sourceTier: sourceTierSchema,
+    }),
+  ),
+});
+
+export type TavilySearchArtifact = z.infer<typeof tavilySearchArtifactSchema>;
+
+export const searchToolEnvelopeSchema = z.discriminatedUnion("toolName", [
+  z.object({
+    toolName: z.literal("selectedDocumentsSearch"),
+    renderedText: z.string(),
+    artifact: documentSearchArtifactSchema,
+  }),
+  z.object({
+    toolName: z.literal("tavilySearch"),
+    renderedText: z.string(),
+    artifact: tavilySearchArtifactSchema,
+  }),
+]);
+
+export type SearchToolEnvelope = z.infer<typeof searchToolEnvelopeSchema>;
 
 export const evidenceConflictResolutionSchema = z.object({
   resolutions: z
@@ -222,6 +378,8 @@ export const deepResearchBudgetsSchema = z.object({
   maxConcurrentResearchUnits: z.number().int().positive(),
   maxResearcherIterations: z.number().int().positive(),
   maxReactToolCalls: z.number().int().positive(),
+  maxTargetedWebGapFillAttemptsPerCategory: z.number().int().positive(),
+  maxTargetedWebGapFillAttemptsPerRun: z.number().int().positive(),
 });
 
 export type DeepResearchBudgets = z.infer<typeof deepResearchBudgetsSchema>;

@@ -23,6 +23,8 @@ const defaultBudgets: DeepResearchBudgets = {
   maxConcurrentResearchUnits: 1,
   maxResearcherIterations: 3,
   maxReactToolCalls: 4,
+  maxTargetedWebGapFillAttemptsPerCategory: 1,
+  maxTargetedWebGapFillAttemptsPerRun: 3,
 };
 
 function readPositiveInt(name: string, fallback: number) {
@@ -93,6 +95,14 @@ export function getDeepResearchBudgets(): DeepResearchBudgets {
     maxReactToolCalls: readPositiveInt(
       "DEEP_RESEARCH_MAX_REACT_TOOL_CALLS",
       defaultBudgets.maxReactToolCalls,
+    ),
+    maxTargetedWebGapFillAttemptsPerCategory: readPositiveInt(
+      "DEEP_RESEARCH_MAX_TARGETED_WEB_GAP_FILL_ATTEMPTS_PER_CATEGORY",
+      defaultBudgets.maxTargetedWebGapFillAttemptsPerCategory,
+    ),
+    maxTargetedWebGapFillAttemptsPerRun: readPositiveInt(
+      "DEEP_RESEARCH_MAX_TARGETED_WEB_GAP_FILL_ATTEMPTS_PER_RUN",
+      defaultBudgets.maxTargetedWebGapFillAttemptsPerRun,
     ),
   });
 }

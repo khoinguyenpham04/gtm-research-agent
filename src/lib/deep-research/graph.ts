@@ -33,11 +33,16 @@ import {
 import {
   createResearcherTools,
   createSupervisorTools,
+  parseSearchToolEnvelope,
 } from "@/lib/deep-research/tools";
 import type {
+  AnchoredFact,
   CandidateEvidenceRow,
   ClarificationInterrupt,
   ClarifyWithUserResult,
+  CoverageBoardEntry,
+  GapFillStats,
+  GtmCoverageCategoryKey,
   DeepResearchBudgets,
   DeepResearchModelConfig,
   EvidenceConflictResolutionResult,
@@ -48,15 +53,20 @@ import type {
   PreResearchPlan,
   ReportPlan,
   ResearchQuestionResult,
+  SectionEvidencePack,
   SectionEvidenceLink,
+  SectionPackFact,
   SectionSupport,
   SectionSupportResult,
 } from "@/lib/deep-research/types";
 import {
+  anchoredFactSchema,
   clarifyWithUserSchema,
+  coverageBoardEntrySchema,
   evidenceConflictResolutionSchema,
   evidenceExtractionSchema,
   evidenceValidationSchema,
+  gapFillStatsSchema,
   preResearchPlanSchema,
   reportPlanSchema,
   researchQuestionSchema,
@@ -139,10 +149,13 @@ const DeepResearchState = Annotation.Root({
     reducer: (_current, update) => update,
     default: () => undefined,
   }),
+  coverageBoard: createReplaceListAnnotation<CoverageBoardEntry>(),
+  anchoredFacts: createReplaceListAnnotation<AnchoredFact>(),
   sectionSupport: createReplaceListAnnotation<SectionSupport>(),
   evidenceRows: createReplaceListAnnotation<EvidenceRow>(),
   evidenceResolutions: createReplaceListAnnotation<EvidenceResolution>(),
   sectionEvidenceLinks: createReplaceListAnnotation<SectionEvidenceLink>(),
+  sectionEvidencePacks: createReplaceListAnnotation<SectionEvidencePack>(),
   finalReportMarkdown: Annotation<string>({
     reducer: (_current, update) => update,
     default: () => "",
@@ -181,6 +194,8 @@ const SupervisorState = Annotation.Root({
     reducer: (_current, update) => update,
     default: () => undefined,
   }),
+  coverageBoard: createReplaceListAnnotation<CoverageBoardEntry>(),
+  anchoredFacts: createReplaceListAnnotation<AnchoredFact>(),
   notes: stringList,
   rawNotes: stringList,
   researchIterations: Annotation<number>({
@@ -220,6 +235,27 @@ const ResearcherState = Annotation.Root({
   reportPlan: Annotation<ReportPlan | undefined>({
     reducer: (_current, update) => update,
     default: () => undefined,
+  }),
+  coverageBoard: createReplaceListAnnotation<CoverageBoardEntry>(),
+  anchoredFacts: createReplaceListAnnotation<AnchoredFact>(),
+  gapFillStats: Annotation<GapFillStats>({
+    reducer: (_current, update) => update,
+    default: () =>
+      gapFillStatsSchema.parse({
+        totalAttempts: 0,
+        attemptsByCategory: {
+          market_size_inputs: 0,
+          adoption: 0,
+          buyers: 0,
+          competitors_pricing: 0,
+          compliance: 0,
+          recommendations: 0,
+        },
+      }),
+  }),
+  pendingGapFillCategories: Annotation<GtmCoverageCategoryKey[]>({
+    reducer: (_current, update) => update,
+    default: () => [],
   }),
   compressedResearch: Annotation<string>({
     reducer: (_current, update) => update,
@@ -378,6 +414,977 @@ function extractSourceTier(content: string): SectionSupport["topSourceTier"] {
   }
 
   return "unknown";
+}
+
+const SOURCE_TIER_RANK: Record<
+  NonNullable<SectionSupport["topSourceTier"]>,
+  number
+> = {
+  selected_document: 0,
+  primary: 1,
+  analyst: 2,
+  trade_press: 3,
+  vendor: 4,
+  blog: 5,
+  unknown: 6,
+};
+
+export function getSourceTierRank(
+  sourceTier: SectionSupport["topSourceTier"] | undefined,
+) {
+  return SOURCE_TIER_RANK[sourceTier ?? "unknown"];
+}
+
+export function isUploadedDocument(
+  row: Pick<AnchoredFact | EvidenceRow, "sourceType" | "documentId">,
+) {
+  return row.sourceType === "uploaded_document" || Boolean(row.documentId);
+}
+
+const GTM_COVERAGE_CATEGORIES: GtmCoverageCategoryKey[] = [
+  "market_size_inputs",
+  "adoption",
+  "buyers",
+  "competitors_pricing",
+  "compliance",
+  "recommendations",
+];
+
+const GAP_FILL_ELIGIBLE_GTM_CATEGORIES: GtmCoverageCategoryKey[] =
+  GTM_COVERAGE_CATEGORIES.filter((category) => category !== "recommendations");
+
+const ANCHORED_FACT_STRENGTH_RANK: Record<AnchoredFact["strength"], number> = {
+  weak: 0,
+  moderate: 1,
+  strong: 2,
+};
+
+const GTM_CATEGORY_KEYWORDS: Record<GtmCoverageCategoryKey, string[]> = {
+  market_size_inputs: [
+    "tam",
+    "sam",
+    "som",
+    "market size",
+    "market sizing",
+    "market opportunity",
+    "business population",
+    "size band",
+    "smb count",
+    "number of businesses",
+  ],
+  adoption: [
+    "adoption",
+    "uptake",
+    "usage",
+    "demand",
+    "buyer intent",
+    "readiness",
+    "ai adoption",
+  ],
+  buyers: [
+    "buyer",
+    "buyers",
+    "segment",
+    "segments",
+    "icp",
+    "persona",
+    "customer profile",
+    "sales leader",
+    "revops",
+    "pain point",
+    "pain points",
+  ],
+  competitors_pricing: [
+    "competitor",
+    "competitors",
+    "pricing",
+    "price",
+    "cost",
+    "vendor",
+    "alternative",
+    "feature",
+    "positioning",
+    "otter",
+    "fireflies",
+    "avoma",
+    "fathom",
+    "copilot",
+  ],
+  compliance: [
+    "gdpr",
+    "data protection",
+    "privacy",
+    "compliance",
+    "regulation",
+    "regulatory",
+    "ico",
+    "lawful basis",
+    "consent",
+    "dpa",
+    "recording",
+    "dpa 2018",
+    "dpia",
+  ],
+  recommendations: [
+    "recommendation",
+    "recommendations",
+    "go-to-market",
+    "go to market",
+    "gtm",
+    "channel",
+    "launch",
+    "pilot",
+    "next step",
+    "strategy",
+  ],
+};
+
+function isGtmMode(mode: string | undefined) {
+  return mode === "gtm";
+}
+
+function createInitialGapFillStats(): GapFillStats {
+  return gapFillStatsSchema.parse({
+    totalAttempts: 0,
+    attemptsByCategory: {
+      market_size_inputs: 0,
+      adoption: 0,
+      buyers: 0,
+      competitors_pricing: 0,
+      compliance: 0,
+      recommendations: 0,
+    },
+  });
+}
+
+export function createInitialCoverageBoard(): CoverageBoardEntry[] {
+  return GTM_COVERAGE_CATEGORIES.map((key) =>
+    coverageBoardEntrySchema.parse({
+      key,
+      status: "missing",
+      documentHits: 0,
+      webHits: 0,
+      sourceTiersSeen: [],
+      notes: [],
+      gapFillAttempts: 0,
+    }),
+  );
+}
+
+function normalizeWhitespace(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function extractFirstSentence(text: string, maxLength = 240) {
+  const normalized = normalizeWhitespace(text);
+  if (!normalized) {
+    return "";
+  }
+
+  const firstSentence = normalized.split(/(?<=[.!?])\s+/)[0] ?? normalized;
+  const trimmed = firstSentence.trim();
+  if (trimmed.length <= maxLength) {
+    return trimmed;
+  }
+
+  return `${trimmed.slice(0, maxLength).trim()}...`;
+}
+
+function parseNumericValue(text: string) {
+  const match = text.match(/(?:£|\$|€)?\s?(\d+(?:\.\d+)?)(?:\s?(%|percent|million|billion|m|bn|k))?/i);
+  if (!match) {
+    return {};
+  }
+
+  return {
+    numericValue: Number(match[1]),
+    unit: match[2]?.toLowerCase(),
+  };
+}
+
+function parseTimeframe(text: string) {
+  const match = text.match(/\b(20\d{2}|19\d{2})\b/);
+  return match?.[1];
+}
+
+function inferCategoriesFromText(input: string) {
+  const normalized = input.toLowerCase();
+  const categories = GTM_COVERAGE_CATEGORIES.filter((category) =>
+    GTM_CATEGORY_KEYWORDS[category].some((keyword) =>
+      normalized.includes(keyword),
+    ),
+  );
+
+  if (categories.length > 0) {
+    return categories;
+  }
+
+  if (normalized.includes("sales") || normalized.includes("meeting")) {
+    return ["buyers", "adoption"];
+  }
+
+  return [];
+}
+
+function inferClaimTypeFromCategories(
+  categoryKeys: GtmCoverageCategoryKey[],
+  text: string,
+): AnchoredFact["claimType"] {
+  if (categoryKeys.includes("compliance")) {
+    return "compliance";
+  }
+  if (categoryKeys.includes("competitors_pricing")) {
+    return /\b(price|pricing|cost|plan|seat)\b/i.test(text)
+      ? "pricing_signal"
+      : "competitor_fact";
+  }
+  if (categoryKeys.includes("recommendations")) {
+    return "recommendation";
+  }
+  if (
+    categoryKeys.includes("market_size_inputs") ||
+    categoryKeys.includes("adoption")
+  ) {
+    return "market_stat";
+  }
+  if (/\brisk|constraint|blocker\b/i.test(text)) {
+    return "risk";
+  }
+
+  return "qualitative_insight";
+}
+
+function inferAnchoredFactStrength(
+  sourceTier: AnchoredFact["sourceTier"],
+  similarity?: number,
+): AnchoredFact["strength"] {
+  if (typeof similarity === "number") {
+    if (similarity >= 0.4) {
+      return "strong";
+    }
+    if (similarity >= 0.2) {
+      return "moderate";
+    }
+    return "weak";
+  }
+
+  if (sourceTier === "selected_document" || sourceTier === "primary") {
+    return "strong";
+  }
+  if (sourceTier === "analyst" || sourceTier === "trade_press") {
+    return "moderate";
+  }
+
+  return "weak";
+}
+
+function mergeCategoryKeys(
+  current: GtmCoverageCategoryKey[],
+  incoming: GtmCoverageCategoryKey[],
+) {
+  return [...new Set([...current, ...incoming])];
+}
+
+function mergeAnchoredFacts(
+  existingFacts: AnchoredFact[],
+  incomingFacts: AnchoredFact[],
+) {
+  const merged = new Map(existingFacts.map((fact) => [fact.id, fact]));
+
+  incomingFacts.forEach((fact) => {
+    const existing = merged.get(fact.id);
+    if (!existing) {
+      merged.set(fact.id, fact);
+      return;
+    }
+
+    const keepIncoming =
+      ANCHORED_FACT_STRENGTH_RANK[fact.strength] >
+      ANCHORED_FACT_STRENGTH_RANK[existing.strength];
+
+    merged.set(fact.id, {
+      ...(keepIncoming ? existing : fact),
+      ...(keepIncoming ? fact : existing),
+      categoryKeys: mergeCategoryKeys(existing.categoryKeys, fact.categoryKeys),
+      strength:
+        ANCHORED_FACT_STRENGTH_RANK[fact.strength] >=
+        ANCHORED_FACT_STRENGTH_RANK[existing.strength]
+          ? fact.strength
+          : existing.strength,
+      sourceTitle: existing.sourceTitle ?? fact.sourceTitle,
+      sourceUrl: existing.sourceUrl ?? fact.sourceUrl,
+      documentId: existing.documentId ?? fact.documentId,
+      chunkIndex: existing.chunkIndex ?? fact.chunkIndex,
+      statement:
+        keepIncoming && fact.statement.length >= existing.statement.length
+          ? fact.statement
+          : existing.statement,
+      numericValue: existing.numericValue ?? fact.numericValue,
+      unit: existing.unit ?? fact.unit,
+      timeframe: existing.timeframe ?? fact.timeframe,
+      entity: existing.entity ?? fact.entity,
+    });
+  });
+
+  return Array.from(merged.values());
+}
+
+export function buildDocumentAnchoredFacts(
+  queries: string[],
+  matches: Array<{
+    id: number;
+    excerpt: string;
+    similarity: number;
+    documentId?: string;
+    chunkIndex?: number;
+    fileName?: string;
+    fileUrl?: string;
+  }>,
+): AnchoredFact[] {
+  return matches
+    .map((match) => {
+      const statement = extractFirstSentence(match.excerpt);
+      if (!statement) {
+        return null;
+      }
+
+      const categoryKeys = mergeCategoryKeys(
+        inferCategoriesFromText(queries.join(" ")),
+        inferCategoriesFromText(
+          [statement, match.fileName].filter(Boolean).join(" "),
+        ),
+      );
+      const key =
+        match.documentId && typeof match.chunkIndex === "number"
+          ? `doc:${match.documentId}:${match.chunkIndex}`
+          : `doc:unknown:${match.id}`;
+      const numeric = parseNumericValue(statement);
+
+      return anchoredFactSchema.parse({
+        id: key,
+        statement,
+        claimType: inferClaimTypeFromCategories(
+          categoryKeys.length > 0 ? categoryKeys : ["buyers"],
+          statement,
+        ),
+        sourceType: "uploaded_document",
+        sourceTier: "selected_document",
+        sourceTitle: match.fileName,
+        sourceUrl: match.fileUrl,
+        documentId: match.documentId,
+        chunkIndex: match.chunkIndex,
+        categoryKeys,
+        ...numeric,
+        timeframe: parseTimeframe(statement),
+        entity: match.fileName,
+        strength: inferAnchoredFactStrength(
+          "selected_document",
+          match.similarity,
+        ),
+      });
+    })
+    .filter((fact): fact is AnchoredFact => Boolean(fact));
+}
+
+export function buildWebAnchoredFacts(
+  queries: string[],
+  results: Array<{
+    title: string;
+    url: string;
+    excerpt: string;
+    sourceTier: AnchoredFact["sourceTier"];
+  }>,
+): AnchoredFact[] {
+  return results
+    .map((result) => {
+      const statement = extractFirstSentence(
+        [result.title, result.excerpt].filter(Boolean).join(": "),
+      );
+      if (!statement) {
+        return null;
+      }
+
+      const categoryKeys = mergeCategoryKeys(
+        inferCategoriesFromText(queries.join(" ")),
+        inferCategoriesFromText(
+          [result.title, result.excerpt].filter(Boolean).join(" "),
+        ),
+      );
+      const numeric = parseNumericValue(statement);
+
+      return anchoredFactSchema.parse({
+        id: `web:${result.url}`,
+        statement,
+        claimType: inferClaimTypeFromCategories(
+          categoryKeys.length > 0 ? categoryKeys : ["adoption"],
+          statement,
+        ),
+        sourceType: "web",
+        sourceTier: result.sourceTier,
+        sourceTitle: result.title,
+        sourceUrl: result.url,
+        categoryKeys,
+        ...numeric,
+        timeframe: parseTimeframe(statement),
+        entity: result.title,
+        strength: inferAnchoredFactStrength(result.sourceTier),
+      });
+    })
+    .filter((fact): fact is AnchoredFact => Boolean(fact));
+}
+
+export function recomputeCoverageBoard(
+  anchoredFacts: AnchoredFact[],
+  gapFillStats: GapFillStats,
+  budgets: DeepResearchBudgets,
+  pendingGapFillCategories: GtmCoverageCategoryKey[] = [],
+): CoverageBoardEntry[] {
+  const nonRecommendationFacts = anchoredFacts.filter(
+    (fact) => !fact.categoryKeys.includes("recommendations"),
+  );
+
+  return GTM_COVERAGE_CATEGORIES.map((key) => {
+    const matchingFacts = anchoredFacts.filter((fact) =>
+      fact.categoryKeys.includes(key),
+    );
+    const documentHits = matchingFacts.filter((fact) =>
+      isUploadedDocument(fact),
+    ).length;
+    const webHits = matchingFacts.length - documentHits;
+    const sourceTiersSeen = [...new Set(matchingFacts.map((fact) => fact.sourceTier))]
+      .sort((left, right) => getSourceTierRank(left) - getSourceTierRank(right));
+    const notes: string[] = [];
+    const gapFillAttempts = gapFillStats.attemptsByCategory[key];
+    const hasHighQuality = matchingFacts.some(
+      (fact) =>
+        fact.sourceTier === "selected_document" ||
+        fact.sourceTier === "primary",
+    );
+    const isPending = pendingGapFillCategories.includes(key);
+    let status: CoverageBoardEntry["status"] = "missing";
+
+    if (key === "recommendations") {
+      if (matchingFacts.length > 0) {
+        status = "anchored";
+      } else if (nonRecommendationFacts.length > 0) {
+        status = "partial";
+        notes.push(
+          "Recommendations are currently derived indirectly from other covered categories.",
+        );
+      } else {
+        status = "missing";
+      }
+    } else if (
+      matchingFacts.length >= 2 ||
+      (matchingFacts.length >= 1 && hasHighQuality)
+    ) {
+      status = "anchored";
+    } else if (matchingFacts.length >= 1) {
+      status = "partial";
+      notes.push("Only limited evidence has been gathered for this category.");
+    } else if (
+      !isPending &&
+      gapFillAttempts >= budgets.maxTargetedWebGapFillAttemptsPerCategory
+    ) {
+      status = "exhausted";
+      notes.push(
+        "A targeted web gap-fill attempt was already used for this category without finding enough evidence.",
+      );
+    } else {
+      status = "missing";
+    }
+
+    if (isPending) {
+      notes.push("A targeted web gap-fill attempt is in progress for this category.");
+    }
+
+    return coverageBoardEntrySchema.parse({
+      key,
+      status,
+      documentHits,
+      webHits,
+      sourceTiersSeen,
+      notes,
+      gapFillAttempts,
+    });
+  });
+}
+
+function createCoverageBoardSnapshot(board: CoverageBoardEntry[]) {
+  return board.map((entry) => ({
+    key: entry.key,
+    status: entry.status,
+    documentHits: entry.documentHits,
+    webHits: entry.webHits,
+    gapFillAttempts: entry.gapFillAttempts,
+  }));
+}
+
+export function selectGapFillCategories(
+  coverageBoard: CoverageBoardEntry[],
+  gapFillStats: GapFillStats,
+  budgets: DeepResearchBudgets,
+) {
+  const remainingRunBudget =
+    budgets.maxTargetedWebGapFillAttemptsPerRun - gapFillStats.totalAttempts;
+  if (remainingRunBudget <= 0) {
+    return [] as GtmCoverageCategoryKey[];
+  }
+
+  const categories = coverageBoard
+    .filter((entry) => GAP_FILL_ELIGIBLE_GTM_CATEGORIES.includes(entry.key))
+    .filter(
+      (entry) =>
+        (entry.status === "missing" || entry.status === "partial") &&
+        entry.gapFillAttempts < budgets.maxTargetedWebGapFillAttemptsPerCategory,
+    )
+    .sort((left, right) => {
+      if (left.status !== right.status) {
+        return left.status === "missing" ? -1 : 1;
+      }
+      return left.key.localeCompare(right.key);
+    })
+    .slice(0, remainingRunBudget)
+    .map((entry) => entry.key);
+
+  return categories;
+}
+
+function incrementGapFillStats(
+  current: GapFillStats,
+  categories: GtmCoverageCategoryKey[],
+) {
+  const next: GapFillStats = {
+    totalAttempts: current.totalAttempts,
+    attemptsByCategory: {
+      ...current.attemptsByCategory,
+    },
+  };
+
+  categories.forEach((category) => {
+    next.attemptsByCategory[category] += 1;
+    next.totalAttempts += 1;
+  });
+
+  return gapFillStatsSchema.parse(next);
+}
+
+function buildGapFillQueries(
+  topic: string,
+  categories: GtmCoverageCategoryKey[],
+) {
+  const normalizedTopic = normalizeWhitespace(topic);
+  const queries = categories.flatMap((category) => {
+    switch (category) {
+      case "market_size_inputs":
+        return [
+          `${normalizedTopic} UK SMB market size inputs business population sales teams`,
+        ];
+      case "adoption":
+        return [
+          `${normalizedTopic} UK adoption demand AI meeting assistant SMB sales teams`,
+        ];
+      case "buyers":
+        return [
+          `${normalizedTopic} UK SMB sales teams buyer segments personas pain points`,
+        ];
+      case "competitors_pricing":
+        return [
+          `${normalizedTopic} UK AI meeting assistant competitors pricing SMB sales`,
+        ];
+      case "compliance":
+        return [
+          `${normalizedTopic} UK GDPR meeting recording transcription AI compliance`,
+        ];
+      case "recommendations":
+        return [];
+      default:
+        return [];
+    }
+  });
+
+  return [...new Set(queries)];
+}
+
+function buildGapFillControlMessage(
+  topic: string,
+  categories: GtmCoverageCategoryKey[],
+) {
+  const queries = buildGapFillQueries(topic, categories);
+  return new HumanMessage({
+    content: [
+      "Coverage is still incomplete for this GTM research task.",
+      `Missing or weak categories: ${categories.join(", ")}.`,
+      "Run one targeted tavilySearch next using the following focused queries before calling ResearchComplete again:",
+      ...queries.map((query, index) => `${index + 1}. ${query}`),
+      "After the Tavily search, record a reflection with thinkTool and only then decide whether research is complete.",
+    ].join("\n"),
+  });
+}
+
+function shouldLogCoverageUpdate(
+  previous: CoverageBoardEntry[],
+  next: CoverageBoardEntry[],
+) {
+  return (
+    JSON.stringify(createCoverageBoardSnapshot(previous)) !==
+    JSON.stringify(createCoverageBoardSnapshot(next))
+  );
+}
+
+function summarizeAnchoredFacts(anchoredFacts: AnchoredFact[]) {
+  const bySourceType = anchoredFacts.reduce<Record<string, number>>(
+    (accumulator, fact) => {
+      accumulator[fact.sourceType] = (accumulator[fact.sourceType] ?? 0) + 1;
+      return accumulator;
+    },
+    {},
+  );
+
+  const byCategory = GTM_COVERAGE_CATEGORIES.reduce<Record<string, number>>(
+    (accumulator, category) => {
+      accumulator[category] = anchoredFacts.filter((fact) =>
+        fact.categoryKeys.includes(category),
+      ).length;
+      return accumulator;
+    },
+    {},
+  );
+
+  return {
+    total: anchoredFacts.length,
+    bySourceType,
+    byCategory,
+  };
+}
+
+function includesNormalizedValue(base: string, value: string) {
+  return base.toLowerCase().includes(value.toLowerCase());
+}
+
+function buildFactStatement(row: EvidenceRow) {
+  const details: string[] = [];
+  const valueWithUnit = row.unit ? `${row.value} ${row.unit}`.trim() : row.value;
+
+  if (valueWithUnit && !includesNormalizedValue(row.claim, valueWithUnit)) {
+    details.push(valueWithUnit);
+  }
+
+  if (row.entity && !includesNormalizedValue(row.claim, row.entity)) {
+    details.push(`Entity: ${row.entity}`);
+  }
+
+  if (row.timeframe && !includesNormalizedValue(row.claim, row.timeframe)) {
+    details.push(`Timeframe: ${row.timeframe}`);
+  }
+
+  return details.length > 0
+    ? `${row.claim} (${details.join("; ")})`
+    : row.claim;
+}
+
+function buildSectionPackFact(row: EvidenceRow): SectionPackFact {
+  return {
+    statement: buildFactStatement(row),
+    factOrigin: "validated_evidence",
+    evidenceRowIds: [row.id],
+    anchoredFactIds: [],
+    sourceTier: row.sourceTier,
+    sourceType: row.sourceType,
+    sourceTitle: row.sourceTitle,
+    sourceUrl: row.sourceUrl,
+    documentId: row.documentId,
+    chunkIndex: row.chunkIndex,
+  };
+}
+
+function buildAnchoredFactStatement(fact: AnchoredFact) {
+  const details: string[] = [];
+  const valueWithUnit =
+    typeof fact.numericValue === "number"
+      ? fact.unit
+        ? `${fact.numericValue} ${fact.unit}`.trim()
+        : String(fact.numericValue)
+      : undefined;
+
+  if (valueWithUnit && !includesNormalizedValue(fact.statement, valueWithUnit)) {
+    details.push(valueWithUnit);
+  }
+
+  if (fact.timeframe && !includesNormalizedValue(fact.statement, fact.timeframe)) {
+    details.push(`Timeframe: ${fact.timeframe}`);
+  }
+
+  if (fact.entity && !includesNormalizedValue(fact.statement, fact.entity)) {
+    details.push(`Entity: ${fact.entity}`);
+  }
+
+  return details.length > 0
+    ? `${fact.statement} (${details.join("; ")})`
+    : fact.statement;
+}
+
+function buildSectionPackFactFromAnchoredFact(
+  fact: AnchoredFact,
+): SectionPackFact {
+  return {
+    statement: buildAnchoredFactStatement(fact),
+    factOrigin: "anchored_fact",
+    evidenceRowIds: [],
+    anchoredFactIds: [fact.id],
+    sourceTier: fact.sourceTier,
+    sourceType: fact.sourceType,
+    sourceTitle: fact.sourceTitle,
+    sourceUrl: fact.sourceUrl,
+    documentId: fact.documentId,
+    chunkIndex: fact.chunkIndex,
+  };
+}
+
+function createDefaultSectionGap(sectionKey: string) {
+  return `No validated evidence was linked to the "${sectionKey}" section.`;
+}
+
+function getAnchoredFactsForSection(
+  sectionKey: string,
+  reportMode: ReportPlan["mode"],
+  anchoredFacts: AnchoredFact[],
+) {
+  if (anchoredFacts.length === 0) {
+    return [] as AnchoredFact[];
+  }
+
+  const categories: GtmCoverageCategoryKey[] =
+    reportMode === "gtm"
+      ? sectionKey === "executive_summary"
+        ? GTM_COVERAGE_CATEGORIES
+        : sectionKey === "market_sizing_scenarios" || sectionKey === "market_opportunity"
+          ? ["market_size_inputs"]
+          : sectionKey === "buyers_and_adoption"
+            ? ["adoption", "buyers"]
+            : sectionKey === "competition_and_pricing" || sectionKey === "competitors"
+              ? ["competitors_pricing"]
+              : sectionKey === "compliance_constraints"
+                ? ["compliance"]
+                : sectionKey === "recommendations"
+                  ? ["recommendations"]
+                  : []
+      : sectionKey === "summary" || sectionKey === "key_findings"
+        ? GTM_COVERAGE_CATEGORIES
+        : [];
+
+  const rankedFacts = anchoredFacts
+    .filter((fact) =>
+      categories.length === 0
+        ? false
+        : fact.categoryKeys.some((category) => categories.includes(category)),
+    )
+    .sort((left, right) => {
+      const tierDelta =
+        getSourceTierRank(left.sourceTier) - getSourceTierRank(right.sourceTier);
+      if (tierDelta !== 0) {
+        return tierDelta;
+      }
+
+      const uploadedDelta =
+        Number(isUploadedDocument(right)) - Number(isUploadedDocument(left));
+      if (uploadedDelta !== 0) {
+        return uploadedDelta;
+      }
+
+      const strengthDelta =
+        ANCHORED_FACT_STRENGTH_RANK[right.strength] -
+        ANCHORED_FACT_STRENGTH_RANK[left.strength];
+      if (strengthDelta !== 0) {
+        return strengthDelta;
+      }
+
+      return left.id.localeCompare(right.id);
+    });
+
+  if (sectionKey === "recommendations" && rankedFacts.length === 0) {
+    return anchoredFacts
+      .filter((fact) =>
+        fact.categoryKeys.some((category) =>
+          [
+            "market_size_inputs",
+            "adoption",
+            "buyers",
+            "competitors_pricing",
+            "compliance",
+          ].includes(category),
+        ),
+      )
+      .slice(0, 2);
+  }
+
+  return rankedFacts;
+}
+
+export function buildSectionEvidencePacksFromArtifacts(
+  reportPlan: ReportPlan,
+  sectionSupport: SectionSupport[],
+  evidenceRows: EvidenceRow[],
+  sectionEvidenceLinks: SectionEvidenceLink[],
+  options?: {
+    anchoredFacts?: AnchoredFact[];
+    coverageBoard?: CoverageBoardEntry[];
+  },
+): SectionEvidencePack[] {
+  const normalizedSupport = normalizeSectionSupport(reportPlan, sectionSupport);
+  const supportByKey = new Map(
+    normalizedSupport.map((section) => [section.key, section]),
+  );
+  const allowedRowById = new Map(
+    evidenceRows
+      .filter((row) => row.allowedForFinal)
+      .map((row) => [row.id, row]),
+  );
+  const firstLinkIndexBySectionAndRow = new Map<string, number>();
+
+  sectionEvidenceLinks.forEach((link, index) => {
+    const key = `${link.sectionKey}::${link.evidenceRowId}`;
+    if (!firstLinkIndexBySectionAndRow.has(key)) {
+      firstLinkIndexBySectionAndRow.set(key, index);
+    }
+  });
+
+  return reportPlan.sections.map((section) => {
+    const support = supportByKey.get(section.key) ?? {
+      key: section.key,
+      support: "missing" as const,
+      reason: "No support assessment was generated for this section.",
+    };
+
+    const candidateRows = sectionEvidenceLinks
+      .filter((link) => link.sectionKey === section.key)
+      .map((link) => ({
+        row: allowedRowById.get(link.evidenceRowId),
+        originalIndex:
+          firstLinkIndexBySectionAndRow.get(
+            `${link.sectionKey}::${link.evidenceRowId}`,
+          ) ?? Number.MAX_SAFE_INTEGER,
+      }))
+      .filter(
+        (
+          item,
+        ): item is {
+          row: EvidenceRow;
+          originalIndex: number;
+        } => Boolean(item.row),
+      );
+
+    const dedupedRows = new Map<
+      string,
+      {
+        row: EvidenceRow;
+        originalIndex: number;
+      }
+    >();
+
+    candidateRows.forEach((item) => {
+      if (!dedupedRows.has(item.row.id)) {
+        dedupedRows.set(item.row.id, item);
+      }
+    });
+
+    const rankedRows = [...dedupedRows.values()]
+      .sort((left, right) => {
+        const tierDelta =
+          getSourceTierRank(left.row.sourceTier) -
+          getSourceTierRank(right.row.sourceTier);
+        if (tierDelta !== 0) {
+          return tierDelta;
+        }
+
+        const uploadedDelta =
+          Number(isUploadedDocument(right.row)) -
+          Number(isUploadedDocument(left.row));
+        if (uploadedDelta !== 0) {
+          return uploadedDelta;
+        }
+
+        if (left.originalIndex !== right.originalIndex) {
+          return left.originalIndex - right.originalIndex;
+        }
+
+        return left.row.id.localeCompare(right.row.id);
+      })
+      .slice(0, 5)
+      .map((item) => item.row);
+
+    const validatedFacts = rankedRows.map(buildSectionPackFact);
+    const gaps: string[] = [];
+    if (support.support === "missing") {
+      gaps.push(support.reason ?? createDefaultSectionGap(section.key));
+    } else if (support.support === "weak") {
+      gaps.push(
+        support.reason ??
+          `The "${section.title}" section is only weakly supported by validated evidence.`,
+      );
+      gaps.push(
+        "Write this section cautiously and avoid turning partial evidence into firm conclusions.",
+      );
+    }
+
+    let facts = validatedFacts;
+    const shouldSupplementWithAnchoredFacts =
+      (validatedFacts.length === 0 ||
+        (validatedFacts.length < 2 && support.support !== "strong")) &&
+      (options?.anchoredFacts?.length ?? 0) > 0;
+
+    if (shouldSupplementWithAnchoredFacts) {
+      const existingAnchoredIds = new Set(
+        validatedFacts.flatMap((fact) => fact.anchoredFactIds),
+      );
+      const anchoredFacts = getAnchoredFactsForSection(
+        section.key,
+        reportPlan.mode,
+        options?.anchoredFacts ?? [],
+      )
+        .filter((fact) => !existingAnchoredIds.has(fact.id))
+        .slice(0, Math.max(0, 5 - validatedFacts.length))
+        .map(buildSectionPackFactFromAnchoredFact);
+
+      facts = [...validatedFacts, ...anchoredFacts];
+
+      if (validatedFacts.length === 0 && anchoredFacts.length > 0) {
+        gaps.push(
+          "This section is grounded by deterministic anchored facts because validated evidence rows were sparse.",
+        );
+      }
+    }
+
+    if (
+      section.key === "recommendations" &&
+      facts.length === 0 &&
+      (options?.coverageBoard?.length ?? 0) > 0
+    ) {
+      const weakCategories = (options?.coverageBoard ?? [])
+        .filter(
+          (entry) =>
+            entry.key !== "recommendations" && entry.status !== "anchored",
+        )
+        .map((entry) => entry.key);
+      if (weakCategories.length > 0) {
+        gaps.push(
+          `Recommendation quality is limited because these GTM categories remain weak or incomplete: ${weakCategories.join(
+            ", ",
+          )}.`,
+        );
+      }
+    }
+
+    return {
+      sectionKey: section.key,
+      title: section.title,
+      support: support.support,
+      facts,
+      assumptions: [],
+      estimates: [],
+      gaps: [...new Set(gaps)],
+    };
+  });
 }
 
 function tokenizeForMatching(input: string) {
@@ -1421,6 +2428,8 @@ export function createDeepResearchGraphs(dependencies: GraphDependencies) {
 
     const toolMessages: ToolMessage[] = [];
     const rawNotes: string[] = [];
+    let mergedAnchoredFacts = state.anchoredFacts;
+    let mergedCoverageBoard = state.coverageBoard;
 
     for (const toolCall of toolCalls.filter(
       (call) => call.name === "thinkTool",
@@ -1466,6 +2475,8 @@ export function createDeepResearchGraphs(dependencies: GraphDependencies) {
             researchTopic: topic,
             preResearchPlan: state.preResearchPlan,
             reportPlan: state.reportPlan,
+            coverageBoard: state.coverageBoard,
+            anchoredFacts: state.anchoredFacts,
             researcherMessages: [
               new HumanMessage({
                 content: buildResearchTaskInstruction(
@@ -1476,6 +2487,8 @@ export function createDeepResearchGraphs(dependencies: GraphDependencies) {
               }),
             ],
             toolCallIterations: 0,
+            gapFillStats: createInitialGapFillStats(),
+            pendingGapFillCategories: [],
           });
         }),
       );
@@ -1497,6 +2510,13 @@ export function createDeepResearchGraphs(dependencies: GraphDependencies) {
         );
 
         rawNotes.push(...(result.rawNotes ?? []));
+        mergedAnchoredFacts = mergeAnchoredFacts(
+          mergedAnchoredFacts,
+          result.anchoredFacts ?? [],
+        );
+        if ((result.coverageBoard?.length ?? 0) > 0) {
+          mergedCoverageBoard = result.coverageBoard ?? mergedCoverageBoard;
+        }
       });
 
       overflowCalls.forEach((toolCall) => {
@@ -1523,11 +2543,38 @@ export function createDeepResearchGraphs(dependencies: GraphDependencies) {
       update: {
         supervisorMessages: toolMessages,
         rawNotes,
+        anchoredFacts: mergedAnchoredFacts,
+        coverageBoard: mergedCoverageBoard,
       },
     });
   };
 
   const researcher = async (state: ResearcherStateType) => {
+    const isGtmResearch = isGtmMode(
+      state.preResearchPlan?.mode ?? state.reportPlan?.mode,
+    );
+    let coverageBoard = state.coverageBoard;
+    let gapFillStats = state.gapFillStats;
+
+    if (isGtmResearch && coverageBoard.length === 0) {
+      coverageBoard = createInitialCoverageBoard();
+      gapFillStats =
+        state.gapFillStats && state.gapFillStats.totalAttempts >= 0
+          ? state.gapFillStats
+          : createInitialGapFillStats();
+
+      await logEvent(
+        state.runId,
+        "researching",
+        "coverage_initialized",
+        "Initialized GTM coverage tracking for the researcher.",
+        {
+          coverage: createCoverageBoardSnapshot(coverageBoard),
+          gapFillStats,
+        },
+      );
+    }
+
     const { tools } = createResearcherTools({
       runId: state.runId,
       selectedDocumentIds: state.selectedDocumentIds,
@@ -1554,6 +2601,8 @@ export function createDeepResearchGraphs(dependencies: GraphDependencies) {
       update: {
         researcherMessages: [response],
         toolCallIterations: state.toolCallIterations + 1,
+        coverageBoard,
+        gapFillStats,
       },
     });
   };
@@ -1596,14 +2645,112 @@ export function createDeepResearchGraphs(dependencies: GraphDependencies) {
       }),
     );
 
+    const isGtmResearch = isGtmMode(
+      state.preResearchPlan?.mode ?? state.reportPlan?.mode,
+    );
+    let nextAnchoredFacts = state.anchoredFacts;
+    let nextCoverageBoard =
+      state.coverageBoard.length > 0
+        ? state.coverageBoard
+        : isGtmResearch
+          ? createInitialCoverageBoard()
+          : state.coverageBoard;
+    let nextGapFillStats = state.gapFillStats;
+    let nextPendingGapFillCategories = state.pendingGapFillCategories;
+    const completedGapFillCategories =
+      state.pendingGapFillCategories.length > 0 &&
+      toolCalls.some((toolCall) => toolCall.name === "tavilySearch")
+        ? state.pendingGapFillCategories
+        : [];
+    const newlyBuiltAnchoredFacts: AnchoredFact[] = [];
+
     const toolMessages = observations.map((observation, index) => {
       const toolCall = toolCalls[index];
+      const observationText =
+        typeof observation === "string"
+          ? observation
+          : stringifyContent(observation);
+      const envelope = parseSearchToolEnvelope(observationText);
+
+      if (envelope?.toolName === "selectedDocumentsSearch") {
+        newlyBuiltAnchoredFacts.push(
+          ...buildDocumentAnchoredFacts(
+            envelope.artifact.queries,
+            envelope.artifact.matches,
+          ),
+        );
+      } else if (envelope?.toolName === "tavilySearch") {
+        newlyBuiltAnchoredFacts.push(
+          ...buildWebAnchoredFacts(
+            envelope.artifact.queries,
+            envelope.artifact.results,
+          ),
+        );
+      }
+
       return new ToolMessage({
-        content: observation,
+        content: envelope?.renderedText ?? observationText,
         tool_call_id: toolCall.id ?? crypto.randomUUID(),
         name: toolCall.name,
       });
     });
+
+    if (newlyBuiltAnchoredFacts.length > 0) {
+      nextAnchoredFacts = mergeAnchoredFacts(
+        state.anchoredFacts,
+        newlyBuiltAnchoredFacts,
+      );
+
+      await logEvent(
+        state.runId,
+        "researching",
+        "anchored_facts_built",
+        "Built deterministic anchored facts from search results.",
+        summarizeAnchoredFacts(newlyBuiltAnchoredFacts),
+      );
+    }
+
+    if (isGtmResearch) {
+      if (completedGapFillCategories.length > 0) {
+        nextPendingGapFillCategories = [];
+      }
+
+      const recomputedCoverageBoard = recomputeCoverageBoard(
+        nextAnchoredFacts,
+        nextGapFillStats,
+        state.budgets,
+        nextPendingGapFillCategories,
+      );
+
+      if (completedGapFillCategories.length > 0) {
+        await logEvent(
+          state.runId,
+          "searching",
+          "gap_fill_completed",
+          "Completed targeted web gap fill for uncovered GTM categories.",
+          {
+            categories: completedGapFillCategories,
+            coverage: createCoverageBoardSnapshot(recomputedCoverageBoard),
+            gapFillStats: nextGapFillStats,
+          },
+        );
+      }
+
+      if (shouldLogCoverageUpdate(nextCoverageBoard, recomputedCoverageBoard)) {
+        await logEvent(
+          state.runId,
+          "researching",
+          "coverage_updated",
+          "Updated GTM coverage tracking from the latest research results.",
+          {
+            coverage: createCoverageBoardSnapshot(recomputedCoverageBoard),
+            gapFillStats: nextGapFillStats,
+          },
+        );
+      }
+
+      nextCoverageBoard = recomputedCoverageBoard;
+    }
 
     const researchCompleteCalled = toolCalls.some(
       (toolCall) => toolCall.name === "ResearchComplete",
@@ -1611,11 +2758,70 @@ export function createDeepResearchGraphs(dependencies: GraphDependencies) {
     const exceededIterations =
       state.toolCallIterations >= state.budgets.maxReactToolCalls;
 
+    if (
+      researchCompleteCalled &&
+      isGtmResearch &&
+      nextAnchoredFacts.length > 0
+    ) {
+      const categoriesToGapFill = selectGapFillCategories(
+        nextCoverageBoard,
+        nextGapFillStats,
+        state.budgets,
+      );
+
+      if (categoriesToGapFill.length > 0) {
+        const nextTopic = state.researchTopic || "the active GTM topic";
+        const queries = buildGapFillQueries(nextTopic, categoriesToGapFill);
+        nextGapFillStats = incrementGapFillStats(
+          nextGapFillStats,
+          categoriesToGapFill,
+        );
+        nextPendingGapFillCategories = categoriesToGapFill;
+        nextCoverageBoard = recomputeCoverageBoard(
+          nextAnchoredFacts,
+          nextGapFillStats,
+          state.budgets,
+          nextPendingGapFillCategories,
+        );
+
+        await logEvent(
+          state.runId,
+          "searching",
+          "gap_fill_started",
+          "Targeted web gap fill was scheduled before allowing research completion.",
+          {
+            categories: categoriesToGapFill,
+            queries,
+            coverage: createCoverageBoardSnapshot(nextCoverageBoard),
+            gapFillStats: nextGapFillStats,
+          },
+        );
+
+        return new Command({
+          goto: "researcher",
+          update: {
+            researcherMessages: [
+              ...toolMessages,
+              buildGapFillControlMessage(nextTopic, categoriesToGapFill),
+            ],
+            anchoredFacts: nextAnchoredFacts,
+            coverageBoard: nextCoverageBoard,
+            gapFillStats: nextGapFillStats,
+            pendingGapFillCategories: nextPendingGapFillCategories,
+          },
+        });
+      }
+    }
+
     if (researchCompleteCalled || exceededIterations) {
       return new Command({
         goto: "compressResearch",
         update: {
           researcherMessages: toolMessages,
+          anchoredFacts: nextAnchoredFacts,
+          coverageBoard: nextCoverageBoard,
+          gapFillStats: nextGapFillStats,
+          pendingGapFillCategories: nextPendingGapFillCategories,
         },
       });
     }
@@ -1624,6 +2830,10 @@ export function createDeepResearchGraphs(dependencies: GraphDependencies) {
       goto: "researcher",
       update: {
         researcherMessages: toolMessages,
+        anchoredFacts: nextAnchoredFacts,
+        coverageBoard: nextCoverageBoard,
+        gapFillStats: nextGapFillStats,
+        pendingGapFillCategories: nextPendingGapFillCategories,
       },
     });
   };
@@ -1688,16 +2898,21 @@ export function createDeepResearchGraphs(dependencies: GraphDependencies) {
     );
 
     const reportPlan = state.reportPlan ?? createFallbackReportPlan(state);
-    const sectionSupport = normalizeSectionSupport(
-      reportPlan,
-      state.sectionSupport,
-    );
-    const validatedEvidence = state.evidenceRows.filter(
-      (row) => row.allowedForFinal,
-    );
+    const sectionEvidencePacks =
+      state.sectionEvidencePacks.length > 0
+        ? state.sectionEvidencePacks
+        : buildSectionEvidencePacksFromArtifacts(
+            reportPlan,
+            state.sectionSupport,
+            state.evidenceRows,
+            state.sectionEvidenceLinks,
+            {
+              anchoredFacts: state.anchoredFacts,
+              coverageBoard: state.coverageBoard,
+            },
+          );
     let promptContent = finalReportGenerationPrompt
       .replace("{researchBrief}", state.researchBrief)
-      .replace("{messages}", getBufferString(state.messages))
       .replace("{date}", getTodayString())
       .replace(
         "{preResearchPlan}",
@@ -1706,14 +2921,9 @@ export function createDeepResearchGraphs(dependencies: GraphDependencies) {
         ),
       )
       .replace("{reportPlan}", stringifyForPrompt(reportPlan))
-      .replace("{sectionSupport}", stringifyForPrompt(sectionSupport))
       .replace(
-        "{validatedEvidence}",
-        stringifyForPrompt(validatedEvidence),
-      )
-      .replace(
-        "{sectionEvidenceLinks}",
-        stringifyForPrompt(state.sectionEvidenceLinks),
+        "{sectionEvidencePacks}",
+        stringifyForPrompt(sectionEvidencePacks),
       );
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -1748,6 +2958,49 @@ export function createDeepResearchGraphs(dependencies: GraphDependencies) {
     }
 
     throw new Error("Failed to generate the final report after retries.");
+  };
+
+  const buildSectionEvidencePacks = async (state: DeepResearchStateType) => {
+    const reportPlan = state.reportPlan ?? createFallbackReportPlan(state);
+    const sectionSupport = normalizeSectionSupport(
+      reportPlan,
+      state.sectionSupport,
+    );
+    await logEvent(
+      state.runId,
+      "validation",
+      "section_packaging_started",
+      "Packaging validated evidence into section-focused writing inputs.",
+    );
+
+    const sectionEvidencePacks = buildSectionEvidencePacksFromArtifacts(
+      reportPlan,
+      sectionSupport,
+      state.evidenceRows,
+      state.sectionEvidenceLinks,
+      {
+        anchoredFacts: state.anchoredFacts,
+        coverageBoard: state.coverageBoard,
+      },
+    );
+
+    await logEvent(
+      state.runId,
+      "validation",
+      "section_packaging_completed",
+      "Section evidence packs are ready for final report generation.",
+      {
+        sectionCount: sectionEvidencePacks.length,
+        factCount: sectionEvidencePacks.reduce(
+          (count, pack) => count + pack.facts.length,
+          0,
+        ),
+      },
+    );
+
+    return {
+      sectionEvidencePacks,
+    };
   };
 
   const researcherBuilder = new StateGraph(ResearcherState)
@@ -1793,6 +3046,7 @@ export function createDeepResearchGraphs(dependencies: GraphDependencies) {
     .addNode("extractEvidenceLedger", extractEvidenceLedger)
     .addNode("resolveEvidenceConflicts", resolveEvidenceConflicts)
     .addNode("validateEvidenceForFinal", validateEvidenceForFinal)
+    .addNode("buildSectionEvidencePacks", buildSectionEvidencePacks)
     .addNode("finalReportGeneration", finalReportGeneration)
     .addEdge(START, "clarifyWithUser")
     .addEdge("planResearch", "buildReportPlan")
@@ -1801,7 +3055,8 @@ export function createDeepResearchGraphs(dependencies: GraphDependencies) {
     .addEdge("scoreSectionSupport", "extractEvidenceLedger")
     .addEdge("extractEvidenceLedger", "resolveEvidenceConflicts")
     .addEdge("resolveEvidenceConflicts", "validateEvidenceForFinal")
-    .addEdge("validateEvidenceForFinal", "finalReportGeneration")
+    .addEdge("validateEvidenceForFinal", "buildSectionEvidencePacks")
+    .addEdge("buildSectionEvidencePacks", "finalReportGeneration")
     .addEdge("finalReportGeneration", END)
     .compile({
       checkpointer: dependencies.parentCheckpointer as never,
