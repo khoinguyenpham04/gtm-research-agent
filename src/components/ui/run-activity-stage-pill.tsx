@@ -26,6 +26,8 @@ const runActivityStageVariants = cva(
           "bg-slate-100 text-slate-700 dark:bg-slate-500/15 dark:text-slate-200",
         running:
           "bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-200",
+        completed:
+          "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200",
         clarify:
           "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200",
         planning:
@@ -52,6 +54,7 @@ const runActivityStageVariants = cva(
 type KnownRunActivityStage =
   | "queued"
   | "running"
+  | "completed"
   | "clarify"
   | "planning"
   | "validation"
@@ -65,6 +68,7 @@ function normalizeStage(stage: string): KnownRunActivityStage | "unknown" {
   switch (stage) {
     case "queued":
     case "running":
+    case "completed":
     case "clarify":
     case "planning":
     case "validation":
@@ -85,6 +89,8 @@ function getStageIcon(stage: KnownRunActivityStage | "unknown") {
       return Clock01Icon
     case "running":
       return CloudLoadingIcon
+    case "completed":
+      return Task01Icon
     case "clarify":
       return BubbleChatQuestionIcon
     case "planning":

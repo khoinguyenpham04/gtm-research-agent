@@ -1,11 +1,11 @@
 "use client"
 
 import { useSearchParams } from "next/navigation"
-import { startTransition, useEffect, useState } from "react"
+import { useEffect } from "react"
 
 import { DeepResearchThreadLauncher } from "@/app/dashboard/chat/deep-research-thread-launcher"
 import {
-  DeepResearchActivityTimeline,
+  DeepResearchActivityDrawer,
   DeepResearchArtifactsPanel,
   DeepResearchClarificationCard,
   DeepResearchFailureCard,
@@ -17,7 +17,6 @@ import {
   extractActiveRateLimitRetry,
   extractPreResearchPlan,
   extractSourcesFromReport,
-  formatTimestamp,
 } from "@/components/deep-research/utils"
 import {
   Conversation,
@@ -26,15 +25,10 @@ import {
 } from "@/components/ai-elements/conversation"
 import { Message, MessageContent } from "@/components/ai-elements/message"
 import { useSessionThread } from "@/components/sessions/use-session-thread"
-import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
 } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
 import type { SessionThreadResponse } from "@/lib/deep-research/types"
 import type {
   WorkspaceDetail,
@@ -51,10 +45,6 @@ export function DeepResearchSessionThread({
   initialWorkspaces: WorkspaceSummary[]
 }) {
   const searchParams = useSearchParams()
-  const [editingTitle, setEditingTitle] = useState(false)
-  const [renameValue, setRenameValue] = useState(initialThread.session.title)
-  const [renameError, setRenameError] = useState<string | null>(null)
-  const [renaming, setRenaming] = useState(false)
   const {
     clarificationResponses,
     error,
@@ -62,7 +52,6 @@ export function DeepResearchSessionThread({
     retryRun,
     session,
     setClarificationResponse,
-    setThread,
     submissionAction,
     submittingRunId,
     thread,
@@ -72,10 +61,15 @@ export function DeepResearchSessionThread({
   const sessionMessages = thread?.messages ?? initialThread.messages
   const currentSession = session ?? initialThread.session
   const workspaceName = thread?.workspace?.name ?? initialThread.workspace?.name
-
-  useEffect(() => {
-    setRenameValue(currentSession.title)
-  }, [currentSession])
+  const focusedRunId =
+    searchParams.get("runId")?.trim() || currentSession.latestRunId || ""
+  const activityRun =
+    sessionMessages.find((message) => message.linkedRun?.id === focusedRunId)
+      ?.linkedRun ??
+    [...sessionMessages]
+      .reverse()
+      .find((message) => message.linkedRun)
+      ?.linkedRun
 
   useEffect(() => {
     const focusRunId = searchParams.get("runId")?.trim()
@@ -100,116 +94,10 @@ export function DeepResearchSessionThread({
     return () => window.clearTimeout(timeoutId)
   }, [searchParams, sessionMessages])
 
-  const handleRename = async () => {
-    const trimmedTitle = renameValue.trim()
-    if (!trimmedTitle || trimmedTitle === currentSession.title) {
-      setEditingTitle(false)
-      setRenameValue(currentSession.title)
-      setRenameError(null)
-      return
-    }
-
-    setRenaming(true)
-    setRenameError(null)
-
-    try {
-      const response = await fetch(`/api/sessions/${currentSession.id}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          title: trimmedTitle,
-        }),
-      })
-      const payload = await response.json()
-
-      if (!response.ok) {
-        throw new Error(payload.error || "Failed to rename session.")
-      }
-
-      startTransition(() => {
-        setThread(
-          thread
-            ? {
-                ...thread,
-                session: payload,
-              }
-            : {
-                ...initialThread,
-                session: payload,
-              },
-        )
-      })
-      window.dispatchEvent(new Event("sessions-updated"))
-      setEditingTitle(false)
-    } catch (renameRequestError) {
-      setRenameError(
-        renameRequestError instanceof Error
-          ? renameRequestError.message
-          : "Failed to rename session.",
-      )
-    } finally {
-      setRenaming(false)
-    }
-  }
-
   return (
     <div className="mx-auto w-full max-w-5xl">
       <div className="min-w-0">
-        <Card className="border border-border/60">
-          <CardHeader className="gap-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="space-y-1">
-                <CardTitle>{editingTitle ? "Rename session" : currentSession.title}</CardTitle>
-                <CardDescription>
-                  {workspaceName ?? "Unknown workspace"} · Updated{" "}
-                  {formatTimestamp(currentSession.updatedAt)}
-                </CardDescription>
-              </div>
-
-              {editingTitle ? (
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button
-                    disabled={renaming || renameValue.trim().length === 0}
-                    onClick={() => void handleRename()}
-                  >
-                    {renaming ? "Saving..." : "Save"}
-                  </Button>
-                  <Button
-                    disabled={renaming}
-                    onClick={() => {
-                      setEditingTitle(false)
-                      setRenameError(null)
-                      setRenameValue(currentSession.title)
-                    }}
-                    variant="outline"
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              ) : (
-                <Button onClick={() => setEditingTitle(true)} variant="outline">
-                  Rename
-                </Button>
-              )}
-            </div>
-
-            {editingTitle ? (
-              <div className="space-y-2">
-                <Input
-                  onChange={(event) => setRenameValue(event.target.value)}
-                  value={renameValue}
-                />
-                {renameError ? (
-                  <p className="text-sm text-destructive">{renameError}</p>
-                ) : null}
-              </div>
-            ) : null}
-          </CardHeader>
-        </Card>
-
-        <div className="mt-6 flex min-h-[calc(100vh-14rem)] flex-1 flex-col bg-background">
+        <div className="flex min-h-[calc(100vh-14rem)] flex-1 flex-col bg-background">
           <Conversation className="min-h-0 flex-1">
             <ConversationContent className="mx-auto w-full max-w-4xl gap-5 px-4 py-2 sm:px-6">
               {error ? (
@@ -233,7 +121,11 @@ export function DeepResearchSessionThread({
                   : []
 
                 return (
-                  <div key={message.id} className="space-y-5">
+                  <div
+                    key={message.id}
+                    className="space-y-5"
+                    data-run-id={linkedRun?.id}
+                  >
                     <Message from={message.role === "assistant" ? "assistant" : "user"} className="ml-0 max-w-full">
                       <div className="w-full">
                         {linkedRun ? (
@@ -241,7 +133,6 @@ export function DeepResearchSessionThread({
                             objective={linkedRun.objective}
                             selectedDocuments={linkedRun.selectedDocuments}
                             topic={linkedRun.topic}
-                            workspaceName={linkedRun.workspace?.name ?? workspaceName}
                           />
                         ) : (
                           <Card className="border border-zinc-200 bg-white ring-0 shadow-none">
@@ -263,16 +154,6 @@ export function DeepResearchSessionThread({
                               activeRateLimitRetry={activeRateLimitRetry}
                               run={linkedRun}
                             />
-                          </MessageContent>
-                        </Message>
-
-                        <Message
-                          from="assistant"
-                          className="max-w-full"
-                          data-run-id={linkedRun.id}
-                        >
-                          <MessageContent className="w-full max-w-full bg-transparent p-0">
-                            <DeepResearchActivityTimeline events={linkedRun.events} />
                           </MessageContent>
                         </Message>
 
@@ -355,20 +236,34 @@ export function DeepResearchSessionThread({
               ) : null}
             </ConversationContent>
 
-            <ConversationScrollButton className="bottom-36" />
+            <ConversationScrollButton className="bottom-44" />
           </Conversation>
 
-          <div className="sticky bottom-0 z-10 border-t border-border/50 bg-background/92 px-4 pb-4 pt-4 backdrop-blur supports-backdrop-filter:bg-background/82 sm:px-6">
-            <DeepResearchThreadLauncher
-              initialSelectedDocumentIds={
-                initialWorkspace?.documents.map((attachment) => attachment.documentId) ?? []
-              }
-              initialWorkspace={initialWorkspace}
-              initialWorkspaceId={currentWorkspaceId}
-              initialWorkspaces={initialWorkspaces}
-              navigationMode="replace"
-              sessionId={currentSession.id}
-            />
+          <div className="sticky bottom-0 z-10 px-4 pb-4 pt-6 sm:px-6">
+            <div className="relative">
+              {activityRun?.events.length ? (
+                <div className="pointer-events-none absolute inset-x-0 bottom-[calc(100%-1.15rem)] z-0">
+                  <div className="pointer-events-auto">
+                    <DeepResearchActivityDrawer
+                      events={activityRun.events}
+                    />
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="relative z-10">
+              <DeepResearchThreadLauncher
+                initialSelectedDocumentIds={
+                  initialWorkspace?.documents.map((attachment) => attachment.documentId) ?? []
+                }
+                initialWorkspace={initialWorkspace}
+                initialWorkspaceId={currentWorkspaceId}
+                initialWorkspaces={initialWorkspaces}
+                navigationMode="replace"
+                sessionId={currentSession.id}
+              />
+              </div>
+            </div>
           </div>
         </div>
       </div>

@@ -8,8 +8,10 @@ import {
   useRef,
   useState,
   type ComponentPropsWithoutRef,
+  type RefObject,
   type ReactNode,
 } from "react"
+import { ChevronDownIcon, ChevronUpIcon } from "lucide-react"
 
 import type { DocumentSummary } from "@/lib/documents"
 import type {
@@ -356,6 +358,95 @@ export function DeepResearchActivityTimeline({
 }: {
   events: DeepResearchRunEvent[]
 }) {
+  const { containerRef, freshEventIds } = useResearchActivityFeed(events)
+
+  return (
+    <Card className={THREAD_SURFACE_CARD_CLASS}>
+      <CardHeader>
+        <CardTitle>Research activity</CardTitle>
+        <CardDescription>
+          Fine-grained orchestration events persisted by the backend.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <ResearchActivityEvents
+          containerRef={containerRef}
+          events={events}
+          freshEventIds={freshEventIds}
+          maxHeightClass="max-h-96"
+        />
+      </CardContent>
+    </Card>
+  )
+}
+
+export function DeepResearchActivityDrawer({
+  events,
+}: {
+  events: DeepResearchRunEvent[]
+}) {
+  const [collapsedByUser, setCollapsedByUser] = useState(false)
+  const expanded = !collapsedByUser
+  const latestEvent = events.at(-1)
+  const { containerRef, freshEventIds } = useResearchActivityFeed(events)
+
+  if (events.length === 0) {
+    return null
+  }
+
+  return (
+    <div className="relative z-0 px-2">
+      <div className="relative isolate mx-auto w-full max-w-3xl rounded-[1.75rem] border border-border/60 bg-background px-3 pt-2 shadow-[0_-18px_44px_rgba(15,23,42,0.08)] before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:rounded-[1.9rem] before:bg-background/55 before:blur-[2px] before:content-[''] sm:px-4">
+        <button
+          className="flex w-full items-start justify-between gap-4 pb-5 pt-1 text-left"
+          onClick={() => setCollapsedByUser((current) => !current)}
+          type="button"
+        >
+          <p className="text-sm font-semibold text-foreground">
+            Research activity
+          </p>
+
+          <div className="flex items-center gap-2">
+            {latestEvent ? (
+              <RunActivityStagePill stage={latestEvent.stage} />
+            ) : null}
+            {!expanded && latestEvent ? (
+              <span className="hidden text-xs text-muted-foreground sm:inline">
+                {formatTimestamp(latestEvent.createdAt)}
+              </span>
+            ) : null}
+            <span className="text-xs text-muted-foreground">
+              {events.length} event{events.length === 1 ? "" : "s"}
+            </span>
+            {expanded ? (
+              <ChevronDownIcon className="size-4 text-muted-foreground" />
+            ) : (
+              <ChevronUpIcon className="size-4 text-muted-foreground" />
+            )}
+          </div>
+        </button>
+
+        <div
+          className={cn(
+            "overflow-hidden transition-[max-height,opacity] duration-300 ease-out",
+            expanded ? "max-h-[15rem] opacity-100" : "max-h-0 opacity-0",
+          )}
+        >
+          <div className="pb-5">
+            <ResearchActivityEvents
+              containerRef={containerRef}
+              events={events}
+              freshEventIds={freshEventIds}
+              maxHeightClass="max-h-40"
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function useResearchActivityFeed(events: DeepResearchRunEvent[]) {
   const containerRef = useRef<HTMLDivElement>(null)
   const previousEventIdsRef = useRef(events.map((event) => event.id))
   const [freshEventIds, setFreshEventIds] = useState<string[]>([])
@@ -375,7 +466,10 @@ export function DeepResearchActivityTimeline({
     setFreshEventIds(nextFreshEventIds)
 
     if (containerRef.current) {
-      containerRef.current.scrollTop = containerRef.current.scrollHeight
+      containerRef.current.scrollTo({
+        top: containerRef.current.scrollHeight,
+        behavior: "smooth",
+      })
     }
 
     const timeoutId = window.setTimeout(() => {
@@ -385,44 +479,56 @@ export function DeepResearchActivityTimeline({
     return () => window.clearTimeout(timeoutId)
   }, [events])
 
+  return {
+    containerRef,
+    freshEventIds,
+  }
+}
+
+function ResearchActivityEvents({
+  containerRef,
+  events,
+  freshEventIds,
+  maxHeightClass,
+}: {
+  events: DeepResearchRunEvent[]
+  freshEventIds: string[]
+  maxHeightClass: string
+  containerRef: RefObject<HTMLDivElement | null>
+}) {
+  if (events.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        Activity will appear here once the run starts producing events.
+      </p>
+    )
+  }
+
   return (
-    <Card className={THREAD_SURFACE_CARD_CLASS}>
-      <CardHeader>
-        <CardTitle>Research activity</CardTitle>
-        <CardDescription>
-          Fine-grained orchestration events persisted by the backend.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        {events.length ? (
-          <div ref={containerRef} className="max-h-96 space-y-3 overflow-y-auto pr-1">
-            {events.map((event) => (
-              <div
-                key={event.id}
-                className={cn(
-                  "rounded-xl border border-zinc-200 bg-white px-4 py-3",
-                  freshEventIds.includes(event.id)
-                    ? "animate-in fade-in-0 slide-in-from-bottom-3 duration-500"
-                    : undefined,
-                )}
-              >
-                <div className="flex flex-wrap items-center gap-2">
-                  <RunActivityStagePill stage={event.stage} />
-                  <p className="text-sm font-medium">{event.message}</p>
-                </div>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {event.eventType} · {formatTimestamp(event.createdAt)}
-                </p>
-              </div>
-            ))}
+    <div
+      ref={containerRef}
+      className={cn(maxHeightClass, "space-y-3 overflow-y-auto pr-1")}
+    >
+      {events.map((event) => (
+        <div
+          key={event.id}
+          className={cn(
+            "rounded-xl border border-zinc-200 bg-white px-4 py-3",
+            freshEventIds.includes(event.id)
+              ? "animate-in fade-in-0 slide-in-from-bottom-3 duration-500"
+              : undefined,
+          )}
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <RunActivityStagePill stage={event.stage} />
+            <p className="text-sm font-medium">{event.message}</p>
           </div>
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            Activity will appear here once the run starts producing events.
+          <p className="mt-1 text-xs text-muted-foreground">
+            · {formatTimestamp(event.createdAt)}
           </p>
-        )}
-      </CardContent>
-    </Card>
+        </div>
+      ))}
+    </div>
   )
 }
 

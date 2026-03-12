@@ -21,12 +21,17 @@ import {
   SidebarGroup,
   SidebarGroupContent,
 } from "@/components/ui/sidebar"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import type { SessionNavigationWorkspaceGroup } from "@/lib/deep-research/types"
 import { cn } from "@/lib/utils"
 import {
+  CheckIcon,
   ChevronRightIcon,
   LayoutGridIcon,
   LoaderCircleIcon,
+  PencilLineIcon,
+  XIcon,
 } from "lucide-react"
 
 function formatRelativeSessionTime(value: string) {
@@ -67,6 +72,10 @@ export function NavThreads() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [openWorkspaceIds, setOpenWorkspaceIds] = useState<string[]>([])
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState("")
+  const [renameError, setRenameError] = useState<string | null>(null)
+  const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null)
 
   const activeSessionId = useMemo(() => {
     const match = pathname.match(/\/dashboard\/chat\/sessions\/([^/?]+)/)
@@ -156,6 +165,62 @@ export function NavThreads() {
     })
   }, [activeSessionId, groups])
 
+  const beginRename = useCallback((sessionId: string, title: string) => {
+    setEditingSessionId(sessionId)
+    setRenameValue(title)
+    setRenameError(null)
+  }, [])
+
+  const cancelRename = useCallback(() => {
+    setEditingSessionId(null)
+    setRenameValue("")
+    setRenameError(null)
+    setRenamingSessionId(null)
+  }, [])
+
+  const commitRename = useCallback(
+    async (sessionId: string, currentTitle: string) => {
+      const trimmedTitle = renameValue.trim()
+
+      if (!trimmedTitle || trimmedTitle === currentTitle) {
+        cancelRename()
+        return
+      }
+
+      setRenamingSessionId(sessionId)
+      setRenameError(null)
+
+      try {
+        const response = await fetch(`/api/sessions/${sessionId}`, {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            title: trimmedTitle,
+          }),
+        })
+        const payload = await response.json()
+
+        if (!response.ok) {
+          throw new Error(payload.error || "Failed to rename thread.")
+        }
+
+        await refreshGroups()
+        window.dispatchEvent(new Event("sessions-updated"))
+        cancelRename()
+      } catch (renameRequestError) {
+        setRenameError(
+          renameRequestError instanceof Error
+            ? renameRequestError.message
+            : "Failed to rename thread.",
+        )
+        setRenamingSessionId(null)
+      }
+    },
+    [cancelRename, refreshGroups, renameValue],
+  )
+
   return (
     <SidebarGroup className="min-h-0 flex-1 overflow-hidden px-3 pb-3 pt-2 group-data-[collapsible=icon]:hidden">
       <SidebarGroupContent className="min-h-0 flex h-full flex-col">
@@ -219,41 +284,129 @@ export function NavThreads() {
                     <div className="space-y-1 pl-4">
                       {group.sessions.map((session) => {
                         const isActive = session.id === activeSessionId
+                        const isEditing = session.id === editingSessionId
+                        const isRenaming = session.id === renamingSessionId
+
+                        if (isEditing) {
+                          return (
+                            <div
+                              className="rounded-[1.4rem] border border-sidebar-border/60 bg-sidebar-accent/65 px-3 py-3"
+                              key={session.id}
+                            >
+                              <label
+                                className="sr-only"
+                                htmlFor={`rename-session-${session.id}`}
+                              >
+                                Rename thread
+                              </label>
+                              <div className="flex items-center gap-2">
+                                <Input
+                                  autoComplete="off"
+                                  className="h-8 border-sidebar-border/60 bg-sidebar text-sidebar-foreground"
+                                  id={`rename-session-${session.id}`}
+                                  name="thread-title"
+                                  onChange={(event) =>
+                                    setRenameValue(event.target.value)
+                                  }
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter") {
+                                      event.preventDefault()
+                                      void commitRename(session.id, session.title)
+                                    }
+
+                                    if (event.key === "Escape") {
+                                      event.preventDefault()
+                                      cancelRename()
+                                    }
+                                  }}
+                                  value={renameValue}
+                                />
+                                <Button
+                                  aria-label="Save thread title"
+                                  disabled={
+                                    isRenaming || renameValue.trim().length === 0
+                                  }
+                                  onClick={() =>
+                                    void commitRename(session.id, session.title)
+                                  }
+                                  size="icon-xs"
+                                  variant="ghost"
+                                >
+                                  {isRenaming ? (
+                                    <LoaderCircleIcon className="size-3 animate-spin" />
+                                  ) : (
+                                    <CheckIcon className="size-3" />
+                                  )}
+                                </Button>
+                                <Button
+                                  aria-label="Cancel thread rename"
+                                  disabled={isRenaming}
+                                  onClick={cancelRename}
+                                  size="icon-xs"
+                                  variant="ghost"
+                                >
+                                  <XIcon className="size-3" />
+                                </Button>
+                              </div>
+                              {renameError ? (
+                                <p className="mt-2 text-[0.72rem] leading-5 text-sidebar-foreground/70">
+                                  {renameError}
+                                </p>
+                              ) : null}
+                            </div>
+                          )
+                        }
 
                         return (
-                          <Link
-                            key={session.id}
+                          <div
                             className={cn(
-                              "group/thread flex items-center gap-3 rounded-[1.4rem] px-4 py-2.5 decoration-transparent no-underline transition-colors focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:outline-none hover:no-underline focus:no-underline active:no-underline visited:no-underline",
+                              "group/thread flex items-center gap-1 rounded-[1.4rem] px-2 py-1.5 transition-colors",
                               isActive
                                 ? "bg-sidebar-accent text-sidebar-accent-foreground"
                                 : "text-sidebar-foreground/72 hover:bg-sidebar-accent/80 hover:text-sidebar-accent-foreground/88",
                             )}
-                            href={buildSessionThreadHref({
-                              runId: session.latestRunId,
-                              sessionId: session.id,
-                            })}
-                            style={{ textDecoration: "none" }}
+                            key={session.id}
                           >
-                            <span
-                              className="min-w-0 flex-1 truncate text-[0.8rem] font-medium no-underline"
-                              title={session.title}
+                            <Link
+                              className="min-w-0 flex flex-1 items-center gap-3 rounded-[1.1rem] px-2 py-1 decoration-transparent no-underline focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:outline-none hover:no-underline focus:no-underline active:no-underline visited:no-underline"
+                              href={buildSessionThreadHref({
+                                runId: session.latestRunId,
+                                sessionId: session.id,
+                              })}
                               style={{ textDecoration: "none" }}
                             >
-                              {session.title}
-                            </span>
-                            <span
-                              className={cn(
-                                "shrink-0 text-[0.76rem] tabular-nums no-underline transition-colors",
-                                isActive
-                                  ? "text-sidebar-accent-foreground/60"
-                                  : "text-sidebar-foreground/44 group-hover/thread:text-sidebar-accent-foreground/60",
-                              )}
-                              style={{ textDecoration: "none" }}
-                            >
-                              {formatRelativeSessionTime(session.updatedAt)}
-                            </span>
-                          </Link>
+                              <span
+                                className="min-w-0 flex-1 truncate text-[0.8rem] font-medium no-underline"
+                                title={session.title}
+                                style={{ textDecoration: "none" }}
+                              >
+                                {session.title}
+                              </span>
+                              <span
+                                className={cn(
+                                  "shrink-0 text-[0.76rem] tabular-nums no-underline transition-colors",
+                                  isActive
+                                    ? "text-sidebar-accent-foreground/60"
+                                    : "text-sidebar-foreground/44 group-hover/thread:text-sidebar-accent-foreground/60",
+                                )}
+                                style={{ textDecoration: "none" }}
+                              >
+                                {formatRelativeSessionTime(session.updatedAt)}
+                              </span>
+                            </Link>
+
+                            {isActive ? (
+                              <Button
+                                aria-label={`Rename ${session.title}`}
+                                className="shrink-0"
+                                onClick={() => beginRename(session.id, session.title)}
+                                size="icon-xs"
+                                variant="ghost"
+                              >
+                                <PencilLineIcon className="size-3" />
+                              </Button>
+                            ) : null}
+                          </div>
                         )
                       })}
                     </div>
