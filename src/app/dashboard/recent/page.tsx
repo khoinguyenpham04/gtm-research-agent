@@ -10,24 +10,51 @@ import {
 import { listWorkspaces } from "@/lib/workspaces"
 import { RecentRunsConsole } from "@/app/dashboard/recent/recent-runs-console"
 
-export default async function RecentRunsPage() {
+function readSearchParam(value: string | string[] | undefined) {
+  if (Array.isArray(value)) {
+    return value[0]
+  }
+
+  return value
+}
+
+export default async function RecentRunsPage({
+  searchParams,
+}: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>
+}) {
   const { userId } = await auth()
   if (!userId) {
     redirect("/sign-in")
   }
 
   await ensureDeepResearchDatabase().catch(() => undefined)
+  const resolvedSearchParams = (await searchParams) ?? {}
 
   const initialWorkspaces = await listWorkspaces(userId).catch(() => [])
-  const initialWorkspaceId = initialWorkspaces[0]?.id ?? ""
+  const requestedWorkspaceId =
+    readSearchParam(resolvedSearchParams.workspaceId)?.trim() ?? ""
+  const requestedRunId = readSearchParam(resolvedSearchParams.runId)?.trim() ?? ""
+  const requestedRun = requestedRunId
+    ? await getDeepResearchRun(requestedRunId, userId).catch(() => null)
+    : null
+  const initialWorkspaceId =
+    initialWorkspaces.find((workspace) => workspace.id === requestedWorkspaceId)
+      ?.id ??
+    requestedRun?.workspaceId ??
+    initialWorkspaces[0]?.id ??
+    ""
   const initialRecentRuns = await listDeepResearchRuns({
     workspaceId: initialWorkspaceId || undefined,
     limit: 20,
     clerkUserId: userId,
   }).catch(() => [])
-  const initialRun = initialRecentRuns[0]
-    ? await getDeepResearchRun(initialRecentRuns[0].id, userId).catch(() => null)
-    : null
+  const initialRun =
+    requestedRun && requestedRun.workspaceId === initialWorkspaceId
+      ? requestedRun
+      : initialRecentRuns[0]
+        ? await getDeepResearchRun(initialRecentRuns[0].id, userId).catch(() => null)
+        : null
 
   return (
     <>

@@ -1,10 +1,4 @@
-import { auth } from "@clerk/nextjs/server"
 import { redirect } from "next/navigation"
-
-import { DeepResearchChatLauncher } from "@/app/dashboard/chat/new/deep-research-chat-launcher"
-import { SiteHeader } from "@/components/site-header"
-import { ensureDeepResearchDatabase } from "@/lib/deep-research/db"
-import { getWorkspaceDetail, listWorkspaces } from "@/lib/workspaces"
 
 function readSearchParam(value: string | string[] | undefined) {
   if (Array.isArray(value)) {
@@ -14,104 +8,33 @@ function readSearchParam(value: string | string[] | undefined) {
   return value
 }
 
-function buildSearchParams(
-  values: Record<string, string | string[] | undefined>,
-  overrides: Record<string, string>,
-) {
-  const searchParams = new URLSearchParams()
-
-  for (const [key, rawValue] of Object.entries(values)) {
-    if (Array.isArray(rawValue)) {
-      if (rawValue[0]) {
-        searchParams.set(key, rawValue[0])
-      }
-      continue
-    }
-
-    if (rawValue) {
-      searchParams.set(key, rawValue)
-    }
-  }
-
-  for (const [key, value] of Object.entries(overrides)) {
-    searchParams.set(key, value)
-  }
-
-  return searchParams
-}
-
 export default async function DeepResearchNewChatPage({
   searchParams,
 }: {
   searchParams?: Promise<Record<string, string | string[] | undefined>>
 }) {
-  const { userId } = await auth()
-  if (!userId) {
-    redirect("/sign-in")
-  }
-
-  await ensureDeepResearchDatabase().catch(() => undefined)
-
   const resolvedSearchParams = (await searchParams) ?? {}
-  const launchKey = readSearchParam(resolvedSearchParams.launchKey)?.trim() ?? ""
+  const nextSearchParams = new URLSearchParams()
 
-  if (!launchKey) {
-    const nextSearchParams = buildSearchParams(resolvedSearchParams, {
-      launchKey: crypto.randomUUID(),
-    })
-
-    redirect(`/dashboard/chat/new?${nextSearchParams.toString()}`)
+  const topic = readSearchParam(resolvedSearchParams.topic)?.trim()
+  if (topic) {
+    nextSearchParams.set("topic", topic)
   }
 
-  const topic = readSearchParam(resolvedSearchParams.topic)?.trim() ?? ""
-  const objective = readSearchParam(resolvedSearchParams.objective)?.trim() ?? ""
-  const workspaceId =
-    readSearchParam(resolvedSearchParams.workspaceId)?.trim() ?? ""
-  const sessionId = readSearchParam(resolvedSearchParams.sessionId)?.trim() ?? ""
-  const selectedDocumentIds = (
-    readSearchParam(resolvedSearchParams.selectedDocumentIds)?.trim() ?? ""
-  )
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean)
+  const workspaceId = readSearchParam(resolvedSearchParams.workspaceId)?.trim()
+  if (workspaceId) {
+    nextSearchParams.set("workspaceId", workspaceId)
+  }
 
-  const [initialWorkspace, initialWorkspaces] = await Promise.all([
-    workspaceId
-      ? getWorkspaceDetail(workspaceId, userId).catch(() => null)
-      : Promise.resolve(null),
-    listWorkspaces(userId).catch(() => []),
-  ])
-  const selectedDocuments =
-    initialWorkspace?.documents
-      .filter((attachment) => selectedDocumentIds.includes(attachment.documentId))
-      .map((attachment) => attachment.document) ?? []
-  const fallbackHref = workspaceId
-    ? `/dashboard/deepresearch?workspaceId=${workspaceId}`
-    : "/dashboard/deepresearch"
+  const selectedDocumentIds =
+    readSearchParam(resolvedSearchParams.selectedDocumentIds)?.trim()
+  if (selectedDocumentIds) {
+    nextSearchParams.set("selectedDocumentIds", selectedDocumentIds)
+  }
 
-  return (
-    <>
-      <SiteHeader
-        title="New Session"
-        description="Draft a new workspace-scoped research thread before it becomes a persisted session."
-      />
-      <div className="flex flex-1 flex-col">
-        <div className="@container/main flex flex-1 flex-col px-4 py-4 lg:px-6 lg:py-6">
-          <DeepResearchChatLauncher
-            fallbackHref={fallbackHref}
-            launchKey={launchKey}
-            objective={objective || undefined}
-            initialWorkspace={initialWorkspace}
-            initialWorkspaces={initialWorkspaces}
-            sessionId={sessionId || undefined}
-            selectedDocumentIds={selectedDocumentIds}
-            selectedDocuments={selectedDocuments}
-            topic={topic}
-            workspaceId={workspaceId}
-            workspaceName={initialWorkspace?.name}
-          />
-        </div>
-      </div>
-    </>
+  redirect(
+    nextSearchParams.size
+      ? `/dashboard?${nextSearchParams.toString()}`
+      : "/dashboard",
   )
 }

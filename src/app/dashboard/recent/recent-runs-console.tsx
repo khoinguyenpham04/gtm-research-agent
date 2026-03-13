@@ -307,22 +307,24 @@ export function RecentRunsConsole({
                     </p>
                   ) : null}
                 </div>
-                <Button asChild className="w-fit" variant="outline">
-                  <Link
-                    href={
-                      run.sessionId
-                        ? buildSessionThreadHref({
-                            mode: "research",
-                            runId: run.id,
-                            sessionId: run.sessionId,
-                          })
-                        : `/dashboard/chat/runs/${run.id}`
-                    }
-                  >
-                    Open thread
-                    <ArrowRight className="size-4" />
-                  </Link>
-                </Button>
+                {run.sessionId ? (
+                  <Button asChild className="w-fit" variant="outline">
+                    <Link
+                      href={buildSessionThreadHref({
+                        mode: "research",
+                        runId: run.id,
+                        sessionId: run.sessionId,
+                      })}
+                    >
+                      Open thread
+                      <ArrowRight className="size-4" />
+                    </Link>
+                  </Button>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    Legacy run. View details in this browser.
+                  </p>
+                )}
                 {run.selectedDocuments.length ? (
                   <div className="flex flex-wrap gap-2">
                     {run.selectedDocuments.map((document) => (

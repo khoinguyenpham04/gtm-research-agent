@@ -87,6 +87,9 @@ const ACCEPTED_DOCUMENT_TYPES = [
   "application/pdf",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "text/plain",
+  "text/markdown",
+  ".md",
+  ".markdown",
 ].join(",")
 
 export function DashboardResearchLauncher({

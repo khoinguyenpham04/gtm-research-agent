@@ -1,8 +1,16 @@
+import { auth } from "@clerk/nextjs/server"
+import { redirect } from "next/navigation"
+
 import { SiteHeader } from "@/components/site-header"
 
 import { RagSearchConsole } from "@/app/dashboard/rag-search-console"
 
-export default function RagSearchPage() {
+export default async function RagSearchPage() {
+  const { userId } = await auth()
+  if (!userId) {
+    redirect("/sign-in")
+  }
+
   return (
     <>
       <SiteHeader

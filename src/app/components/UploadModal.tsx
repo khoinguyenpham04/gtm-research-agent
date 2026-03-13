@@ -97,12 +97,12 @@ export default function UploadModal({ isOpen, onClose, onUploadSuccess }: Upload
         <div className="p-6">
           <div className="mb-6">
             <label htmlFor="upload-file-input" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Select a file (PDF, DOCX, or TXT)
+              Select a file (PDF, DOCX, TXT, or Markdown)
             </label>
             <input
               id="upload-file-input"
               type="file"
-              accept=".pdf,.docx,.txt"
+              accept=".pdf,.docx,.txt,.md,.markdown"
               onChange={handleFileChange}
               className="block w-full text-sm text-gray-500
                 file:mr-4 file:py-2 file:px-4

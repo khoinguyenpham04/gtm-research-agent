@@ -134,54 +134,6 @@ export function extractActiveRateLimitRetry(
   }
 }
 
-export function buildDeepResearchChatNewHref({
-  launchKey,
-  objective,
-  sessionId,
-  selectedDocumentIds,
-  topic,
-  workspaceId,
-}: {
-  topic: string
-  workspaceId: string
-  selectedDocumentIds: string[]
-  launchKey?: string
-  objective?: string
-  sessionId?: string
-}) {
-  const searchParams = new URLSearchParams()
-
-  if (launchKey) {
-    searchParams.set("launchKey", launchKey)
-  }
-
-  const trimmedTopic = topic.trim()
-  if (trimmedTopic) {
-    searchParams.set("topic", trimmedTopic)
-  }
-
-  const trimmedWorkspaceId = workspaceId.trim()
-  if (trimmedWorkspaceId) {
-    searchParams.set("workspaceId", trimmedWorkspaceId)
-  }
-
-  if (selectedDocumentIds.length > 0) {
-    searchParams.set("selectedDocumentIds", selectedDocumentIds.join(","))
-  }
-
-  const trimmedObjective = objective?.trim()
-  if (trimmedObjective) {
-    searchParams.set("objective", trimmedObjective)
-  }
-
-  const trimmedSessionId = sessionId?.trim()
-  if (trimmedSessionId) {
-    searchParams.set("sessionId", trimmedSessionId)
-  }
-
-  return `/dashboard/chat/new?${searchParams.toString()}`
-}
-
 export function buildSessionThreadHref({
   mode,
   runId,

@@ -172,6 +172,14 @@ export const SchemaDisplayPath = ({
     '<span class="text-blue-600 dark:text-blue-400">{$1}</span>'
   );
 
+  if (typeof children !== "undefined" && typeof children !== "string") {
+    return (
+      <span className={cn("font-mono text-sm", className)} {...props}>
+        {children}
+      </span>
+    );
+  }
+
   return (
     <span
       className={cn("font-mono text-sm", className)}

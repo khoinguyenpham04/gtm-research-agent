@@ -1,8 +1,7 @@
-import { auth } from "@clerk/nextjs/server"
 import Link from "next/link"
+import { auth } from "@clerk/nextjs/server"
 import { redirect } from "next/navigation"
 
-import { DeepResearchRunThread } from "@/app/dashboard/chat/runs/[runId]/deep-research-run-thread"
 import { buildSessionThreadHref } from "@/components/deep-research/utils"
 import { SiteHeader } from "@/components/site-header"
 import { Button } from "@/components/ui/button"
@@ -15,7 +14,6 @@ import {
 } from "@/components/ui/card"
 import { ensureDeepResearchDatabase } from "@/lib/deep-research/db"
 import { getDeepResearchRun } from "@/lib/deep-research/service"
-import { getWorkspaceDetail, listWorkspaces } from "@/lib/workspaces"
 
 export default async function DeepResearchRunThreadPage({
   params,
@@ -30,57 +28,48 @@ export default async function DeepResearchRunThreadPage({
   await ensureDeepResearchDatabase().catch(() => undefined)
 
   const { runId } = await params
-  const initialRun = await getDeepResearchRun(runId, userId).catch(() => null)
+  const run = await getDeepResearchRun(runId, userId).catch(() => null)
 
-  if (initialRun?.sessionId) {
+  if (run?.sessionId) {
     redirect(
       buildSessionThreadHref({
         mode: "research",
         runId,
-        sessionId: initialRun.sessionId,
+        sessionId: run.sessionId,
       }),
     )
   }
 
-  const [initialWorkspace, initialWorkspaces] = initialRun?.workspaceId
-    ? await Promise.all([
-        getWorkspaceDetail(initialRun.workspaceId, userId).catch(() => null),
-        listWorkspaces(userId).catch(() => []),
-      ])
-    : [null, await listWorkspaces(userId).catch(() => [])]
+  if (run) {
+    const searchParams = new URLSearchParams({ runId })
+    if (run.workspaceId) {
+      searchParams.set("workspaceId", run.workspaceId)
+    }
+
+    redirect(`/dashboard/recent?${searchParams.toString()}`)
+  }
 
   return (
     <>
-      <SiteHeader
-        title="Deep Research"
-        description="A dedicated thread for one deep research execution."
-      />
+      <SiteHeader title="Deep Research" />
       <div className="flex flex-1 flex-col">
         <div className="@container/main flex flex-1 flex-col px-4 py-4 lg:px-6 lg:py-6">
-          {initialRun ? (
-            <DeepResearchRunThread
-              initialRun={initialRun}
-              initialWorkspace={initialWorkspace}
-              initialWorkspaces={initialWorkspaces}
-            />
-          ) : (
-            <Card className="mx-auto w-full max-w-2xl border border-border/60">
-              <CardHeader>
-                <CardTitle>Research thread not found</CardTitle>
-                <CardDescription>
-                  This run may have been removed, or the link may be invalid.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="flex flex-wrap gap-3">
-                <Button asChild>
-                  <Link href="/dashboard">Back to dashboard</Link>
-                </Button>
-                <Button asChild variant="outline">
-                  <Link href="/dashboard/recent">Open recent runs</Link>
-                </Button>
-              </CardContent>
-            </Card>
-          )}
+          <Card className="mx-auto w-full max-w-2xl border border-border/60">
+            <CardHeader>
+              <CardTitle>Research thread not found</CardTitle>
+              <CardDescription>
+                This run may have been removed, or the link may be invalid.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-wrap gap-3">
+              <Button asChild>
+                <Link href="/dashboard">Back to dashboard</Link>
+              </Button>
+              <Button asChild variant="outline">
+                <Link href="/dashboard/recent">Open recent runs</Link>
+              </Button>
+            </CardContent>
+          </Card>
         </div>
       </div>
     </>

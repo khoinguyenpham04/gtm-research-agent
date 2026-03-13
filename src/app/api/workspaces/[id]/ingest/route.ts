@@ -10,9 +10,9 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const DIRECT_FILE_URL_ERROR =
-  "URL import only supports direct PDF, DOCX, or TXT file links.";
+  "URL import only supports direct PDF, DOCX, TXT, or Markdown file links.";
 
-type SupportedRemoteFileKind = "pdf" | "docx" | "txt";
+type SupportedRemoteFileKind = "pdf" | "docx" | "txt" | "md";
 
 function getFileNameFromUrl(fileUrl: string) {
   try {
@@ -96,6 +96,15 @@ function inferFileKind(options: {
     sniffDocx(options.buffer)
   ) {
     return "docx";
+  }
+
+  if (
+    extension === "md" ||
+    extension === "markdown" ||
+    normalizedMimeType === "text/markdown" ||
+    normalizedMimeType === "text/x-markdown"
+  ) {
+    return "md";
   }
 
   if (
@@ -199,6 +208,8 @@ export async function POST(
         ? "application/pdf"
         : fileKind === "docx"
           ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          : fileKind === "md"
+            ? "text/markdown; charset=utf-8"
           : "text/plain; charset=utf-8";
 
     const result = await ingestDocumentToLibrary({

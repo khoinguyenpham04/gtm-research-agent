@@ -157,8 +157,9 @@ export const CommitTimestamp = ({
   children,
   ...props
 }: CommitTimestampProps) => {
+  const [renderedAt] = useState(() => Date.now());
   const formatted = relativeTimeFormat.format(
-    Math.round((date.getTime() - Date.now()) / (1000 * 60 * 60 * 24)),
+    Math.round((date.getTime() - renderedAt) / (1000 * 60 * 60 * 24)),
     "day"
   );
 

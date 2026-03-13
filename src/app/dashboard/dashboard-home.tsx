@@ -21,10 +21,7 @@ import {
   PromptInputProvider,
   usePromptInputController,
 } from "@/components/ai-elements/prompt-input"
-import {
-  buildDeepResearchChatNewHref,
-  buildSessionThreadHref,
-} from "@/components/deep-research/utils"
+import { buildSessionThreadHref } from "@/components/deep-research/utils"
 import {
   DashboardResearchLauncher,
   type ResearchPlay,
@@ -106,10 +103,12 @@ function HomeIcon({
 }
 
 function DashboardHomeContent({
+  initialSelectedDocumentIds,
   initialSessions,
   initialWorkspace,
   initialWorkspaces,
 }: {
+  initialSelectedDocumentIds?: string[]
   initialSessions: SessionSummary[]
   initialWorkspace: WorkspaceDetail | null
   initialWorkspaces: WorkspaceSummary[]
@@ -124,8 +123,11 @@ function DashboardHomeContent({
   )
   const [workspaces, setWorkspaces] = useState(initialWorkspaces)
   const [sessions, setSessions] = useState(initialSessions)
+  const [launchingResearch, setLaunchingResearch] = useState(false)
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>(
-    initialWorkspace?.documents.map((attachment) => attachment.documentId) ?? [],
+    initialSelectedDocumentIds && initialSelectedDocumentIds.length > 0
+      ? initialSelectedDocumentIds
+      : initialWorkspace?.documents.map((attachment) => attachment.documentId) ?? [],
   )
   const [loadingWorkspace, setLoadingWorkspace] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -238,20 +240,29 @@ function DashboardHomeContent({
     }
   }, [activeWorkspaceId, refreshWorkspaceContext, workspace?.id])
 
+  useEffect(() => {
+    const workspaceDocumentIds = new Set(
+      workspace?.documents.map((attachment) => attachment.documentId) ?? [],
+    )
+
+    setSelectedDocumentIds((current) =>
+      current.filter((documentId) => workspaceDocumentIds.has(documentId)),
+    )
+  }, [workspace?.documents])
+
   const latestSession = useMemo(() => sessions[0] ?? null, [sessions])
   const topic = promptController.textInput.value
   const workspaceDocumentCount = workspace?.documents.length ?? 0
-  const newSessionHref = useMemo(
-    () =>
-      buildDeepResearchChatNewHref({
-        selectedDocumentIds,
-        topic: "",
-        workspaceId: activeWorkspaceId,
-      }),
-    [activeWorkspaceId, selectedDocumentIds],
-  )
+  const handleStartNewSession = useCallback(() => {
+    promptController.textInput.setInput("")
+    const launcher = document.getElementById("dashboard-launcher")
+    launcher?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    })
+  }, [promptController.textInput])
 
-  const handleLaunch = (submittedTopic?: string) => {
+  const handleLaunch = async (submittedTopic?: string) => {
     const nextTopic = (submittedTopic ?? topic).trim()
     if (!nextTopic) {
       return
@@ -262,18 +273,59 @@ function DashboardHomeContent({
       return
     }
 
-    setError(null)
+    const launchKey = crypto.randomUUID()
+    const controller = new AbortController()
+    const timeoutId = window.setTimeout(() => controller.abort(), 15000)
 
-    startTransition(() => {
-      router.push(
-        buildDeepResearchChatNewHref({
-          launchKey: crypto.randomUUID(),
+    setError(null)
+    setLaunchingResearch(true)
+
+    try {
+      const response = await fetch("/api/deep-research/runs", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          launchKey,
           selectedDocumentIds,
           topic: nextTopic,
           workspaceId: activeWorkspaceId,
         }),
+        signal: controller.signal,
+      })
+      const payload = await response.json()
+
+      if (!response.ok) {
+        throw new Error(payload.error || "Failed to create research run.")
+      }
+
+      if (!payload.sessionId) {
+        throw new Error("Research run did not return an owning session.")
+      }
+
+      window.dispatchEvent(new Event("sessions-updated"))
+      startTransition(() => {
+        router.push(
+          buildSessionThreadHref({
+            mode: "research",
+            runId: payload.id,
+            sessionId: payload.sessionId,
+          }),
+        )
+      })
+    } catch (launchError) {
+      setError(
+        launchError instanceof Error && launchError.name === "AbortError"
+          ? "Launching deep research is taking longer than expected. Please try again."
+          : launchError instanceof Error
+            ? launchError.message
+            : "Failed to create research run.",
       )
-    })
+    } finally {
+      window.clearTimeout(timeoutId)
+      setLaunchingResearch(false)
+    }
   }
 
   const applyResearchPlay = (play: ResearchPlay) => {
@@ -306,9 +358,10 @@ function DashboardHomeContent({
               </p>
             </div>
 
-            <div className="w-full max-w-4xl space-y-6">
+            <div className="w-full max-w-4xl space-y-6" id="dashboard-launcher">
               <DashboardResearchLauncher
                 activeWorkspaceId={activeWorkspaceId}
+                isSubmitting={launchingResearch}
                 onSelectedDocumentIdsChange={setSelectedDocumentIds}
                 onSubmit={handleLaunch}
                 onWorkspaceChange={setActiveWorkspaceId}
@@ -369,8 +422,8 @@ function DashboardHomeContent({
                   </div>
 
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-border/55 pt-4">
-                    <Button asChild>
-                      <Link href={newSessionHref}>New Session</Link>
+                    <Button onClick={handleStartNewSession} type="button">
+                      New Session
                     </Button>
                     <Button asChild className="px-0 text-[0.98rem]" variant="link">
                       <Link href="/dashboard/recent">Recent Runs</Link>
@@ -463,12 +516,14 @@ function DashboardHomeContent({
 }
 
 export function DashboardHome(props: {
+  initialSelectedDocumentIds?: string[]
   initialSessions: SessionSummary[]
+  initialTopic?: string
   initialWorkspace: WorkspaceDetail | null
   initialWorkspaces: WorkspaceSummary[]
 }) {
   return (
-    <PromptInputProvider>
+    <PromptInputProvider initialInput={props.initialTopic ?? ""}>
       <DashboardHomeContent {...props} />
     </PromptInputProvider>
   )

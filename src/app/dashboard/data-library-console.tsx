@@ -732,7 +732,7 @@ export function DataLibraryConsole({
                 <p className="text-sm font-medium">Upload file</p>
               </div>
               <Input
-                accept=".pdf,.docx,.txt"
+                accept=".pdf,.docx,.txt,.md,.markdown"
                 onChange={(event) =>
                   setUploadFile(event.target.files?.[0] ?? null)
                 }
@@ -754,8 +754,8 @@ export function DataLibraryConsole({
                 <p className="text-sm font-medium">Import direct file URL</p>
               </div>
               <p className="text-xs leading-5 text-muted-foreground">
-                Paste a direct PDF, DOCX, or TXT file link. Viewer pages and article
-                URLs are not supported.
+                Paste a direct PDF, DOCX, TXT, or Markdown file link. Viewer pages
+                and article URLs are not supported.
               </p>
               <Input
                 placeholder="https://example.com/report.pdf"

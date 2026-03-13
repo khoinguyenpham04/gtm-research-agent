@@ -4,7 +4,8 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Clarion",
-  description: "Clarion Application",
+  description:
+    "Clarion is an agentic go-to-market research workspace for document-grounded analysis, evidence validation, and executive-ready reporting.",
   icons: {
     icon: "/logo.png",
     apple: "/logo.png",

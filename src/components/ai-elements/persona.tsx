@@ -35,6 +35,15 @@ interface PersonaProps {
 // The state machine name is always 'default' for Elements AI visuals
 const stateMachine = "default";
 
+function setStateMachineInputValue(
+  input: { value: boolean | number } | null,
+  nextValue: boolean,
+) {
+  if (input && input.value !== nextValue) {
+    input.value = nextValue;
+  }
+}
+
 const sources = {
   command: {
     dynamicColor: true,
@@ -253,18 +262,10 @@ export const Persona: FC<PersonaProps> = memo(
     const asleepInput = useStateMachineInput(rive, stateMachine, "asleep");
 
     useEffect(() => {
-      if (listeningInput) {
-        listeningInput.value = state === "listening";
-      }
-      if (thinkingInput) {
-        thinkingInput.value = state === "thinking";
-      }
-      if (speakingInput) {
-        speakingInput.value = state === "speaking";
-      }
-      if (asleepInput) {
-        asleepInput.value = state === "asleep";
-      }
+      setStateMachineInputValue(listeningInput, state === "listening");
+      setStateMachineInputValue(thinkingInput, state === "thinking");
+      setStateMachineInputValue(speakingInput, state === "speaking");
+      setStateMachineInputValue(asleepInput, state === "asleep");
     }, [state, listeningInput, thinkingInput, speakingInput, asleepInput]);
 
     const Component = source.hasModel ? PersonaWithModel : PersonaWithoutModel;
