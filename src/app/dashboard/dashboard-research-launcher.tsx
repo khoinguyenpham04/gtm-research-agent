@@ -143,11 +143,13 @@ export function DashboardResearchLauncher({
   const isStopState =
     submitStatus === "submitted" || submitStatus === "streaming"
   const submitDisabled =
-    topic.trim().length === 0 ||
-    hasPendingUploads ||
-    uploadState === "uploading" ||
-    missingWorkspace ||
-    (isSubmitting && !isStopState)
+    isStopState
+      ? false
+      : topic.trim().length === 0 ||
+        hasPendingUploads ||
+        uploadState === "uploading" ||
+        missingWorkspace ||
+        isSubmitting
   const attachedDocuments = workspace?.documents ?? []
   const workspaceDocuments = workspace?.uploadedDocuments ?? []
   const generatedReports = workspace?.generatedReports ?? []
@@ -160,12 +162,12 @@ export function DashboardResearchLauncher({
   const selectedDocLabel =
     mode === "chat"
       ? selectedDocumentIds.length > 0 && workspaceDocumentCount > 0
-        ? `${selectedDocumentIds.length} of ${workspaceDocumentCount} docs`
+        ? `${selectedDocumentIds.length} of ${workspaceDocumentCount} assets`
         : workspaceDocumentCount > 0
-          ? `all ${workspaceDocumentCount} docs`
+          ? `all ${workspaceDocumentCount} assets`
           : "reports only"
       : selectedDocumentIds.length > 0 && workspaceDocumentCount > 0
-        ? `${selectedDocumentIds.length} of ${workspaceDocumentCount} docs + web`
+        ? `${selectedDocumentIds.length} of ${workspaceDocumentCount} assets + web`
         : workspaceDocumentCount > 0
           ? "web only"
           : "web only"

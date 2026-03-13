@@ -15,6 +15,7 @@ export default async function DeepResearchNewChatPage({
 }) {
   const resolvedSearchParams = (await searchParams) ?? {}
   const nextSearchParams = new URLSearchParams()
+  nextSearchParams.set("mode", "chat")
 
   const topic = readSearchParam(resolvedSearchParams.topic)?.trim()
   if (topic) {

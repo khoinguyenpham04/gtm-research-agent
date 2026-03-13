@@ -135,13 +135,19 @@ export function extractActiveRateLimitRetry(
 }
 
 export function buildSessionThreadHref({
+  autostart,
   mode,
+  prompt,
   runId,
+  selectedDocumentIds,
   sessionId,
 }: {
   sessionId: string
+  autostart?: boolean
   mode?: SessionComposerMode
+  prompt?: string
   runId?: string
+  selectedDocumentIds?: string[]
 }) {
   const trimmedSessionId = sessionId.trim()
   if (!trimmedSessionId) {
@@ -156,6 +162,25 @@ export function buildSessionThreadHref({
 
   if (mode) {
     searchParams.set("mode", mode)
+  }
+
+  if (autostart) {
+    searchParams.set("autostart", "1")
+  }
+
+  const trimmedPrompt = prompt?.trim()
+  if (trimmedPrompt) {
+    searchParams.set("prompt", trimmedPrompt)
+  }
+
+  if (selectedDocumentIds && selectedDocumentIds.length > 0) {
+    searchParams.set(
+      "selected",
+      selectedDocumentIds
+        .map((documentId) => documentId.trim())
+        .filter(Boolean)
+        .join(","),
+    )
   }
 
   return searchParams.size

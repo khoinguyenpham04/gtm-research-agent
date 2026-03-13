@@ -90,17 +90,10 @@ export default function HeroSection() {
                                         <div className="absolute inset-x-1.5 inset-y-0 border-x border-dotted border-white/25"></div>
                                         <Sparkle className="size-3 fill-white stroke-white drop-shadow" />
                                     </div>
-                                    <span className="font-medium">Enterprise GTM research workspace</span>
+                                            <span className="font-medium">Now in Early Access</span>
                                 </Link>
-
-                                <h1 className="mx-auto mt-8 max-w-4xl text-balance text-4xl font-bold tracking-tight sm:text-5xl">
-                                    Agentic go-to-market research grounded in your own source material
-                                </h1>
-                                <p className="text-muted-foreground mx-auto my-6 max-w-2xl text-balance text-xl">
-                                    Upload reports, scope a workspace, and let Clarion plan, research,
-                                    validate, and draft an evidence-backed market brief with citations
-                                    and explicit gaps.
-                                </p>
+                                        <h1 className="mx-auto mt-8 max-w-3xl text-balance text-4xl font-bold tracking-tight sm:text-5xl">Deep market research, done in minutes</h1>
+                                        <p className="text-muted-foreground mx-auto my-6 max-w-xl text-balance text-xl">Ask any go-to-market question. Get a comprehensive report with competitive analysis, market sizing, and actionable insights — powered by AI.</p>
 
                                 <div className="flex items-center justify-center gap-3">
                                     <Button asChild size="lg">

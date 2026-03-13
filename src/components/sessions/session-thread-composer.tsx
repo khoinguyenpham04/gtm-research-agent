@@ -22,6 +22,11 @@ type ComposerSubmitPayload = {
   workspaceId: string
 }
 
+type SelectionPrefill = {
+  documentIds: string[]
+  token: number
+}
+
 type LauncherSubmitStatus = ComponentProps<
   typeof DashboardResearchLauncher
 >["submitStatus"]
@@ -36,10 +41,12 @@ export function SessionThreadComposer({
   chatSubmitStatus,
   mode,
   onStopChat,
+  onStopResearch,
   onChatSubmit,
   onModeChange,
   onResearchSubmit,
   prefill,
+  selectionPrefill,
 }: {
   initialWorkspaceId: string
   initialWorkspace: WorkspaceDetail | null
@@ -53,7 +60,9 @@ export function SessionThreadComposer({
     text: string
     token: number
   } | null
+  selectionPrefill?: SelectionPrefill | null
   onStopChat?: () => void
+  onStopResearch?: () => void
   onChatSubmit: (payload: ComposerSubmitPayload) => Promise<void> | void
   onModeChange: (mode: SessionComposerMode) => void
   onResearchSubmit: (payload: ComposerSubmitPayload) => Promise<void> | void
@@ -70,10 +79,12 @@ export function SessionThreadComposer({
         isResearchSubmitting={isResearchSubmitting}
         mode={mode}
         onStopChat={onStopChat}
+        onStopResearch={onStopResearch}
         onChatSubmit={onChatSubmit}
         onModeChange={onModeChange}
         onResearchSubmit={onResearchSubmit}
         prefill={prefill}
+        selectionPrefill={selectionPrefill}
       />
     </PromptInputProvider>
   )
@@ -89,10 +100,12 @@ function SessionThreadComposerInner({
   chatSubmitStatus,
   mode,
   onStopChat,
+  onStopResearch,
   onChatSubmit,
   onModeChange,
   onResearchSubmit,
   prefill,
+  selectionPrefill,
 }: {
   initialWorkspaceId: string
   initialWorkspace: WorkspaceDetail | null
@@ -103,6 +116,7 @@ function SessionThreadComposerInner({
   chatSubmitStatus?: LauncherSubmitStatus
   mode: SessionComposerMode
   onStopChat?: () => void
+  onStopResearch?: () => void
   onChatSubmit: (payload: ComposerSubmitPayload) => Promise<void> | void
   onModeChange: (mode: SessionComposerMode) => void
   onResearchSubmit: (payload: ComposerSubmitPayload) => Promise<void> | void
@@ -110,9 +124,11 @@ function SessionThreadComposerInner({
     text: string
     token: number
   } | null
+  selectionPrefill?: SelectionPrefill | null
 }) {
   const promptController = usePromptInputController()
   const appliedPrefillTokenRef = useRef<number | null>(null)
+  const appliedSelectionTokenRef = useRef<number | null>(null)
   const [workspace, setWorkspace] = useState<WorkspaceDetail | null>(initialWorkspace)
   const [workspaces, setWorkspaces] = useState(initialWorkspaces)
   const [selectedDocumentIds, setSelectedDocumentIds] = useState(
@@ -182,6 +198,29 @@ function SessionThreadComposerInner({
   }, [prefill, promptController.textInput])
 
   useEffect(() => {
+    if (
+      !selectionPrefill ||
+      appliedSelectionTokenRef.current === selectionPrefill.token
+    ) {
+      return
+    }
+
+    appliedSelectionTokenRef.current = selectionPrefill.token
+    const validDocumentIds = new Set(
+      (workspace?.documents ?? []).map((attachment) => attachment.documentId),
+    )
+    const frameId = window.requestAnimationFrame(() => {
+      setSelectedDocumentIds(
+        selectionPrefill.documentIds.filter((documentId) =>
+          validDocumentIds.has(documentId),
+        ),
+      )
+    })
+
+    return () => window.cancelAnimationFrame(frameId)
+  }, [selectionPrefill, workspace?.documents])
+
+  useEffect(() => {
     const handleWorkspaceKnowledgeUpdate = (event: Event) => {
       const detail = (event as CustomEvent<{
         workspaceId?: string
@@ -229,7 +268,7 @@ function SessionThreadComposerInner({
         mode={mode}
         onModeChange={onModeChange}
         onSelectedDocumentIdsChange={setSelectedDocumentIds}
-        onStop={mode === "chat" ? onStopChat : undefined}
+        onStop={mode === "chat" ? onStopChat : onStopResearch}
         onSubmit={(submittedText) => {
           const trimmedText = submittedText?.trim()
           if (!trimmedText) {
@@ -253,7 +292,13 @@ function SessionThreadComposerInner({
           await Promise.all([refreshWorkspaceContext(), refreshWorkspaces()])
         }}
         selectedDocumentIds={selectedDocumentIds}
-        submitStatus={mode === "chat" ? chatSubmitStatus : undefined}
+        submitStatus={
+          mode === "chat"
+            ? chatSubmitStatus
+            : isResearchSubmitting
+              ? "submitted"
+              : undefined
+        }
         workspace={workspace}
         workspaceDocumentCount={workspace?.documents.length ?? 0}
         workspaces={workspaces}

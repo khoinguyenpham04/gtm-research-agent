@@ -920,11 +920,11 @@ export function DataLibraryConsole({
           <CardContent>
             {documents.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                No canonical documents yet. Upload one above or use{" "}
-                <Link className="underline" href="/dashboard/rag-search">
-                  RAG Search
+                No canonical documents yet. Upload one above or open{" "}
+                <Link className="underline" href="/dashboard?mode=chat">
+                  Ask Workspace
                 </Link>{" "}
-                after uploading.
+                after you attach knowledge to a workspace.
               </p>
             ) : (
               <div className="space-y-3">

@@ -22,7 +22,6 @@ import {
   Settings2Icon,
   CircleHelpIcon,
   DatabaseIcon,
-  SearchIcon,
   HistoryIcon,
 } from "lucide-react"
 import Link from "next/link"
@@ -48,11 +47,6 @@ const navMain = [
     title: "Data Library",
     url: "/dashboard/data-library",
     icon: <DatabaseIcon />,
-  },
-  {
-    title: "RAG Search",
-    url: "/dashboard/rag-search",
-    icon: <SearchIcon />,
   },
 ]
 

@@ -434,8 +434,8 @@ export function DeepResearchConsole({
                 </Link>
               </Button>
               <Button asChild variant="outline">
-                <Link href="/dashboard/rag-search">
-                  Open RAG Search
+                <Link href={workspace?.id ? `/dashboard?mode=chat&workspaceId=${workspace.id}` : "/dashboard?mode=chat"}>
+                  Open Ask Workspace
                   <ArrowRight className="size-4" />
                 </Link>
               </Button>

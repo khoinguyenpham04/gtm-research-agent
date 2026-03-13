@@ -5,6 +5,7 @@ import { SiteHeader } from "@/components/site-header"
 import { DashboardHome } from "@/app/dashboard/dashboard-home"
 import { ensureDeepResearchDatabase } from "@/lib/deep-research/db"
 import { listSessions } from "@/lib/deep-research/service"
+import type { SessionComposerMode } from "@/lib/deep-research/types"
 import { getWorkspaceDetail, listWorkspaces } from "@/lib/workspaces"
 
 function readSearchParam(value: string | string[] | undefined) {
@@ -32,6 +33,10 @@ export default async function DashboardPage({
   const requestedWorkspaceId =
     readSearchParam(resolvedSearchParams.workspaceId)?.trim() ?? ""
   const initialTopic = readSearchParam(resolvedSearchParams.topic)?.trim() ?? ""
+  const initialMode: SessionComposerMode =
+    readSearchParam(resolvedSearchParams.mode)?.trim() === "chat"
+      ? "chat"
+      : "research"
   const initialSelectedDocumentIds = (
     readSearchParam(resolvedSearchParams.selectedDocumentIds)?.trim() ?? ""
   )
@@ -73,10 +78,11 @@ export default async function DashboardPage({
       <div className="flex flex-1 flex-col">
         <div className="@container/main flex flex-1 flex-col px-4 py-4 lg:px-6 lg:py-6">
           <DashboardHome
-            initialSelectedDocumentIds={filteredSelectedDocumentIds}
-            initialSessions={initialSessions}
-            initialTopic={initialTopic}
-            initialWorkspace={initialWorkspace}
+          initialSelectedDocumentIds={filteredSelectedDocumentIds}
+          initialMode={initialMode}
+          initialSessions={initialSessions}
+          initialTopic={initialTopic}
+          initialWorkspace={initialWorkspace}
             initialWorkspaces={initialWorkspaces}
           />
         </div>

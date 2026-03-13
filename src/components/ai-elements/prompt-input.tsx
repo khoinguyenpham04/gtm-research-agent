@@ -59,7 +59,6 @@ import {
   CornerDownLeftIcon,
   ImageIcon,
   PlusIcon,
-  SquareIcon,
   XIcon,
 } from "lucide-react";
 import { nanoid } from "nanoid";
@@ -1102,13 +1101,22 @@ export const PromptInputSubmit = ({
   ...props
 }: PromptInputSubmitProps) => {
   const isGenerating = status === "submitted" || status === "streaming";
+  const isStoppable = isGenerating && Boolean(onStop);
+  const FilledSquare = (
+    <span
+      aria-hidden="true"
+      className="size-3 rounded-[3px] bg-current"
+    />
+  );
 
   let Icon = <CornerDownLeftIcon className="size-4" />;
 
-  if (status === "submitted") {
+  if (isStoppable) {
+    Icon = FilledSquare;
+  } else if (status === "submitted") {
     Icon = <Spinner />;
   } else if (status === "streaming") {
-    Icon = <SquareIcon className="size-4" />;
+    Icon = FilledSquare;
   } else if (status === "error") {
     Icon = <XIcon className="size-4" />;
   }
@@ -1127,11 +1135,11 @@ export const PromptInputSubmit = ({
 
   return (
     <InputGroupButton
-      aria-label={isGenerating ? "Stop" : "Submit"}
+      aria-label={isStoppable ? "Stop" : "Submit"}
       className={cn(className)}
       onClick={handleClick}
       size={size}
-      type={isGenerating && onStop ? "button" : "submit"}
+      type={isStoppable ? "button" : "submit"}
       variant={variant}
       {...props}
     >

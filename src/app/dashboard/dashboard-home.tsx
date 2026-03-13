@@ -2,7 +2,8 @@
 
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { startTransition, useCallback, useEffect, useMemo, useState } from "react"
+import type { ChatStatus } from "ai"
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import {
   ArrowRight01Icon,
@@ -15,7 +16,7 @@ import {
   Telescope01Icon,
 } from "@hugeicons/core-free-icons"
 
-import type { SessionSummary } from "@/lib/deep-research/types"
+import type { SessionComposerMode, SessionSummary } from "@/lib/deep-research/types"
 import type { WorkspaceDetail, WorkspaceSummary } from "@/lib/workspaces"
 import {
   PromptInputProvider,
@@ -104,11 +105,13 @@ function HomeIcon({
 
 function DashboardHomeContent({
   initialSelectedDocumentIds,
+  initialMode,
   initialSessions,
   initialWorkspace,
   initialWorkspaces,
 }: {
   initialSelectedDocumentIds?: string[]
+  initialMode: SessionComposerMode
   initialSessions: SessionSummary[]
   initialWorkspace: WorkspaceDetail | null
   initialWorkspaces: WorkspaceSummary[]
@@ -123,7 +126,9 @@ function DashboardHomeContent({
   )
   const [workspaces, setWorkspaces] = useState(initialWorkspaces)
   const [sessions, setSessions] = useState(initialSessions)
+  const [activeMode, setActiveMode] = useState<SessionComposerMode>(initialMode)
   const [launchingResearch, setLaunchingResearch] = useState(false)
+  const [launcherSubmitStatus, setLauncherSubmitStatus] = useState<ChatStatus | undefined>()
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>(
     initialSelectedDocumentIds && initialSelectedDocumentIds.length > 0
       ? initialSelectedDocumentIds
@@ -131,6 +136,7 @@ function DashboardHomeContent({
   )
   const [loadingWorkspace, setLoadingWorkspace] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const activeLaunchControllerRef = useRef<AbortController | null>(null)
 
   const refreshWorkspaceContext = useCallback(async (workspaceId: string) => {
     if (!workspaceId) {
@@ -254,6 +260,7 @@ function DashboardHomeContent({
   const topic = promptController.textInput.value
   const workspaceDocumentCount = workspace?.documents.length ?? 0
   const handleStartNewSession = useCallback(() => {
+    setActiveMode("chat")
     promptController.textInput.setInput("")
     const launcher = document.getElementById("dashboard-launcher")
     launcher?.scrollIntoView({
@@ -262,7 +269,70 @@ function DashboardHomeContent({
     })
   }, [promptController.textInput])
 
-  const handleLaunch = async (submittedTopic?: string) => {
+  const handleChatLaunch = async (submittedTopic?: string) => {
+    const nextTopic = (submittedTopic ?? topic).trim()
+    if (!nextTopic) {
+      return
+    }
+
+    if (!activeWorkspaceId) {
+      setError("Select a workspace before starting Ask Workspace.")
+      return
+    }
+
+    setError(null)
+    setLaunchingResearch(true)
+    setLauncherSubmitStatus("submitted")
+
+    try {
+      const controller = new AbortController()
+      activeLaunchControllerRef.current = controller
+      const response = await fetch("/api/sessions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          workspaceId: activeWorkspaceId,
+        }),
+        signal: controller.signal,
+      })
+      const payload = await response.json()
+
+      if (!response.ok) {
+        throw new Error(payload.error || "Failed to create session.")
+      }
+
+      window.dispatchEvent(new Event("sessions-updated"))
+      startTransition(() => {
+        router.push(
+          buildSessionThreadHref({
+            autostart: true,
+            mode: "chat",
+            prompt: nextTopic,
+            selectedDocumentIds,
+            sessionId: payload.id,
+          }),
+        )
+      })
+    } catch (launchError) {
+      if (launchError instanceof Error && launchError.name === "AbortError") {
+        return
+      }
+
+      setError(
+        launchError instanceof Error
+          ? launchError.message
+          : "Failed to create session.",
+      )
+    } finally {
+      activeLaunchControllerRef.current = null
+      setLaunchingResearch(false)
+      setLauncherSubmitStatus(undefined)
+    }
+  }
+
+  const handleResearchLaunch = async (submittedTopic?: string) => {
     const nextTopic = (submittedTopic ?? topic).trim()
     if (!nextTopic) {
       return
@@ -275,12 +345,13 @@ function DashboardHomeContent({
 
     const launchKey = crypto.randomUUID()
     const controller = new AbortController()
-    const timeoutId = window.setTimeout(() => controller.abort(), 15000)
 
     setError(null)
     setLaunchingResearch(true)
+    setLauncherSubmitStatus("submitted")
 
     try {
+      activeLaunchControllerRef.current = controller
       const response = await fetch("/api/deep-research/runs", {
         method: "POST",
         headers: {
@@ -315,20 +386,39 @@ function DashboardHomeContent({
         )
       })
     } catch (launchError) {
+      if (launchError instanceof Error && launchError.name === "AbortError") {
+        return
+      }
+
       setError(
-        launchError instanceof Error && launchError.name === "AbortError"
-          ? "Launching deep research is taking longer than expected. Please try again."
-          : launchError instanceof Error
-            ? launchError.message
-            : "Failed to create research run.",
+        launchError instanceof Error
+          ? launchError.message
+          : "Failed to create research run.",
       )
     } finally {
-      window.clearTimeout(timeoutId)
+      activeLaunchControllerRef.current = null
       setLaunchingResearch(false)
+      setLauncherSubmitStatus(undefined)
     }
   }
 
+  const handleStopLaunch = useCallback(() => {
+    activeLaunchControllerRef.current?.abort()
+    activeLaunchControllerRef.current = null
+    setLaunchingResearch(false)
+    setLauncherSubmitStatus(undefined)
+  }, [])
+
+  const handleLaunch = (submittedTopic?: string) => {
+    if (activeMode === "chat") {
+      return handleChatLaunch(submittedTopic)
+    }
+
+    return handleResearchLaunch(submittedTopic)
+  }
+
   const applyResearchPlay = (play: ResearchPlay) => {
+    setActiveMode("research")
     promptController.textInput.setInput(play.topic)
   }
 
@@ -351,10 +441,14 @@ function DashboardHomeContent({
 
             <div className="max-w-3xl space-y-3">
               <h1 className="text-balance text-5xl font-semibold leading-[0.97] tracking-[-0.04em] text-foreground">
-                What market question should we answer?
+                {activeMode === "chat"
+                  ? "What should we ask this workspace?"
+                  : "What market question should we answer?"}
               </h1>
               <p className="mx-auto max-w-2xl text-pretty text-[1rem] leading-8 text-muted-foreground sm:text-[1.06rem]">
-                Ask a complex question. Get a full report, with sources.
+                {activeMode === "chat"
+                  ? "Chat with your workspace knowledge, then escalate to deep research when you need a full report."
+                  : "Ask a complex question. Get a full report, with sources."}
               </p>
             </div>
 
@@ -362,11 +456,15 @@ function DashboardHomeContent({
               <DashboardResearchLauncher
                 activeWorkspaceId={activeWorkspaceId}
                 isSubmitting={launchingResearch}
+                mode={activeMode}
+                onModeChange={setActiveMode}
                 onSelectedDocumentIdsChange={setSelectedDocumentIds}
+                onStop={handleStopLaunch}
                 onSubmit={handleLaunch}
                 onWorkspaceChange={setActiveWorkspaceId}
                 onWorkspaceRefresh={handleWorkspaceRefresh}
                 selectedDocumentIds={selectedDocumentIds}
+                submitStatus={launcherSubmitStatus}
                 workspace={workspace}
                 workspaceDocumentCount={workspaceDocumentCount}
                 workspaces={workspaces}
@@ -470,45 +568,47 @@ function DashboardHomeContent({
             </div>
           </section>
 
-          <section className="mx-auto w-full max-w-4xl space-y-5 pb-8">
-            <div className="space-y-2">
-              <h2 className="text-[1.22rem] font-semibold tracking-tight text-foreground">
-                Suggested Research Plays
-              </h2>
-              <p className="text-[0.98rem] leading-7 text-muted-foreground">
-                Start from a familiar GTM task, then adjust the topic before you
-                launch.
-              </p>
-            </div>
+          {activeMode === "research" ? (
+            <section className="mx-auto w-full max-w-4xl space-y-5 pb-8">
+              <div className="space-y-2">
+                <h2 className="text-[1.22rem] font-semibold tracking-tight text-foreground">
+                  Suggested Research Plays
+                </h2>
+                <p className="text-[0.98rem] leading-7 text-muted-foreground">
+                  Start from a familiar GTM task, then adjust the topic before you
+                  launch.
+                </p>
+              </div>
 
-            <div className="divide-y divide-border/60">
-              {researchPlays.map((play) => (
-                <button
-                  key={play.title}
-                  className={cn(
-                    "group flex w-full items-start gap-4 rounded-2xl px-2 py-4 text-left outline-none motion-safe:transition-colors motion-safe:duration-200 hover:bg-muted/30 focus-visible:bg-muted/30",
-                  )}
-                  onClick={() => applyResearchPlay(play)}
-                  type="button"
-                >
-                  <div className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-2xl bg-muted/45 text-foreground/80">
-                    <HomeIcon icon={play.icon} size={18} />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[1.02rem] font-medium leading-6 text-foreground">
-                      {play.title}
-                    </p>
-                    <p className="mt-1 text-[0.96rem] leading-7 text-muted-foreground">
-                      {play.description}
-                    </p>
-                  </div>
-                  <div className="pt-1 text-muted-foreground/70">
-                    <HomeIcon icon={ArrowRight01Icon} size={16} />
-                  </div>
-                </button>
-              ))}
-            </div>
-          </section>
+              <div className="divide-y divide-border/60">
+                {researchPlays.map((play) => (
+                  <button
+                    key={play.title}
+                    className={cn(
+                      "group flex w-full items-start gap-4 rounded-2xl px-2 py-4 text-left outline-none motion-safe:transition-colors motion-safe:duration-200 hover:bg-muted/30 focus-visible:bg-muted/30",
+                    )}
+                    onClick={() => applyResearchPlay(play)}
+                    type="button"
+                  >
+                    <div className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-2xl bg-muted/45 text-foreground/80">
+                      <HomeIcon icon={play.icon} size={18} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[1.02rem] font-medium leading-6 text-foreground">
+                        {play.title}
+                      </p>
+                      <p className="mt-1 text-[0.96rem] leading-7 text-muted-foreground">
+                        {play.description}
+                      </p>
+                    </div>
+                    <div className="pt-1 text-muted-foreground/70">
+                      <HomeIcon icon={ArrowRight01Icon} size={16} />
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </section>
+          ) : null}
         </div>
       </div>
     </div>
@@ -517,6 +617,7 @@ function DashboardHomeContent({
 
 export function DashboardHome(props: {
   initialSelectedDocumentIds?: string[]
+  initialMode: SessionComposerMode
   initialSessions: SessionSummary[]
   initialTopic?: string
   initialWorkspace: WorkspaceDetail | null

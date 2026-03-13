@@ -1,6 +1,3 @@
-import type { UIMessage } from "ai";
-import { convertToModelMessages, streamText } from "ai";
-import { createOpenAI } from "@ai-sdk/openai";
 import OpenAI from "openai";
 
 import type { WorkspaceDetail } from "@/lib/workspaces";
@@ -8,73 +5,44 @@ import { getWorkspaceDetail } from "@/lib/workspaces";
 import { createSupabaseClients } from "@/lib/supabase";
 import {
   getRequiredOpenAiApiKey,
-  getWorkspaceChatMaxOutputTokens,
   getWorkspaceChatModel,
 } from "@/lib/deep-research/config";
 import {
   appendSessionMessage,
   getSessionSummary,
-  listCompletedSessionReports,
   listRecentSessionChatMessages,
-  type SessionCompletedReport,
 } from "@/lib/deep-research/repository";
 import type {
   SearchMatch,
+  SessionRole,
   WorkspaceChatCitation,
   WorkspaceChatMessageMetadata,
-  WorkspaceChatUIMessage,
 } from "@/lib/deep-research/types";
+import type { WorkspaceDocumentAttachment } from "@/lib/workspaces";
 
 const WORKSPACE_CHAT_HISTORY_LIMIT = 12;
 const WORKSPACE_CHAT_DOCUMENT_MATCH_COUNT = 5;
-const WORKSPACE_CHAT_REPORT_MATCH_COUNT = 3;
 const WORKSPACE_CHAT_CONTEXT_CHAR_BUDGET = 7200;
 
-type ReportExcerpt = {
-  id: string;
-  runId: string;
-  runTopic: string;
-  sectionTitle?: string;
-  excerpt: string;
-  score: number;
-  updatedAt: string;
+export type WorkspaceChatHistoryTurn = {
+  content: string;
+  role: SessionRole;
 };
 
-type WorkspaceChatContext = {
-  assistantMetadata: WorkspaceChatMessageMetadata;
-  historyMessages: WorkspaceChatUIMessage[];
+type ResolvedWorkspaceChatScope = {
+  attachmentByDocumentId: Map<string, WorkspaceDocumentAttachment>;
+  effectiveDocumentIds: string[];
+  requestedDocumentIds: string[];
   workspace: WorkspaceDetail;
 };
 
-function extractMessageText(message: UIMessage) {
-  return message.parts
-    .filter((part) => part.type === "text")
-    .map((part) => part.text)
-    .join("\n\n")
-    .trim();
-}
-
-function buildUiMessageFromSessionMessage(message: {
-  id: string;
-  role: "user" | "assistant" | "system";
-  content_markdown: string;
-  metadata_json: WorkspaceChatMessageMetadata | Record<string, unknown>;
-}): WorkspaceChatUIMessage {
-  return {
-    id: message.id,
-    role: message.role,
-    metadata:
-      typeof message.metadata_json === "object" && message.metadata_json
-        ? (message.metadata_json as WorkspaceChatMessageMetadata)
-        : undefined,
-    parts: [
-      {
-        type: "text",
-        text: message.content_markdown,
-      },
-    ],
-  };
-}
+export type PreparedWorkspaceChatTurn = {
+  assistantMetadata: WorkspaceChatMessageMetadata;
+  historyTurns: WorkspaceChatHistoryTurn[];
+  userMessageId: string;
+  userText: string;
+  workspace: WorkspaceDetail;
+};
 
 function normalizeExcerpt(text: string, maxLength = 420) {
   const normalized = text.replace(/\s+/g, " ").trim();
@@ -85,93 +53,10 @@ function normalizeExcerpt(text: string, maxLength = 420) {
   return `${normalized.slice(0, maxLength).trim()}...`;
 }
 
-function tokenize(text: string) {
-  return Array.from(
-    new Set(
-      text
-        .toLowerCase()
-        .match(/[a-z0-9]{3,}/g)
-        ?.filter((token) => token.length > 2) ?? [],
-    ),
-  );
-}
-
-function scoreTextRelevance(query: string, candidate: string) {
-  const queryTokens = tokenize(query);
-  if (queryTokens.length === 0) {
-    return 0;
-  }
-
-  const candidateTokens = new Set(tokenize(candidate));
-  let overlap = 0;
-
-  for (const token of queryTokens) {
-    if (candidateTokens.has(token)) {
-      overlap += 1;
-    }
-  }
-
-  return overlap / queryTokens.length;
-}
-
-function splitReportIntoExcerpts(report: SessionCompletedReport) {
-  const sections = report.finalReportMarkdown
-    .split(/\n(?=#{1,3}\s)/g)
-    .map((section) => section.trim())
-    .filter(Boolean);
-
-  const excerpts: Array<Omit<ReportExcerpt, "score">> = [];
-  const sourceSections = sections.length > 0 ? sections : [report.finalReportMarkdown];
-
-  sourceSections.forEach((section, sectionIndex) => {
-    const headingMatch = section.match(/^#{1,3}\s+(.+)$/m);
-    const sectionTitle = headingMatch?.[1]?.trim();
-    const paragraphBlocks = section
-      .replace(/^#{1,3}\s+.+$/m, "")
-      .split(/\n\s*\n/g)
-      .map((block) => block.trim())
-      .filter((block) => block.length > 0);
-
-    const blocks = paragraphBlocks.length > 0 ? paragraphBlocks : [section];
-    blocks.forEach((block, blockIndex) => {
-      const excerpt = normalizeExcerpt(block, 500);
-      if (!excerpt) {
-        return;
-      }
-
-      excerpts.push({
-        id: `${report.runId}:${sectionIndex}:${blockIndex}`,
-        runId: report.runId,
-        runTopic: report.topic,
-        sectionTitle,
-        excerpt,
-        updatedAt: report.updatedAt,
-      });
-    });
-  });
-
-  return excerpts;
-}
-
-function rankReportExcerpts(query: string, reports: SessionCompletedReport[]) {
-  return reports
-    .flatMap(splitReportIntoExcerpts)
-    .map((excerpt) => ({
-      ...excerpt,
-      score: scoreTextRelevance(query, `${excerpt.runTopic}\n${excerpt.sectionTitle ?? ""}\n${excerpt.excerpt}`),
-    }))
-    .filter((excerpt) => excerpt.score > 0)
-    .sort((left, right) => {
-      if (right.score !== left.score) {
-        return right.score - left.score;
-      }
-
-      return right.updatedAt.localeCompare(left.updatedAt);
-    })
-    .slice(0, WORKSPACE_CHAT_REPORT_MATCH_COUNT);
-}
-
-function buildDocumentCitation(match: SearchMatch): WorkspaceChatCitation {
+function buildDocumentCitation(
+  match: SearchMatch,
+  attachment?: WorkspaceDocumentAttachment,
+): WorkspaceChatCitation {
   const fileName =
     typeof match.metadata.file_name === "string"
       ? match.metadata.file_name
@@ -196,19 +81,31 @@ function buildDocumentCitation(match: SearchMatch): WorkspaceChatCitation {
       : typeof match.metadata.total_chunks === "string"
         ? Number.parseInt(match.metadata.total_chunks, 10)
         : undefined;
+  const isGeneratedReport = attachment?.assetType === "generated_report";
+  const title =
+    isGeneratedReport
+      ? attachment?.generatedReport?.title || fileName
+      : fileName;
 
   return {
     id: `doc:${match.id}`,
-    sourceType: "workspace_document",
-    title: fileName,
+    sourceType: isGeneratedReport ? "generated_report" : "uploaded_document",
+    title,
     excerpt: normalizeExcerpt(match.content),
     locationLabel:
       typeof chunkIndex === "number"
-        ? `Chunk ${chunkIndex + 1}${typeof totalChunks === "number" && totalChunks > 0 ? ` of ${totalChunks}` : ""}`
-        : "Workspace document",
+        ? `Chunk ${chunkIndex + 1}${
+            typeof totalChunks === "number" && totalChunks > 0
+              ? ` of ${totalChunks}`
+              : ""
+          }`
+        : isGeneratedReport
+          ? "Generated report"
+          : "Workspace document",
     url: documentId
       ? `/api/documents?id=${documentId}&file=true${
-          fileType === "application/pdf" || fileName.toLowerCase().endsWith(".pdf")
+          fileType === "application/pdf" ||
+          fileName.toLowerCase().endsWith(".pdf")
             ? "&view=true"
             : ""
         }`
@@ -221,20 +118,6 @@ function buildDocumentCitation(match: SearchMatch): WorkspaceChatCitation {
         ? totalChunks
         : undefined,
     similarity: Number.isFinite(match.similarity) ? match.similarity : undefined,
-  };
-}
-
-function buildReportCitation(excerpt: ReportExcerpt): WorkspaceChatCitation {
-  return {
-    id: `report:${excerpt.id}`,
-    sourceType: "research_report",
-    title: excerpt.runTopic,
-    excerpt: excerpt.excerpt,
-    locationLabel: excerpt.sectionTitle ? `Section: ${excerpt.sectionTitle}` : "Final report",
-    runId: excerpt.runId,
-    runTopic: excerpt.runTopic,
-    sectionTitle: excerpt.sectionTitle,
-    similarity: excerpt.score,
   };
 }
 
@@ -273,9 +156,11 @@ async function searchWorkspaceDocuments(
   return (data ?? []) as SearchMatch[];
 }
 
-function buildContextBlock(citations: WorkspaceChatCitation[]) {
+export function buildWorkspaceChatContextBlock(
+  citations: WorkspaceChatCitation[],
+) {
   if (citations.length === 0) {
-    return "No relevant workspace documents or completed research reports were retrieved for this question.";
+    return "No relevant workspace knowledge was retrieved for this question.";
   }
 
   const lines: string[] = [];
@@ -283,7 +168,12 @@ function buildContextBlock(citations: WorkspaceChatCitation[]) {
 
   citations.forEach((citation, index) => {
     const block = [
-      `[Source ${index + 1}] ${citation.sourceType === "workspace_document" ? "Workspace doc" : "Research report"}: ${citation.title}`,
+      `[Source ${index + 1}] ${
+        citation.sourceType === "generated_report" ||
+        citation.sourceType === "research_report"
+          ? "Generated report"
+          : "Workspace document"
+      }: ${citation.title}`,
       citation.locationLabel ? `Location: ${citation.locationLabel}` : null,
       citation.excerpt,
     ]
@@ -301,11 +191,75 @@ function buildContextBlock(citations: WorkspaceChatCitation[]) {
   return lines.join("\n\n");
 }
 
+function buildRetrievalScopeLabel(args: {
+  requestedDocumentIds: string[];
+  effectiveDocumentIds: string[];
+  workspaceName: string;
+}) {
+  const selectionLabel =
+    args.requestedDocumentIds.length > 0
+      ? `${args.requestedDocumentIds.length} selected workspace asset${
+          args.requestedDocumentIds.length === 1 ? "" : "s"
+        }`
+      : `${args.effectiveDocumentIds.length} attached workspace asset${
+          args.effectiveDocumentIds.length === 1 ? "" : "s"
+        }`;
+
+  return `Searched ${selectionLabel} in ${args.workspaceName}.`;
+}
+
+function buildRetrievalTraceMarkdown(args: {
+  citations: WorkspaceChatCitation[];
+  effectiveDocumentIds: string[];
+  requestedDocumentIds: string[];
+  workspaceName: string;
+}) {
+  const scopeLabel = buildRetrievalScopeLabel(args);
+  if (args.citations.length === 0) {
+    return [
+      scopeLabel,
+      "",
+      "- No relevant workspace knowledge matched this question.",
+    ].join("\n");
+  }
+
+  const uniqueSources = new Map<string, WorkspaceChatCitation>();
+  args.citations.forEach((citation) => {
+    const key = citation.documentId ?? citation.id;
+    if (!uniqueSources.has(key)) {
+      uniqueSources.set(key, citation);
+    }
+  });
+
+  const lines = [
+    scopeLabel,
+    "",
+    `- Retrieved ${args.citations.length} supporting chunk${
+      args.citations.length === 1 ? "" : "s"
+    }.`,
+    "- Top matches:",
+    ...Array.from(uniqueSources.values())
+      .slice(0, 5)
+      .map((citation) => {
+        const kind =
+          citation.sourceType === "generated_report" ||
+          citation.sourceType === "research_report"
+            ? "Generated report"
+            : "Workspace document";
+        return `  - ${kind}: ${citation.title}${
+          citation.locationLabel ? ` (${citation.locationLabel})` : ""
+        }`;
+      }),
+  ];
+
+  return lines.join("\n");
+}
+
 async function resolveWorkspaceContext(
   sessionId: string,
   requestedDocumentIds: string[],
   clerkUserId: string,
-) {
+): Promise<ResolvedWorkspaceChatScope> {
   const session = await getSessionSummary(sessionId, clerkUserId);
   if (!session) {
     throw new Error("Session not found.");
@@ -319,149 +273,149 @@ async function resolveWorkspaceContext(
   const attachedDocumentIds = workspace.documents.map(
     (attachment) => attachment.documentId,
   );
-
   const invalidDocumentIds = requestedDocumentIds.filter(
     (documentId) => !attachedDocumentIds.includes(documentId),
   );
 
   if (invalidDocumentIds.length > 0) {
-    throw new Error(
-      "Selected documents must belong to the session workspace.",
-    );
+    throw new Error("Selected documents must belong to the session workspace.");
   }
 
   const effectiveDocumentIds =
     requestedDocumentIds.length > 0 ? requestedDocumentIds : attachedDocumentIds;
+  const attachmentByDocumentId = new Map(
+    workspace.documents.map((attachment) => [attachment.documentId, attachment]),
+  );
 
   return {
+    attachmentByDocumentId,
     effectiveDocumentIds,
-    session,
+    requestedDocumentIds,
     workspace,
   };
 }
 
-export async function buildWorkspaceChatContext(input: {
-  sessionId: string;
-  requestMessages: WorkspaceChatUIMessage[];
-  selectedDocumentIds: string[];
+function buildHistoryTurns(
+  recentChatMessages: Array<{
+    content_markdown: string;
+    role: SessionRole;
+  }>,
+): WorkspaceChatHistoryTurn[] {
+  return recentChatMessages
+    .map((message) => ({
+      content: message.content_markdown.trim(),
+      role: message.role,
+    }))
+    .filter((message) => message.content.length > 0);
+}
+
+export async function prepareWorkspaceChatTurn(input: {
   clerkUserId: string;
-}) : Promise<WorkspaceChatContext> {
-  const latestUserMessage = [...input.requestMessages]
-    .reverse()
-    .find((message) => message.role === "user");
-
-  if (!latestUserMessage) {
-    throw new Error("A user chat message is required.");
-  }
-
-  const userText = extractMessageText(latestUserMessage);
+  selectedDocumentIds: string[];
+  sessionId: string;
+  text: string;
+  userMessageId?: string;
+}) : Promise<PreparedWorkspaceChatTurn> {
+  const userText = input.text.trim();
   if (!userText) {
     throw new Error("Chat messages must include text content.");
   }
 
   const apiKey = getRequiredOpenAiApiKey();
-  const { effectiveDocumentIds, workspace } = await resolveWorkspaceContext(
+  const {
+    attachmentByDocumentId,
+    effectiveDocumentIds,
+    requestedDocumentIds,
+    workspace,
+  } = await resolveWorkspaceContext(
     input.sessionId,
     input.selectedDocumentIds,
     input.clerkUserId,
   );
 
-  await appendSessionMessage({
-    id: latestUserMessage.id,
+  const userMessageId = await appendSessionMessage({
+    id: input.userMessageId,
     sessionId: input.sessionId,
     role: "user",
     messageType: "chat",
     contentMarkdown: userText,
     metadata: {
       mode: "workspace_chat",
-      selectedDocumentIds: input.selectedDocumentIds,
+      selectedDocumentIds: requestedDocumentIds,
       citations: [],
+      sources: [],
+      model: getWorkspaceChatModel(),
+      retrievedGeneratedReportCount: 0,
+      retrievedUploadedDocumentCount: 0,
       sourceCount: 0,
       createdAt: new Date().toISOString(),
     },
     clerkUserId: input.clerkUserId,
   });
 
-  const [documentMatches, recentChatMessages, completedReports] = await Promise.all([
+  const [documentMatches, recentChatMessages] = await Promise.all([
     searchWorkspaceDocuments(userText, effectiveDocumentIds, apiKey),
     listRecentSessionChatMessages(
       input.sessionId,
       WORKSPACE_CHAT_HISTORY_LIMIT,
       input.clerkUserId,
     ),
-    listCompletedSessionReports(input.sessionId, input.clerkUserId),
   ]);
 
-  const reportExcerpts = rankReportExcerpts(userText, completedReports);
-  const citations = [
-    ...documentMatches.map(buildDocumentCitation),
-    ...reportExcerpts.map(buildReportCitation),
-  ].slice(0, WORKSPACE_CHAT_DOCUMENT_MATCH_COUNT + WORKSPACE_CHAT_REPORT_MATCH_COUNT);
+  const citations = documentMatches
+    .map((match) =>
+      buildDocumentCitation(
+        match,
+        typeof match.metadata.document_id === "string"
+          ? attachmentByDocumentId.get(match.metadata.document_id)
+          : undefined,
+      ),
+    )
+    .slice(0, WORKSPACE_CHAT_DOCUMENT_MATCH_COUNT);
 
-  const historyMessages = recentChatMessages.map(buildUiMessageFromSessionMessage);
+  const uniqueRetrievedAssetIds = new Set(
+    citations
+      .map((citation) => citation.documentId)
+      .filter((documentId): documentId is string => Boolean(documentId)),
+  );
+  let retrievedGeneratedReportCount = 0;
+  let retrievedUploadedDocumentCount = 0;
+
+  uniqueRetrievedAssetIds.forEach((documentId) => {
+    const attachment = attachmentByDocumentId.get(documentId);
+    if (attachment?.assetType === "generated_report") {
+      retrievedGeneratedReportCount += 1;
+      return;
+    }
+
+    retrievedUploadedDocumentCount += 1;
+  });
 
   return {
     assistantMetadata: {
       mode: "workspace_chat",
-      selectedDocumentIds: input.selectedDocumentIds,
+      selectedDocumentIds: requestedDocumentIds,
       citations,
+      sources: citations,
       model: getWorkspaceChatModel(),
+      retrievalScopeLabel: buildRetrievalScopeLabel({
+        effectiveDocumentIds,
+        requestedDocumentIds,
+        workspaceName: workspace.name,
+      }),
+      retrievalTraceMarkdown: buildRetrievalTraceMarkdown({
+        citations,
+        effectiveDocumentIds,
+        requestedDocumentIds,
+        workspaceName: workspace.name,
+      }),
+      retrievedGeneratedReportCount,
+      retrievedUploadedDocumentCount,
       sourceCount: citations.length,
       createdAt: new Date().toISOString(),
     },
-    historyMessages,
-    workspace,
-  };
-}
-
-export async function streamWorkspaceChat(input: {
-  sessionId: string;
-  requestMessages: WorkspaceChatUIMessage[];
-  selectedDocumentIds: string[];
-  clerkUserId: string;
-  signal?: AbortSignal;
-}) {
-  const latestUserMessage = [...input.requestMessages]
-    .reverse()
-    .find((message) => message.role === "user");
-
-  if (!latestUserMessage) {
-    throw new Error("A user chat message is required.");
-  }
-
-  const userText = extractMessageText(latestUserMessage);
-  if (!userText) {
-    throw new Error("Chat messages must include text content.");
-  }
-
-  const { assistantMetadata, historyMessages, workspace } =
-    await buildWorkspaceChatContext(input);
-  const provider = createOpenAI({
-    apiKey: getRequiredOpenAiApiKey(),
-  });
-  const contextBlock = buildContextBlock(assistantMetadata.citations);
-
-  const result = streamText({
-    abortSignal: input.signal,
-    maxOutputTokens: getWorkspaceChatMaxOutputTokens(),
-    model: provider(getWorkspaceChatModel()),
-    messages: await convertToModelMessages(historyMessages),
-    system: [
-      `You are the workspace assistant for "${workspace.name}".`,
-      "Answer only from the retrieved workspace documents and completed deep research reports from this same session.",
-      "Do not use web knowledge, hidden prior knowledge, or unsupported assumptions.",
-      "Keep answers concise, document-grounded, and useful. Prefer short paragraphs or bullets when that improves clarity.",
-      "If the available workspace material does not support a confident answer, say so plainly.",
-      "Do not include inline citation markers like [1]; source cards are rendered separately in the UI.",
-      "",
-      "Retrieved context:",
-      contextBlock,
-    ].join("\n"),
-  });
-
-  return {
-    assistantMetadata,
-    result,
+    historyTurns: buildHistoryTurns(recentChatMessages),
+    userMessageId,
     userText,
     workspace,
   };

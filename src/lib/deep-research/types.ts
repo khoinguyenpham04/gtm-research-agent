@@ -455,6 +455,8 @@ export type SessionComposerMode = (typeof sessionComposerModeValues)[number];
 export const sessionComposerModeSchema = z.enum(sessionComposerModeValues);
 
 export const workspaceChatCitationSourceTypeValues = [
+  "uploaded_document",
+  "generated_report",
   "workspace_document",
   "research_report",
 ] as const;
@@ -489,8 +491,13 @@ export const workspaceChatMessageMetadataSchema = z.object({
   mode: z.literal("workspace_chat"),
   selectedDocumentIds: z.array(z.string().trim().min(1)).default([]),
   citations: z.array(workspaceChatCitationSchema).default([]),
+  sources: z.array(workspaceChatCitationSchema).default([]),
   model: z.string().trim().optional(),
   sourceCount: z.number().int().nonnegative().default(0),
+  retrievalScopeLabel: z.string().trim().optional(),
+  retrievedGeneratedReportCount: z.number().int().nonnegative().default(0),
+  retrievedUploadedDocumentCount: z.number().int().nonnegative().default(0),
+  retrievalTraceMarkdown: z.string().trim().optional(),
   createdAt: z.string().trim().optional(),
   finishedAt: z.string().trim().optional(),
 });
@@ -510,6 +517,12 @@ export function isWorkspaceChatMessageMetadata(
 ): value is WorkspaceChatMessageMetadata {
   return workspaceChatMessageMetadataSchema.safeParse(value).success;
 }
+
+export const createSessionRequestSchema = z.object({
+  workspaceId: z.string().trim().min(1, "Workspace is required."),
+});
+
+export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;
 
 export const updateSessionRequestSchema = z.object({
   title: z.string().trim().min(1, "Session title is required."),

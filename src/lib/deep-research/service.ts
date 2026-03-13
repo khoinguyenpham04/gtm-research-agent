@@ -12,6 +12,7 @@ import {
 } from "@/lib/deep-research/openai-model-factory";
 import {
   appendDeepResearchRunEvent,
+  createSessionRecord,
   createDeepResearchRunRecord,
   getDeepResearchRunEvidenceResponse,
   getDeepResearchRunRecord,
@@ -40,6 +41,8 @@ import type {
   SessionNavigationWorkspaceGroup,
   SessionThreadResponse,
 } from "@/lib/deep-research/types";
+import { DEFAULT_SESSION_TITLE } from "@/lib/deep-research/session-title";
+import { getWorkspaceDetail } from "@/lib/workspaces";
 
 const runtimePromises = new Map<
   string,
@@ -264,6 +267,26 @@ export async function listSessions(options: {
 }): Promise<SessionSummary[]> {
   await ensureDeepResearchDatabase();
   return listSessionSummaries(options);
+}
+
+export async function createSession(input: {
+  workspaceId: string;
+  clerkUserId: string;
+  title?: string;
+}): Promise<SessionSummary> {
+  const [, workspace] = await Promise.all([
+    ensureDeepResearchDatabase(),
+    getWorkspaceDetail(input.workspaceId, input.clerkUserId),
+  ]);
+  if (!workspace) {
+    throw new Error("Workspace not found.");
+  }
+
+  return createSessionRecord({
+    clerkUserId: input.clerkUserId,
+    title: input.title?.trim() || DEFAULT_SESSION_TITLE,
+    workspaceId: workspace.id,
+  });
 }
 
 export async function listSessionNavigation(options?: {

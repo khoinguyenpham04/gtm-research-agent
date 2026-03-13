@@ -493,6 +493,36 @@ async function getSessionRecord(sessionId: string, clerkUserId?: string) {
   return (data as SessionRow | null) ?? null;
 }
 
+export async function createSessionRecord(input: {
+  workspaceId: string;
+  clerkUserId: string;
+  title: string;
+}) {
+  const timestamp = new Date().toISOString();
+  const sessionId = crypto.randomUUID();
+  const { supabaseAdmin } = createSupabaseClients();
+
+  const { data, error } = await supabaseAdmin
+    .from("sessions")
+    .insert({
+      id: sessionId,
+      workspace_id: input.workspaceId,
+      clerk_user_id: input.clerkUserId,
+      title: input.title,
+      created_at: timestamp,
+      updated_at: timestamp,
+      archived_at: null,
+    })
+    .select(sessionSelect)
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return mapSessionSummary(data as SessionRecord);
+}
+
 async function getSessionMessageRows(sessionId: string) {
   const { supabaseAdmin } = createSupabaseClients();
   const { data, error } = await supabaseAdmin
