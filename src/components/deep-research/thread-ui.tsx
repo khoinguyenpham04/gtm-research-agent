@@ -5,6 +5,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type ReactNode,
   type RefObject,
 } from "react"
 import {
@@ -312,7 +313,7 @@ export function DeepResearchActivityDrawer({
         <div
           className={cn(
             "overflow-hidden transition-[max-height,opacity] duration-300 ease-out",
-            expanded ? "max-h-[15rem] opacity-100" : "max-h-0 opacity-0",
+            expanded ? "max-h-60 opacity-100" : "max-h-0 opacity-0",
           )}
         >
           <div className="pb-5">

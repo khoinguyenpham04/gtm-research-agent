@@ -3,14 +3,16 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { Menu, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { SignInButton, SignUpButton, UserButton } from '@clerk/nextjs'
+import { Show } from '@clerk/nextjs'
 import React from 'react'
 import { cn } from '@/lib/utils'
 
-const menuItems = [
-    { name: 'How It Works', href: '#link' },
-    { name: 'Use Cases', href: '#link' },
-    { name: 'Pricing', href: '#link' },
-    { name: 'Company', href: '#link' },
+const menuItems: { name: string; href: string }[] = [
+    // { name: 'How It Works', href: '#link' },
+    // { name: 'Use Cases', href: '#link' },
+    // { name: 'Pricing', href: '#link' },
+    // { name: 'Company', href: '#link' },
 ]
 
 export const HeroHeader = () => {
@@ -78,31 +80,33 @@ export const HeroHeader = () => {
                                 </ul>
                             </div>
                             <div className="flex w-full flex-col space-y-3 sm:flex-row sm:gap-3 sm:space-y-0 md:w-fit">
-                                <Button
-                                    asChild
-                                    variant="outline"
-                                    size="sm"
-                                    className={cn(isScrolled && 'lg:hidden')}>
-                                    <Link href="#">
-                                        <span>Login</span>
-                                    </Link>
-                                </Button>
-                                <Button
-                                    asChild
-                                    size="sm"
-                                    className={cn(isScrolled && 'lg:hidden')}>
-                                    <Link href="#">
-                                        <span>Get Early Access</span>
-                                    </Link>
-                                </Button>
-                                <Button
-                                    asChild
-                                    size="sm"
-                                    className={cn(isScrolled ? 'lg:inline-flex' : 'hidden')}>
-                                    <Link href="#">
-                                        <span>Get Early Access</span>
-                                    </Link>
-                                </Button>
+                                <Show when="signed-out">
+                                    <SignInButton mode="redirect">
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className={cn(isScrolled && 'lg:hidden')}>
+                                            <span>Login</span>
+                                        </Button>
+                                    </SignInButton>
+                                    <SignUpButton mode="redirect">
+                                        <Button
+                                            size="sm"
+                                            className={cn(isScrolled && 'lg:hidden')}>
+                                            <span>Get Early Access</span>
+                                        </Button>
+                                    </SignUpButton>
+                                    <SignUpButton mode="redirect">
+                                        <Button
+                                            size="sm"
+                                            className={cn(isScrolled ? 'lg:inline-flex' : 'hidden')}>
+                                            <span>Get Early Access</span>
+                                        </Button>
+                                    </SignUpButton>
+                                </Show>
+                                <Show when="signed-in">
+                                    <UserButton />
+                                </Show>
                             </div>
                         </div>
                     </div>

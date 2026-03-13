@@ -1,5 +1,6 @@
 "use client"
 
+import { useClerk } from "@clerk/nextjs"
 import {
   Avatar,
   AvatarFallback,
@@ -32,6 +33,7 @@ export function NavUser({
   }
 }) {
   const { isMobile } = useSidebar()
+  const { signOut } = useClerk()
 
   return (
     <SidebarMenu>
@@ -94,9 +96,8 @@ export function NavUser({
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
-            <DropdownMenuItem>
-              <LogOutIcon
-              />
+            <DropdownMenuItem onClick={() => signOut({ redirectUrl: '/' })}>
+              <LogOutIcon />
               Log out
             </DropdownMenuItem>
           </DropdownMenuContent>

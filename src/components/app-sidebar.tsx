@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { useUser } from "@clerk/nextjs"
 
 import { NavMain } from "@/components/nav-main"
 import { NavThreads } from "@/components/nav-threads"
@@ -27,75 +28,56 @@ import {
 import Link from "next/link"
 import Image from "next/image"
 
-const data = {
-  user: {
-    name: "Noah",
-    email: "noah@clarion.com",
-    avatar: "/noah-avatar.jpeg",
+const navMain = [
+  {
+    title: "Home",
+    url: "/dashboard",
+    icon: <HomeIcon />,
   },
-  navMain: [
-    {
-      title: "Home",
-      url: "/dashboard",
-      icon: (
-        <HomeIcon
-        />
-      ),
-    },
-    {
-      title: "Deep Research",
-      url: "/dashboard/deepresearch",
-      icon: (
-        <LayoutDashboardIcon
-        />
-      ),
-    },
-    {
-      title: "Recent Runs",
-      url: "/dashboard/recent",
-      icon: (
-        <HistoryIcon
-        />
-      ),
-    },
-    {
-      title: "Data Library",
-      url: "/dashboard/data-library",
-      icon: (
-        <DatabaseIcon
-        />
-      ),
-    },
-    {
-      title: "RAG Search",
-      url: "/dashboard/rag-search",
-      icon: (
-        <SearchIcon
-        />
-      ),
-    },
-  ],
-  navSecondary: [
-    {
-      title: "Settings",
-      url: "#",
-      icon: (
-        <Settings2Icon
-        />
-      ),
-    },
-    {
-      title: "Get Help",
-      url: "#",
-      icon: (
-        <CircleHelpIcon
-        />
-      ),
-    },
-  ],
-}
+  {
+    title: "Deep Research",
+    url: "/dashboard/deepresearch",
+    icon: <LayoutDashboardIcon />,
+  },
+  {
+    title: "Recent Runs",
+    url: "/dashboard/recent",
+    icon: <HistoryIcon />,
+  },
+  {
+    title: "Data Library",
+    url: "/dashboard/data-library",
+    icon: <DatabaseIcon />,
+  },
+  {
+    title: "RAG Search",
+    url: "/dashboard/rag-search",
+    icon: <SearchIcon />,
+  },
+]
+
+const navSecondary = [
+  {
+    title: "Settings",
+    url: "#",
+    icon: <Settings2Icon />,
+  },
+  {
+    title: "Get Help",
+    url: "#",
+    icon: <CircleHelpIcon />,
+  },
+]
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
+  const { user } = useUser()
+
+  const navUser = {
+    name: user?.fullName ?? user?.firstName ?? "User",
+    email: user?.primaryEmailAddress?.emailAddress ?? "",
+    avatar: user?.imageUrl ?? "",
+  }
+
   return (
     <Sidebar collapsible="offcanvas" {...props}>
       <SidebarHeader>
@@ -121,12 +103,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
-        <NavMain items={data.navMain} />
+        <NavMain items={navMain} />
         <NavThreads />
-        <NavSecondary items={data.navSecondary} className="mt-auto" />
+        <NavSecondary items={navSecondary} className="mt-auto" />
       </SidebarContent>
       <SidebarFooter>
-        <NavUser user={data.user} />
+        <NavUser user={navUser} />
       </SidebarFooter>
     </Sidebar>
   )
