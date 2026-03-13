@@ -5,6 +5,7 @@ import { startTransition, useCallback, useRef, useState } from "react"
 import type {
   WorkspaceChatCitation,
   WorkspaceChatMessageMetadata,
+  WorkspaceChatTraceEvent,
 } from "@/lib/deep-research/types"
 
 export type AskWorkspaceStatus =
@@ -75,6 +76,9 @@ export function useSessionWorkspaceChat({
   const [transientSources, setTransientSources] = useState<
     WorkspaceChatCitation[]
   >([])
+  const [transientTraceEvents, setTransientTraceEvents] = useState<
+    WorkspaceChatTraceEvent[]
+  >([])
   const [transientUserText, setTransientUserText] = useState<string | null>(null)
   const [requestId, setRequestId] = useState<string | null>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
@@ -86,6 +90,7 @@ export function useSessionWorkspaceChat({
       setStreamingAssistantText("")
       setTransientMetadata(null)
       setTransientSources([])
+      setTransientTraceEvents([])
       setTransientUserText(null)
     })
   }, [])
@@ -118,6 +123,7 @@ export function useSessionWorkspaceChat({
       setStreamingAssistantText("")
       setTransientMetadata(null)
       setTransientSources([])
+      setTransientTraceEvents([])
       setTransientUserText(trimmedText)
       setRequestId(crypto.randomUUID())
 
@@ -188,12 +194,23 @@ export function useSessionWorkspaceChat({
               if (Array.isArray(metadata?.sources)) {
                 setTransientSources(metadata.sources)
               }
+              if (Array.isArray(metadata?.traceEvents)) {
+                setTransientTraceEvents(metadata.traceEvents)
+              }
               continue
             }
 
             if (event.event === "sources") {
               if (Array.isArray(payload.sources)) {
                 setTransientSources(payload.sources as WorkspaceChatCitation[])
+              }
+              continue
+            }
+
+            if (event.event === "trace") {
+              const traceEvent = payload.traceEvent as WorkspaceChatTraceEvent | undefined
+              if (traceEvent) {
+                setTransientTraceEvents((current) => [...current, traceEvent])
               }
               continue
             }
@@ -216,11 +233,14 @@ export function useSessionWorkspaceChat({
             }
 
             if (event.event === "error") {
-              throw new Error(
+              const message =
                 typeof payload.message === "string"
                   ? payload.message
-                  : "Workspace chat failed to generate a response.",
-              )
+                  : "Workspace chat failed to generate a response."
+              setError(message)
+              setStatus("error")
+              abortControllerRef.current = null
+              return
             }
           }
         }
@@ -246,6 +266,19 @@ export function useSessionWorkspaceChat({
             ? nextError.message
             : "Workspace chat failed to generate a response.",
         )
+        setTransientTraceEvents((current) => [
+          ...current,
+          {
+            createdAt: new Date().toISOString(),
+            details: {},
+            id: crypto.randomUUID(),
+            message:
+              nextError instanceof Error
+                ? nextError.message
+                : "Workspace chat failed to generate a response.",
+            stage: "error",
+          },
+        ])
         setStatus("error")
         abortControllerRef.current = null
       }
@@ -262,6 +295,7 @@ export function useSessionWorkspaceChat({
     transientAssistantMetadata: transientMetadata,
     transientAssistantSources: transientSources,
     transientAssistantText: streamingAssistantText,
+    transientTraceEvents,
     transientUserText,
   }
 }

@@ -498,6 +498,23 @@ export const workspaceChatMessageMetadataSchema = z.object({
   retrievedGeneratedReportCount: z.number().int().nonnegative().default(0),
   retrievedUploadedDocumentCount: z.number().int().nonnegative().default(0),
   retrievalTraceMarkdown: z.string().trim().optional(),
+  traceEvents: z
+    .array(
+      z.object({
+        createdAt: z.string().trim().min(1),
+        details: z.record(z.string(), z.unknown()).default({}).optional(),
+        id: z.string().trim().min(1),
+        message: z.string().trim().min(1),
+        stage: z.enum([
+          "starting",
+          "retrieving",
+          "streaming",
+          "completed",
+          "error",
+        ]),
+      }),
+    )
+    .default([]),
   createdAt: z.string().trim().optional(),
   finishedAt: z.string().trim().optional(),
 });
@@ -505,6 +522,8 @@ export const workspaceChatMessageMetadataSchema = z.object({
 export type WorkspaceChatMessageMetadata = z.infer<
   typeof workspaceChatMessageMetadataSchema
 >;
+export type WorkspaceChatTraceEvent =
+  WorkspaceChatMessageMetadata["traceEvents"][number];
 
 export type SessionMessageMetadata =
   | Record<string, unknown>

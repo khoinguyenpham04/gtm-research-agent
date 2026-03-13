@@ -1092,6 +1092,7 @@ export type PromptInputSubmitProps = ComponentProps<typeof InputGroupButton> & {
 
 export const PromptInputSubmit = ({
   className,
+  disabled,
   variant = "default",
   size = "icon-sm",
   status,
@@ -1102,6 +1103,7 @@ export const PromptInputSubmit = ({
 }: PromptInputSubmitProps) => {
   const isGenerating = status === "submitted" || status === "streaming";
   const isStoppable = isGenerating && Boolean(onStop);
+  const resolvedDisabled = isStoppable ? false : disabled;
   const FilledSquare = (
     <span
       aria-hidden="true"
@@ -1135,13 +1137,15 @@ export const PromptInputSubmit = ({
 
   return (
     <InputGroupButton
-      aria-label={isStoppable ? "Stop" : "Submit"}
       className={cn(className)}
       onClick={handleClick}
       size={size}
       type={isStoppable ? "button" : "submit"}
       variant={variant}
       {...props}
+      aria-disabled={resolvedDisabled}
+      aria-label={isStoppable ? "Stop" : "Submit"}
+      disabled={resolvedDisabled}
     >
       {children ?? Icon}
     </InputGroupButton>

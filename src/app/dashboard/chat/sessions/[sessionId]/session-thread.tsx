@@ -9,10 +9,11 @@ import {
   useRef,
   useState,
 } from "react"
-import { ArrowUpRightIcon, BookIcon, TelescopeIcon } from "lucide-react"
+import { BookIcon, TelescopeIcon } from "lucide-react"
 import { useStickToBottomContext } from "use-stick-to-bottom"
 
 import {
+  AskWorkspaceActivityDrawer,
   DeepResearchActivityDrawer,
   DeepResearchArtifactsPanel,
   DeepResearchClarificationCard,
@@ -36,18 +37,7 @@ import {
   MessageContent,
   MessageResponse,
 } from "@/components/ai-elements/message"
-import {
-  Reasoning,
-  ReasoningContent,
-  ReasoningTrigger,
-} from "@/components/ai-elements/reasoning"
 import { Shimmer } from "@/components/ai-elements/shimmer"
-import {
-  Source,
-  Sources,
-  SourcesContent,
-  SourcesTrigger,
-} from "@/components/ai-elements/sources"
 import { useSessionThread } from "@/components/sessions/use-session-thread"
 import { SessionThreadComposer } from "@/components/sessions/session-thread-composer"
 import { useSessionWorkspaceChat } from "@/components/sessions/use-session-workspace-chat"
@@ -59,6 +49,7 @@ import type {
   SessionMessage,
   SessionThreadResponse,
   WorkspaceChatCitation,
+  WorkspaceChatTraceEvent,
 } from "@/lib/deep-research/types"
 import {
   isWorkspaceChatMessageMetadata,
@@ -129,111 +120,51 @@ function AssistantChatSources({
   }
 
   return (
-    <Sources defaultOpen>
-      <SourcesTrigger
-        className="inline-flex items-center gap-2 text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground"
-        count={citations.length}
+    <div className="flex flex-wrap items-center gap-2">
+      <Badge
+        className="rounded-full border-0 bg-zinc-900/6 px-3 py-1 text-[0.72rem] font-medium tracking-[0.02em] text-zinc-700 shadow-none"
+        variant="secondary"
       >
         <BookIcon className="size-3.5" />
-        <span>
-          {citations.length} source{citations.length === 1 ? "" : "s"}
-        </span>
-      </SourcesTrigger>
-      <SourcesContent className="mt-3 grid gap-2">
-        {citations.map((citation) => {
-          const href = buildWorkspaceChatSourceHref({
-            citation,
-            sessionId,
-          })
-          const sourceTypeLabel = normalizeWorkspaceChatSourceType(citation)
+        {citations.length} source{citations.length === 1 ? "" : "s"}
+      </Badge>
+      {citations.map((citation) => {
+        const href = buildWorkspaceChatSourceHref({
+          citation,
+          sessionId,
+        })
+        const label = citation.locationLabel
+          ? `${citation.title} · ${citation.locationLabel}`
+          : citation.title
+        const badge = (
+          <Badge
+            className="max-w-full rounded-full border-zinc-200 bg-white/80 px-3 py-1 text-[0.78rem] font-medium text-zinc-700 shadow-none"
+            title={`${normalizeWorkspaceChatSourceType(citation)}${
+              citation.excerpt ? `\n\n${citation.excerpt}` : ""
+            }`}
+            variant="outline"
+          >
+            <span className="max-w-[18rem] truncate">{label}</span>
+          </Badge>
+        )
 
-          return (
-            <Source
-              className="rounded-2xl border border-zinc-200 bg-zinc-50/90 px-3 py-3 text-left no-underline transition-colors hover:bg-zinc-100/80"
-              href={href}
-              key={citation.id}
-              rel={citation.url ? "noreferrer" : undefined}
-              target={citation.url ? "_blank" : undefined}
-            >
-              <div className="flex w-full flex-col gap-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge
-                    className="rounded-full border-0 bg-zinc-900/6 text-[0.72rem] font-medium tracking-[0.02em] text-zinc-700 shadow-none"
-                    variant="secondary"
-                  >
-                    {sourceTypeLabel}
-                  </Badge>
-                  {citation.locationLabel ? (
-                    <span className="text-xs text-muted-foreground">
-                      {citation.locationLabel}
-                    </span>
-                  ) : null}
-                </div>
-                <div className="space-y-1">
-                  <p className="text-sm font-medium text-foreground">
-                    {citation.title}
-                  </p>
-                  <p className="line-clamp-3 text-sm leading-6 text-muted-foreground">
-                    {citation.excerpt}
-                  </p>
-                </div>
-                {href ? (
-                  <span className="inline-flex items-center gap-1 text-xs font-medium text-foreground">
-                    Open source
-                    <ArrowUpRightIcon className="size-3.5" />
-                  </span>
-                ) : null}
-              </div>
-            </Source>
-          )
-        })}
-      </SourcesContent>
-    </Sources>
-  )
-}
+        if (!href) {
+          return <div key={citation.id}>{badge}</div>
+        }
 
-function AssistantChatReasoning({
-  retrievalTraceMarkdown,
-  retrievalScopeLabel,
-  retrievedGeneratedReportCount,
-  retrievedUploadedDocumentCount,
-  sourceCount,
-}: {
-  retrievalTraceMarkdown?: string
-  retrievalScopeLabel?: string
-  retrievedGeneratedReportCount?: number
-  retrievedUploadedDocumentCount?: number
-  sourceCount: number
-}) {
-  if (!retrievalTraceMarkdown) {
-    return null
-  }
-
-  const summaryParts = [
-    retrievedUploadedDocumentCount
-      ? `${retrievedUploadedDocumentCount} workspace doc${
-          retrievedUploadedDocumentCount === 1 ? "" : "s"
-        }`
-      : null,
-    retrievedGeneratedReportCount
-      ? `${retrievedGeneratedReportCount} generated report${
-          retrievedGeneratedReportCount === 1 ? "" : "s"
-        }`
-      : null,
-  ].filter(Boolean)
-
-  return (
-    <Reasoning defaultOpen={false}>
-      <ReasoningTrigger className="items-center gap-2 text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
-        <span>Retrieval trace</span>
-        <span className="text-[0.72rem] tracking-[0.02em] text-muted-foreground/80">
-          {summaryParts.length > 0 ? summaryParts.join(" · ") : `${sourceCount} matches`}
-        </span>
-      </ReasoningTrigger>
-      <ReasoningContent className="mt-3 rounded-2xl border border-zinc-200 bg-zinc-50/75 px-3 py-3 text-sm leading-6 text-zinc-600">
-        {[retrievalScopeLabel, retrievalTraceMarkdown].filter(Boolean).join("\n\n")}
-      </ReasoningContent>
-    </Reasoning>
+        return (
+          <a
+            className="inline-flex no-underline"
+            href={href}
+            key={citation.id}
+            rel={citation.url ? "noreferrer" : undefined}
+            target={citation.url ? "_blank" : undefined}
+          >
+            {badge}
+          </a>
+        )
+      })}
+    </div>
   )
 }
 
@@ -241,50 +172,21 @@ function AssistantChatMessage({
   citations,
   contentMarkdown,
   onEscalate,
-  reasoningMetadata,
   sessionId,
-  streaming = false,
 }: {
   contentMarkdown: string
   citations: WorkspaceChatCitation[]
   onEscalate?: () => void
-  reasoningMetadata?: {
-    retrievalScopeLabel?: string
-    retrievedGeneratedReportCount?: number
-    retrievedUploadedDocumentCount?: number
-    retrievalTraceMarkdown?: string
-    sourceCount: number
-  }
   sessionId: string
-  streaming?: boolean
 }) {
   return (
     <Card className={CHAT_MESSAGE_CARD_CLASS}>
       <CardContent className="space-y-4 px-4 py-4">
         <div className="space-y-3">
-          {streaming ? (
-            <div className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-[0.7rem] font-medium uppercase tracking-[0.14em] text-zinc-500">
-              <span className="inline-flex size-1.5 animate-pulse rounded-full bg-zinc-400" />
-              Streaming
-            </div>
-          ) : null}
-
           <MessageResponse className={CHAT_MARKDOWN_CLASS}>
             {contentMarkdown}
           </MessageResponse>
         </div>
-
-        <AssistantChatReasoning
-          retrievalScopeLabel={reasoningMetadata?.retrievalScopeLabel}
-          retrievedGeneratedReportCount={
-            reasoningMetadata?.retrievedGeneratedReportCount
-          }
-          retrievedUploadedDocumentCount={
-            reasoningMetadata?.retrievedUploadedDocumentCount
-          }
-          retrievalTraceMarkdown={reasoningMetadata?.retrievalTraceMarkdown}
-          sourceCount={reasoningMetadata?.sourceCount ?? citations.length}
-        />
 
         <AssistantChatSources citations={citations} sessionId={sessionId} />
 
@@ -455,19 +357,6 @@ function renderSessionMessageCard({
         citations={chatMetadata?.sources ?? chatMetadata?.citations ?? []}
         contentMarkdown={message.contentMarkdown}
         onEscalate={onEscalate}
-        reasoningMetadata={
-          chatMetadata
-            ? {
-                retrievalScopeLabel: chatMetadata.retrievalScopeLabel,
-                retrievedGeneratedReportCount:
-                  chatMetadata.retrievedGeneratedReportCount,
-                retrievedUploadedDocumentCount:
-                  chatMetadata.retrievedUploadedDocumentCount,
-                retrievalTraceMarkdown: chatMetadata.retrievalTraceMarkdown,
-                sourceCount: chatMetadata.sourceCount,
-              }
-            : undefined
-        }
         sessionId={sessionId}
       />
     )
@@ -476,6 +365,20 @@ function renderSessionMessageCard({
   return (
     <UserChatBubble contentMarkdown={message.contentMarkdown} />
   )
+}
+
+function getWorkspaceChatTraceEvents(
+  message: SessionMessage,
+): WorkspaceChatTraceEvent[] {
+  if (message.messageType !== "chat" || message.role !== "assistant") {
+    return []
+  }
+
+  const metadata = isWorkspaceChatMessageMetadata(message.metadata)
+    ? message.metadata
+    : null
+
+  return metadata?.traceEvents ?? []
 }
 
 export function DeepResearchSessionThread({
@@ -526,6 +429,7 @@ export function DeepResearchSessionThread({
     transientAssistantMetadata,
     transientAssistantSources,
     transientAssistantText,
+    transientTraceEvents,
     transientUserText,
   } = useSessionWorkspaceChat({
     onPersisted: async () => {
@@ -542,6 +446,15 @@ export function DeepResearchSessionThread({
       .reverse()
       .find((message) => message.linkedRun)
       ?.linkedRun
+  const latestPersistedChatTraceEvents = [...sessionMessages]
+    .reverse()
+    .find((message) => getWorkspaceChatTraceEvents(message).length > 0)
+  const chatActivityEvents =
+    transientTraceEvents.length > 0
+      ? transientTraceEvents
+      : latestPersistedChatTraceEvents
+        ? getWorkspaceChatTraceEvents(latestPersistedChatTraceEvents)
+        : []
 
   const combinedError = composerError ?? chatError ?? error
   const isChatSubmitting =
@@ -937,23 +850,7 @@ export function DeepResearchSessionThread({
                             []
                       }
                       contentMarkdown={transientAssistantText}
-                      reasoningMetadata={
-                        transientAssistantMetadata
-                          ? {
-                              retrievalScopeLabel:
-                                transientAssistantMetadata.retrievalScopeLabel,
-                              retrievedGeneratedReportCount:
-                                transientAssistantMetadata.retrievedGeneratedReportCount,
-                              retrievedUploadedDocumentCount:
-                                transientAssistantMetadata.retrievedUploadedDocumentCount,
-                              retrievalTraceMarkdown:
-                                transientAssistantMetadata.retrievalTraceMarkdown,
-                              sourceCount: transientAssistantMetadata.sourceCount,
-                            }
-                          : undefined
-                      }
                       sessionId={currentSession.id}
-                      streaming={chatStatus === "streaming"}
                     />
                   </div>
                 </Message>
@@ -976,7 +873,15 @@ export function DeepResearchSessionThread({
 
           <div className="sticky bottom-0 z-10 px-4 pb-4 pt-6 sm:px-6">
             <div className="relative">
-              {activityRun?.events.length ? (
+              {activeMode === "chat" && chatActivityEvents.length > 0 ? (
+                <div className="pointer-events-none absolute inset-x-0 bottom-[calc(100%-1.15rem)] z-0">
+                  <div className="pointer-events-auto">
+                    <AskWorkspaceActivityDrawer events={chatActivityEvents} />
+                  </div>
+                </div>
+              ) : null}
+
+              {activeMode !== "chat" && activityRun?.events.length ? (
                 <div className="pointer-events-none absolute inset-x-0 bottom-[calc(100%-1.15rem)] z-0">
                   <div className="pointer-events-auto">
                     <DeepResearchActivityDrawer events={activityRun.events} />

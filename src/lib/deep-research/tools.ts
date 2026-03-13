@@ -1,6 +1,6 @@
 import { HumanMessage } from "@langchain/core/messages";
 import type { DynamicStructuredTool } from "@langchain/core/tools";
-import { tool } from "langchain";
+import { tool } from "@langchain/core/tools";
 import OpenAI from "openai";
 import { z } from "zod";
 

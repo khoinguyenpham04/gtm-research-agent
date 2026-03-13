@@ -44,6 +44,12 @@ const runActivityStageVariants = cva(
           "bg-fuchsia-100 text-fuchsia-800 dark:bg-fuchsia-500/20 dark:text-fuchsia-200",
         throttled:
           "bg-orange-100 text-orange-800 dark:bg-orange-500/20 dark:text-orange-200",
+        starting:
+          "bg-slate-100 text-slate-700 dark:bg-slate-500/15 dark:text-slate-200",
+        streaming:
+          "bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-200",
+        error:
+          "bg-rose-100 text-rose-800 dark:bg-rose-500/20 dark:text-rose-200",
         unknown:
           "bg-slate-100 text-slate-700 dark:bg-slate-500/15 dark:text-slate-200",
       },
@@ -62,6 +68,9 @@ type KnownRunActivityStage =
   | "searching"
   | "researching"
   | "drafting"
+  | "starting"
+  | "streaming"
+  | "error"
   | "throttled"
 
 function normalizeStage(stage: string): KnownRunActivityStage | "unknown" {
@@ -76,6 +85,9 @@ function normalizeStage(stage: string): KnownRunActivityStage | "unknown" {
     case "searching":
     case "researching":
     case "drafting":
+    case "starting":
+    case "streaming":
+    case "error":
     case "throttled":
       return stage
     default:
@@ -87,7 +99,11 @@ function getStageIcon(stage: KnownRunActivityStage | "unknown") {
   switch (stage) {
     case "queued":
       return Clock01Icon
+    case "starting":
+      return Clock01Icon
     case "running":
+      return CloudLoadingIcon
+    case "streaming":
       return CloudLoadingIcon
     case "completed":
       return Task01Icon
@@ -106,6 +122,8 @@ function getStageIcon(stage: KnownRunActivityStage | "unknown") {
     case "drafting":
       return FileEditIcon
     case "throttled":
+      return AlertCircleIcon
+    case "error":
       return AlertCircleIcon
     case "unknown":
     default:

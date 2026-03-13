@@ -23,6 +23,7 @@ import type {
   DeepResearchRunEvent,
   DeepResearchRunResponse,
   PreResearchPlan,
+  WorkspaceChatTraceEvent,
 } from "@/lib/deep-research/types"
 import {
   Conversation,
@@ -59,6 +60,11 @@ const THREAD_SURFACE_CARD_CLASS =
   "border border-zinc-200 bg-white ring-0 shadow-none"
 
 const THREAD_INSET_SURFACE_CLASS = "border border-zinc-200 bg-white"
+
+type ActivityDrawerEvent = Pick<
+  DeepResearchRunEvent,
+  "createdAt" | "id" | "message" | "stage"
+>
 
 function StatusCopy({
   launchPending,
@@ -240,7 +246,7 @@ export function DeepResearchLaunchStatusCard({
 export function DeepResearchActivityTimeline({
   events,
 }: {
-  events: DeepResearchRunEvent[]
+  events: ActivityDrawerEvent[]
 }) {
   const { containerRef, freshEventIds } = useResearchActivityFeed(events)
 
@@ -264,10 +270,12 @@ export function DeepResearchActivityTimeline({
   )
 }
 
-export function DeepResearchActivityDrawer({
+function SharedActivityDrawer({
   events,
+  title,
 }: {
-  events: DeepResearchRunEvent[]
+  events: ActivityDrawerEvent[]
+  title: string
 }) {
   const [collapsedByUser, setCollapsedByUser] = useState(false)
   const expanded = !collapsedByUser
@@ -287,7 +295,7 @@ export function DeepResearchActivityDrawer({
           type="button"
         >
           <p className="text-sm font-semibold text-foreground">
-            Research activity
+            {title}
           </p>
 
           <div className="flex items-center gap-2">
@@ -330,7 +338,23 @@ export function DeepResearchActivityDrawer({
   )
 }
 
-function useResearchActivityFeed(events: DeepResearchRunEvent[]) {
+export function DeepResearchActivityDrawer({
+  events,
+}: {
+  events: DeepResearchRunEvent[]
+}) {
+  return <SharedActivityDrawer events={events} title="Research activity" />
+}
+
+export function AskWorkspaceActivityDrawer({
+  events,
+}: {
+  events: WorkspaceChatTraceEvent[]
+}) {
+  return <SharedActivityDrawer events={events} title="Ask Workspace activity" />
+}
+
+function useResearchActivityFeed(events: ActivityDrawerEvent[]) {
   const containerRef = useRef<HTMLDivElement>(null)
   const previousEventIdsRef = useRef(events.map((event) => event.id))
   const [freshEventIds, setFreshEventIds] = useState<string[]>([])
@@ -375,7 +399,7 @@ function ResearchActivityEvents({
   freshEventIds,
   maxHeightClass,
 }: {
-  events: DeepResearchRunEvent[]
+  events: ActivityDrawerEvent[]
   freshEventIds: string[]
   maxHeightClass: string
   containerRef: RefObject<HTMLDivElement | null>
