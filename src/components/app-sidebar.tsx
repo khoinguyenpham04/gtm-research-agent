@@ -29,9 +29,9 @@ import Image from "next/image"
 
 const data = {
   user: {
-    name: "shadcn",
-    email: "m@example.com",
-    avatar: "/avatars/shadcn.jpg",
+    name: "Noah",
+    email: "noah@clarion.com",
+    avatar: "/noah-avatar.jpeg",
   },
   navMain: [
     {

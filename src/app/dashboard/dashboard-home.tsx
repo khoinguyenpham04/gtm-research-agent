@@ -285,12 +285,16 @@ function DashboardHomeContent({
       <div className="mx-auto flex w-full max-w-[92rem] flex-1 px-1 sm:px-2">
         <div className="relative flex min-w-0 flex-1 flex-col gap-12">
           <section className="mx-auto flex w-full max-w-4xl flex-col items-center gap-4 pt-8 text-center lg:pt-14">
-            <div className="flex size-12 items-center justify-center rounded-full bg-muted/35 text-foreground/80">
-              <HomeIcon
-                className="text-foreground/80"
-                icon={Telescope01Icon}
-                size={24}
-              />
+            <div className="mb-4 flex items-center">
+              <div className="flex size-13.25 items-center justify-center rounded-full bg-violet-100 dark:bg-violet-950">
+                <HomeIcon icon={ChartAnalysisIcon} size={26} className="text-violet-500" />
+              </div>
+              <div className="relative z-10 -mx-2 flex size-18.5 items-center justify-center rounded-full bg-blue-100 dark:bg-blue-950">
+                <HomeIcon icon={Telescope01Icon} size={36} className="text-blue-500" />
+              </div>
+              <div className="flex size-13.25 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-950">
+                <HomeIcon icon={DocumentValidationIcon} size={26} className="text-emerald-500" />
+              </div>
             </div>
 
             <div className="max-w-3xl space-y-3">
