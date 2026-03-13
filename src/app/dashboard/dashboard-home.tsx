@@ -333,17 +333,25 @@ function DashboardHomeContent({
                     <p className="text-[0.98rem] leading-7 text-muted-foreground">
                       {loadingWorkspace
                         ? "Loading workspace context…"
-                        : `${workspaceDocumentCount} attached docs · ${sessions.length} active sessions`}
+                        : `${workspace?.uploadedDocumentCount ?? 0} uploaded docs · ${workspace?.generatedReportCount ?? 0} generated reports · ${sessions.length} active sessions`}
                     </p>
                   </div>
 
                   <div className="grid gap-x-8 gap-y-4 sm:grid-cols-3">
                     <div className="space-y-1.5">
                       <p className="text-[0.68rem] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-                        Attached Docs
+                        Workspace Knowledge
                       </p>
                       <p className="text-[1.05rem] font-semibold tabular-nums text-foreground">
                         {loadingWorkspace ? "…" : workspaceDocumentCount}
+                      </p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <p className="text-[0.68rem] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                        Generated Reports
+                      </p>
+                      <p className="text-[1.05rem] font-semibold tabular-nums text-foreground">
+                        {workspace?.generatedReportCount ?? 0}
                       </p>
                     </div>
                     <div className="space-y-1.5">
@@ -353,20 +361,6 @@ function DashboardHomeContent({
                       <p className="text-[1.05rem] font-semibold tabular-nums text-foreground">
                         {sessions.length}
                       </p>
-                    </div>
-                    <div className="space-y-1.5">
-                      <p className="text-[0.68rem] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-                        Latest Status
-                      </p>
-                      <div>
-                        {latestSession?.latestRunStatus ? (
-                          <StatusPill status={latestSession.latestRunStatus} />
-                        ) : (
-                          <span className="text-sm text-muted-foreground">
-                            No session activity
-                          </span>
-                        )}
-                      </div>
                     </div>
                   </div>
 

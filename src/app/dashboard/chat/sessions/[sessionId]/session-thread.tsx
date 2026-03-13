@@ -745,6 +745,7 @@ export function DeepResearchSessionThread({
                                 publishedDocument={linkedRun.publishedReportDocument}
                                 runId={linkedRun.id}
                                 sessionId={currentSession.id}
+                                workspaceId={linkedRun.workspaceId}
                               />
                             </MessageContent>
                           </Message>

@@ -137,12 +137,23 @@ function SessionThreadComposerInner({
 
     startTransition(() => {
       setWorkspace(payload)
-      setSelectedDocumentIds(
-        payload.documents.map(
-          (attachment: WorkspaceDetail["documents"][number]) =>
-            attachment.documentId,
-        ),
-      )
+      setSelectedDocumentIds((current) => {
+        if (current.length === 0) {
+          return payload.documents.map(
+            (attachment: WorkspaceDetail["documents"][number]) =>
+              attachment.documentId,
+          )
+        }
+
+        const validDocumentIds = new Set(
+          payload.documents.map(
+            (attachment: WorkspaceDetail["documents"][number]) =>
+              attachment.documentId,
+          ),
+        )
+
+        return current.filter((documentId) => validDocumentIds.has(documentId))
+      })
     })
   }, [initialWorkspaceId])
 
@@ -169,6 +180,45 @@ function SessionThreadComposerInner({
     appliedPrefillTokenRef.current = prefill.token
     promptController.textInput.setInput(prefill.text)
   }, [prefill, promptController.textInput])
+
+  useEffect(() => {
+    const handleWorkspaceKnowledgeUpdate = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        workspaceId?: string
+        documentId?: string
+      }>).detail
+
+      if (!detail || detail.workspaceId !== initialWorkspaceId) {
+        return
+      }
+
+      void Promise.all([refreshWorkspaceContext(), refreshWorkspaces()]).then(() => {
+        if (!detail.documentId) {
+          return
+        }
+
+        startTransition(() => {
+          setSelectedDocumentIds((current) =>
+            current.includes(detail.documentId as string)
+              ? current
+              : [...current, detail.documentId as string],
+          )
+        })
+      })
+    }
+
+    window.addEventListener(
+      "workspace-knowledge-updated",
+      handleWorkspaceKnowledgeUpdate as EventListener,
+    )
+
+    return () => {
+      window.removeEventListener(
+        "workspace-knowledge-updated",
+        handleWorkspaceKnowledgeUpdate as EventListener,
+      )
+    }
+  }, [initialWorkspaceId, refreshWorkspaceContext, refreshWorkspaces])
 
   return (
     <div className="mx-auto w-full max-w-4xl">

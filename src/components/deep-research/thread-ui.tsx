@@ -506,11 +506,13 @@ export function DeepResearchFinalReport({
   publishedDocument,
   runId,
   sessionId,
+  workspaceId,
 }: {
   markdown?: string
   publishedDocument?: DocumentSummary
   runId?: string
   sessionId?: string
+  workspaceId?: string
 }) {
   const copyTimeoutRef = useRef<number>(0)
   const [isCopied, setIsCopied] = useState(false)
@@ -572,6 +574,14 @@ export function DeepResearchFinalReport({
 
       if (payload.document) {
         setPublishedDocumentState(payload.document as DocumentSummary)
+        window.dispatchEvent(
+          new CustomEvent("workspace-knowledge-updated", {
+            detail: {
+              documentId: (payload.document as DocumentSummary).id,
+              workspaceId,
+            },
+          }),
+        )
       }
     } catch (error) {
       setPublishError(
@@ -1150,6 +1160,7 @@ export function DeepResearchThreadShell({
                 <DeepResearchFinalReport
                   markdown={run.finalReportMarkdown}
                   publishedDocument={run.publishedReportDocument}
+                  workspaceId={run.workspaceId}
                 />
               </MessageContent>
             </Message>

@@ -2,7 +2,7 @@
 
 import { startTransition, useEffect, useMemo, useState } from "react"
 import Link from "next/link"
-import { Folder, FolderPlus, Globe, Link2, Upload } from "lucide-react"
+import { Folder, FolderPlus, Globe, Link2, Sparkles, Upload } from "lucide-react"
 
 import PDFViewerModal from "@/app/components/PDFViewerModal"
 import type { DocumentSummary } from "@/lib/documents"
@@ -153,6 +153,67 @@ function FolderBranch({
   )
 }
 
+function filterFolderTreeForUploadedDocuments(
+  nodes: WorkspaceFolderNode[],
+): WorkspaceFolderNode[] {
+  return nodes
+    .map((node) => {
+      const children = filterFolderTreeForUploadedDocuments(node.children)
+      const documents = node.documents.filter(
+        (attachment) => attachment.assetType === "uploaded_document",
+      )
+
+      if (children.length === 0 && documents.length === 0) {
+        return null
+      }
+
+      return {
+        ...node,
+        children,
+        documents,
+      }
+    })
+    .filter((node): node is WorkspaceFolderNode => node !== null)
+}
+
+function GeneratedReportRow({
+  attachment,
+}: {
+  attachment: WorkspaceDocumentAttachment
+}) {
+  return (
+    <div className="rounded-xl border border-border/60 bg-background px-4 py-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="truncate text-sm font-medium">
+              {attachment.generatedReport?.title || attachment.document.file_name}
+            </p>
+            <Badge className="rounded-full" variant="secondary">
+              Generated report
+            </Badge>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {attachment.document.total_chunks} chunks · Generated{" "}
+            {formatTimestamp(
+              attachment.generatedReport?.generatedAt ?? attachment.attachedAt,
+            )}
+          </p>
+        </div>
+        {attachment.generatedReport?.sessionId ? (
+          <Button asChild size="sm" variant="outline">
+            <Link
+              href={`/dashboard/chat/sessions/${attachment.generatedReport.sessionId}?runId=${attachment.generatedReport.runId ?? ""}`}
+            >
+              Open source
+            </Link>
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
 export function DataLibraryConsole({
   initialDocuments,
   initialWorkspace,
@@ -203,6 +264,17 @@ export function DataLibraryConsole({
     visit(workspace?.folderTree ?? [], "")
     return options
   }, [workspace?.folderTree])
+  const uploadedRootDocuments = useMemo(
+    () =>
+      workspace?.rootDocuments.filter(
+        (attachment) => attachment.assetType === "uploaded_document",
+      ) ?? [],
+    [workspace?.rootDocuments],
+  )
+  const uploadedFolderTree = useMemo(
+    () => filterFolderTreeForUploadedDocuments(workspace?.folderTree ?? []),
+    [workspace?.folderTree],
+  )
 
   useEffect(() => {
     if (!activeWorkspaceId || workspace?.id === activeWorkspaceId) {
@@ -550,14 +622,15 @@ export function DataLibraryConsole({
   }
 
   return (
-    <div className="grid gap-6 xl:grid-cols-[minmax(320px,0.9fr)_minmax(0,1.1fr)]">
+    <div className="grid gap-6 xl:grid-cols-[minmax(360px,0.92fr)_minmax(0,1.08fr)]">
       <div className="space-y-6">
         <Card className="border border-border/60">
           <CardHeader>
-            <CardTitle>Workspace controls</CardTitle>
+            <CardTitle>Workspace Knowledge</CardTitle>
             <CardDescription>
-              Keep the heavy file structure here. Deep research only needs the
-              active workspace and its attached working set.
+              Workspaces do not duplicate files. They attach and organize the
+              subset of global knowledge used for retrieval, chat, and deep
+              research.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
@@ -603,7 +676,7 @@ export function DataLibraryConsole({
                 <CardContent className="p-4">
                   <div className="flex items-center gap-2">
                     <Folder className="size-4 text-muted-foreground" />
-                    <p className="text-sm font-medium">Attached docs</p>
+                    <p className="text-sm font-medium">Workspace knowledge</p>
                   </div>
                   <p className="mt-2 text-2xl font-semibold">
                     {workspace?.documents.length ?? 0}
@@ -621,10 +694,43 @@ export function DataLibraryConsole({
               </Card>
             </div>
 
-            <div className="space-y-3">
+            <div className="grid gap-3 md:grid-cols-2">
+              <Card className="border border-border/60 bg-background">
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2">
+                    <Folder className="size-4 text-muted-foreground" />
+                    <p className="text-sm font-medium">Uploaded docs</p>
+                  </div>
+                  <p className="mt-2 text-2xl font-semibold">
+                    {workspace?.uploadedDocumentCount ?? 0}
+                  </p>
+                </CardContent>
+              </Card>
+              <Card className="border border-border/60 bg-background">
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="size-4 text-muted-foreground" />
+                    <p className="text-sm font-medium">Generated reports</p>
+                  </div>
+                  <p className="mt-2 text-2xl font-semibold">
+                    {workspace?.generatedReportCount ?? 0}
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+
+            <div className="space-y-3 rounded-2xl border border-border/60 bg-muted/20 p-4">
+              <div className="space-y-1">
+                <p className="text-sm font-medium">Knowledge intake</p>
+                <p className="text-xs leading-5 text-muted-foreground">
+                  Add source material into the global library, then attach it to the
+                  active workspace.
+                </p>
+              </div>
+
               <div className="flex items-center gap-2">
                 <Upload className="size-4 text-muted-foreground" />
-                <p className="text-sm font-medium">Upload into library</p>
+                <p className="text-sm font-medium">Upload file</p>
               </div>
               <Input
                 accept=".pdf,.docx,.txt"
@@ -670,7 +776,7 @@ export function DataLibraryConsole({
             <div className="space-y-3">
               <div className="flex items-center gap-2">
                 <FolderPlus className="size-4 text-muted-foreground" />
-                <p className="text-sm font-medium">Create workspace folder</p>
+                <p className="text-sm font-medium">Organize workspace</p>
               </div>
               <Input
                 placeholder="Folder name"
@@ -710,10 +816,11 @@ export function DataLibraryConsole({
 
         <Card className="border border-border/60">
           <CardHeader>
-            <CardTitle>Current workspace tree</CardTitle>
+            <CardTitle>Attached workspace knowledge</CardTitle>
             <CardDescription>
-              Folder placement lives here. It never duplicates the canonical
-              document embeddings.
+              Uploaded source material can be organized into folders. Generated
+              reports stay available as workspace-native knowledge beside those
+              source files.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -733,7 +840,45 @@ export function DataLibraryConsole({
                   </div>
                 </div>
 
-                {workspace.rootDocuments.map((attachment) => (
+                {workspace.generatedReports.length > 0 ? (
+                  <div className="space-y-3 rounded-2xl border border-border/60 bg-muted/20 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium">Generated reports</p>
+                        <p className="text-xs text-muted-foreground">
+                          Published deep research outputs now available in this workspace.
+                        </p>
+                      </div>
+                      <Badge variant="outline">
+                        {workspace.generatedReports.length}
+                      </Badge>
+                    </div>
+
+                    <div className="space-y-3">
+                      {workspace.generatedReports.map((attachment) => (
+                        <GeneratedReportRow
+                          attachment={attachment}
+                          key={attachment.documentId}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="space-y-3 rounded-2xl border border-border/60 bg-background p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium">Uploaded documents</p>
+                      <p className="text-xs text-muted-foreground">
+                        Source files attached from the global library.
+                      </p>
+                    </div>
+                    <Badge variant="outline">
+                      {workspace.uploadedDocumentCount}
+                    </Badge>
+                  </div>
+
+                {uploadedRootDocuments.map((attachment) => (
                   <WorkspaceDocumentRow
                     key={attachment.documentId}
                     attachment={attachment}
@@ -742,7 +887,7 @@ export function DataLibraryConsole({
                     submitting={submitting}
                   />
                 ))}
-                {workspace.folderTree.map((node) => (
+                {uploadedFolderTree.map((node) => (
                   <FolderBranch
                     key={node.id}
                     folderOptions={folderOptions}
@@ -751,11 +896,11 @@ export function DataLibraryConsole({
                     submitting={submitting}
                   />
                 ))}
+                </div>
 
                 {workspace.documents.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
-                    Attach documents from the global library to build this
-                    workspace.
+                    Attach documents or publish reports to build this workspace.
                   </p>
                 ) : null}
               </>
@@ -767,10 +912,10 @@ export function DataLibraryConsole({
       <div className="space-y-6">
         <Card className="border border-border/60">
           <CardHeader>
-            <CardTitle>Canonical global library</CardTitle>
+            <CardTitle>Global Library</CardTitle>
             <CardDescription>
-              These documents are the single source of truth for storage and
-              embeddings. Attach them to workspaces as needed.
+              Canonical files and generated markdown reports live here once, then
+              get attached into workspaces as needed.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -796,7 +941,12 @@ export function DataLibraryConsole({
                           <p className="truncate text-sm font-medium">
                             {document.file_name}
                           </p>
-                          <p className="text-xs text-muted-foreground">
+                          <div className="mt-1 flex flex-wrap items-center gap-2">
+                            {document.file_name.toLowerCase().endsWith(".md") ? (
+                              <Badge variant="secondary">Generated report</Badge>
+                            ) : null}
+                          </div>
+                          <p className="mt-1 text-xs text-muted-foreground">
                             {document.total_chunks} chunks ·{" "}
                             {formatFileSize(document.file_size)} · Uploaded{" "}
                             {formatTimestamp(document.upload_date)}

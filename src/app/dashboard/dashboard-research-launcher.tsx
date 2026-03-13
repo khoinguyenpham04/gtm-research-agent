@@ -8,6 +8,7 @@ import {
   DashboardSquare02Icon,
   File01Icon,
   FolderLibraryIcon,
+  FileSearchIcon,
   Upload04Icon,
   Telescope01Icon,
 } from "@hugeicons/core-free-icons"
@@ -145,6 +146,8 @@ export function DashboardResearchLauncher({
     missingWorkspace ||
     (isSubmitting && !isStopState)
   const attachedDocuments = workspace?.documents ?? []
+  const workspaceDocuments = workspace?.uploadedDocuments ?? []
+  const generatedReports = workspace?.generatedReports ?? []
   const selectedDocumentIdSet = useMemo(
     () => new Set(selectedDocumentIds),
     [selectedDocumentIds],
@@ -169,6 +172,40 @@ export function DashboardResearchLauncher({
     const countLabel = selectedDocLabel
     return `${name} · ${countLabel}`
   }, [selectedDocLabel, workspace?.name])
+
+  const renderWorkspaceAssetRow = (
+    item: WorkspaceDetail["documents"][number],
+  ) => (
+    <label
+      className="flex cursor-pointer items-start gap-3 rounded-2xl border border-border/55 px-3 py-3 transition-colors hover:bg-muted/30"
+      key={item.documentId}
+    >
+      <Checkbox
+        checked={selectedDocumentIdSet.has(item.documentId)}
+        className="mt-0.5"
+        onCheckedChange={(value) =>
+          toggleWorkspaceDocument(item.documentId, value === true)
+        }
+      />
+      <LauncherIcon
+        className="mt-0.5 text-muted-foreground"
+        icon={item.assetType === "generated_report" ? FileSearchIcon : File01Icon}
+        size={16}
+      />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-foreground">
+          {item.assetType === "generated_report"
+            ? item.generatedReport?.title || item.document.file_name
+            : item.document.file_name}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          {item.assetType === "generated_report"
+            ? `Generated report · ${item.document.total_chunks} chunks`
+            : `${item.document.total_chunks} chunks`}
+        </p>
+      </div>
+    </label>
+  )
 
   const filePartToFile = async (filePart: (typeof pendingUploads)[number]) => {
     const response = await fetch(filePart.url)
@@ -504,10 +541,10 @@ export function DashboardResearchLauncher({
                     </p>
                     <p className="text-xs leading-5 text-muted-foreground">
                       {mode === "chat"
-                        ? "Choose which attached docs to search for this answer."
+                        ? "Choose which workspace knowledge to search for this answer."
                         : allowWorkspaceChange
-                          ? "Switch workspace and choose which attached docs to use for this launch."
-                          : "Choose which attached docs to use for this research run."}
+                          ? "Switch workspace and choose which workspace knowledge to use for this launch."
+                          : "Choose which workspace knowledge to use for this research run."}
                     </p>
                   </div>
                   {allowWorkspaceChange ? (
@@ -657,18 +694,18 @@ export function DashboardResearchLauncher({
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
                         <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                          Attached documents
+                          Workspace knowledge
                         </p>
                         <p className="mt-1 text-sm text-muted-foreground">
                           {mode === "chat"
                             ? selectedDocumentIds.length > 0
                               ? `${selectedDocumentIds.length} selected for this answer`
                               : attachedDocuments.length > 0
-                                ? "No subset selected. Chat will search all workspace docs."
-                                : "No workspace docs are attached yet. Chat can only rely on completed research reports."
+                                ? "No subset selected. Chat will search all workspace knowledge."
+                                : "No workspace knowledge is attached yet."
                             : selectedDocumentIds.length > 0
                               ? `${selectedDocumentIds.length} selected for this launch`
-                              : "No workspace docs selected. Research will use web sources only."}
+                              : "No workspace knowledge selected. Research will use web sources only."}
                         </p>
                       </div>
                       {attachedDocuments.length > 0 ? (
@@ -701,40 +738,55 @@ export function DashboardResearchLauncher({
 
                     {attachedDocuments.length === 0 ? (
                       <div className="rounded-2xl border border-dashed border-border/65 px-4 py-4 text-sm text-muted-foreground">
-                        No documents are attached to this workspace yet.
+                        No knowledge is attached to this workspace yet.
                       </div>
                     ) : (
-                      <div className="space-y-2">
-                        {attachedDocuments.map((document) => (
-                          <label
-                            className="flex cursor-pointer items-start gap-3 rounded-2xl border border-border/55 px-3 py-3 transition-colors hover:bg-muted/30"
-                            key={document.documentId}
-                          >
-                            <Checkbox
-                              checked={selectedDocumentIdSet.has(document.documentId)}
-                              className="mt-0.5"
-                              onCheckedChange={(value) =>
-                                toggleWorkspaceDocument(
-                                  document.documentId,
-                                  value === true,
-                                )
-                              }
-                            />
-                            <LauncherIcon
-                              className="mt-0.5 text-muted-foreground"
-                              icon={File01Icon}
-                              size={16}
-                            />
-                            <div className="min-w-0 flex-1">
-                              <p className="truncate text-sm font-medium text-foreground">
-                                {document.document.file_name}
-                              </p>
-                              <p className="text-xs text-muted-foreground">
-                                {document.document.total_chunks} chunks
-                              </p>
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                              Workspace documents
+                            </p>
+                            <span className="text-xs text-muted-foreground">
+                              {workspaceDocuments.length}
+                            </span>
+                          </div>
+
+                          {workspaceDocuments.length > 0 ? (
+                            <div className="space-y-2">
+                              {workspaceDocuments.map((document) =>
+                                renderWorkspaceAssetRow(document),
+                              )}
                             </div>
-                          </label>
-                        ))}
+                          ) : (
+                            <div className="rounded-2xl border border-dashed border-border/65 px-4 py-3 text-sm text-muted-foreground">
+                              No uploaded documents attached.
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                              Generated reports
+                            </p>
+                            <span className="text-xs text-muted-foreground">
+                              {generatedReports.length}
+                            </span>
+                          </div>
+
+                          {generatedReports.length > 0 ? (
+                            <div className="space-y-2">
+                              {generatedReports.map((report) =>
+                                renderWorkspaceAssetRow(report),
+                              )}
+                            </div>
+                          ) : (
+                            <div className="rounded-2xl border border-dashed border-border/65 px-4 py-3 text-sm text-muted-foreground">
+                              No generated reports attached yet.
+                            </div>
+                          )}
+                        </div>
                       </div>
                     )}
                   </section>

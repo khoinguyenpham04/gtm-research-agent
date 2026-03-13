@@ -20,7 +20,7 @@ export default async function DataLibraryPage() {
     <>
       <SiteHeader
         title="Data Library"
-        description="Manage canonical uploads, workspace attachments, folders, previews, and URL ingestion in one place."
+        description="Manage the canonical global library and the workspace-specific knowledge attached to each research environment."
       />
       <div className="flex flex-1 flex-col">
         <div className="@container/main flex flex-1 flex-col gap-2 px-4 py-4 lg:px-6 lg:py-6">

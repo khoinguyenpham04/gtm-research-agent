@@ -77,11 +77,22 @@ interface WorkspaceDocumentRow {
   created_at: string;
 }
 
+interface DocumentSourceRow {
+  document_external_id: string;
+  source_type: "upload" | "agent_download" | "url_ingest" | "generated_report";
+  generated_from_run_id: string | null;
+  metadata_json: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface WorkspaceSummary {
   id: string;
   name: string;
   description?: string;
   documentCount: number;
+  uploadedDocumentCount: number;
+  generatedReportCount: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -101,6 +112,13 @@ export interface WorkspaceDocumentAttachment {
   folderId?: string;
   attachedAt: string;
   document: DocumentSummary;
+  assetType: "uploaded_document" | "generated_report";
+  generatedReport?: {
+    generatedAt: string;
+    runId?: string;
+    sessionId?: string;
+    title?: string;
+  };
 }
 
 export interface WorkspaceFolderNode extends WorkspaceFolder {
@@ -111,19 +129,29 @@ export interface WorkspaceFolderNode extends WorkspaceFolder {
 export interface WorkspaceDetail extends WorkspaceSummary {
   folders: WorkspaceFolder[];
   documents: WorkspaceDocumentAttachment[];
+  uploadedDocuments: WorkspaceDocumentAttachment[];
+  generatedReports: WorkspaceDocumentAttachment[];
   rootDocuments: WorkspaceDocumentAttachment[];
   folderTree: WorkspaceFolderNode[];
 }
 
 function mapWorkspaceSummary(
   row: WorkspaceRow,
-  documentCount: number,
+  counts: {
+    documentCount: number;
+    generatedReportCount?: number;
+    uploadedDocumentCount?: number;
+  },
 ): WorkspaceSummary {
   return {
     id: row.id,
     name: row.name,
     description: row.description ?? undefined,
-    documentCount,
+    documentCount: counts.documentCount,
+    uploadedDocumentCount:
+      counts.uploadedDocumentCount ??
+      Math.max(counts.documentCount - (counts.generatedReportCount ?? 0), 0),
+    generatedReportCount: counts.generatedReportCount ?? 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -255,6 +283,26 @@ async function listWorkspaceDocumentRows(workspaceId: string) {
   return (data ?? []) as WorkspaceDocumentRow[];
 }
 
+async function listDocumentSourceRows(documentIds: string[]) {
+  if (documentIds.length === 0) {
+    return [];
+  }
+
+  const { supabaseAdmin } = createSupabaseClients();
+  const { data, error } = await supabaseAdmin
+    .from("document_sources")
+    .select(
+      "document_external_id, source_type, generated_from_run_id, metadata_json, created_at, updated_at",
+    )
+    .in("document_external_id", documentIds);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []) as DocumentSourceRow[];
+}
+
 async function listWorkspaceFolders(workspaceId: string) {
   const { supabaseAdmin } = createSupabaseClients();
   const { data, error } = await supabaseAdmin
@@ -273,8 +321,12 @@ async function listWorkspaceFolders(workspaceId: string) {
 function toWorkspaceDocumentAttachments(
   rows: WorkspaceDocumentRow[],
   documents: DocumentSummary[],
+  sourceRows: DocumentSourceRow[],
 ): WorkspaceDocumentAttachment[] {
   const documentsById = new Map(documents.map((document) => [document.id, document]));
+  const sourceByDocumentId = new Map(
+    sourceRows.map((row) => [row.document_external_id, row]),
+  );
 
   return rows
     .map((row) => {
@@ -283,12 +335,41 @@ function toWorkspaceDocumentAttachments(
         return null;
       }
 
+      const source = sourceByDocumentId.get(row.document_external_id);
+      const metadata = source?.metadata_json ?? {};
+      const assetType =
+        source?.source_type === "generated_report"
+          ? "generated_report"
+          : "uploaded_document";
+
       return {
         workspaceId: row.workspace_id,
         documentId: row.document_external_id,
         folderId: row.folder_id ?? undefined,
         attachedAt: row.created_at,
         document,
+        assetType,
+        generatedReport:
+          assetType === "generated_report"
+            ? {
+                generatedAt:
+                  typeof metadata.generatedAt === "string"
+                    ? metadata.generatedAt
+                    : source?.updated_at ?? row.created_at,
+                runId:
+                  typeof metadata.runId === "string"
+                    ? metadata.runId
+                    : source?.generated_from_run_id ?? undefined,
+                sessionId:
+                  typeof metadata.sessionId === "string"
+                    ? metadata.sessionId
+                    : undefined,
+                title:
+                  typeof metadata.reportTitle === "string"
+                    ? metadata.reportTitle
+                    : document.file_name,
+              }
+            : undefined,
       } satisfies WorkspaceDocumentAttachment;
     })
     .filter((item): item is WorkspaceDocumentAttachment => item !== null);
@@ -296,7 +377,11 @@ function toWorkspaceDocumentAttachments(
 
 export async function listWorkspaces(): Promise<WorkspaceSummary[]> {
   const { supabaseAdmin } = createSupabaseClients();
-  const [{ data, error }, { data: documentRows, error: documentError }] =
+  const [
+    { data, error },
+    { data: documentRows, error: documentError },
+    { data: sourceRows, error: sourceError },
+  ] =
     await Promise.all([
       supabaseAdmin
         .from("workspaces")
@@ -304,7 +389,10 @@ export async function listWorkspaces(): Promise<WorkspaceSummary[]> {
         .order("updated_at", { ascending: false }),
       supabaseAdmin
         .from("workspace_documents")
-        .select("workspace_id"),
+        .select("workspace_id, document_external_id"),
+      supabaseAdmin
+        .from("document_sources")
+        .select("document_external_id, source_type"),
     ]);
 
   if (error) {
@@ -315,13 +403,47 @@ export async function listWorkspaces(): Promise<WorkspaceSummary[]> {
     throw new Error(documentError.message);
   }
 
+  if (sourceError) {
+    throw new Error(sourceError.message);
+  }
+
   const counts = new Map<string, number>();
-  for (const row of (documentRows ?? []) as { workspace_id: string }[]) {
+  for (const row of (documentRows ?? []) as Array<{
+    workspace_id: string;
+    document_external_id: string;
+  }>) {
     counts.set(row.workspace_id, (counts.get(row.workspace_id) ?? 0) + 1);
   }
 
+  const generatedReportDocumentIds = new Set(
+    ((sourceRows ?? []) as Array<{
+      document_external_id: string;
+      source_type: "upload" | "agent_download" | "url_ingest" | "generated_report";
+    }>)
+      .filter((row) => row.source_type === "generated_report")
+      .map((row) => row.document_external_id),
+  );
+
+  const generatedReportCounts = new Map<string, number>();
+  for (const row of (documentRows ?? []) as Array<{
+    workspace_id: string;
+    document_external_id: string;
+  }>) {
+    if (!generatedReportDocumentIds.has(row.document_external_id)) {
+      continue;
+    }
+
+    generatedReportCounts.set(
+      row.workspace_id,
+      (generatedReportCounts.get(row.workspace_id) ?? 0) + 1,
+    );
+  }
+
   return ((data ?? []) as WorkspaceRow[]).map((row) =>
-    mapWorkspaceSummary(row, counts.get(row.id) ?? 0),
+    mapWorkspaceSummary(row, {
+      documentCount: counts.get(row.id) ?? 0,
+      generatedReportCount: generatedReportCounts.get(row.id) ?? 0,
+    }),
   );
 }
 
@@ -344,7 +466,11 @@ export async function createWorkspace(input: CreateWorkspaceRequest) {
     throw new Error(error.message);
   }
 
-  return mapWorkspaceSummary(data as WorkspaceRow, 0);
+  return mapWorkspaceSummary(data as WorkspaceRow, {
+    documentCount: 0,
+    generatedReportCount: 0,
+    uploadedDocumentCount: 0,
+  });
 }
 
 export async function getWorkspaceDetail(workspaceId: string) {
@@ -357,16 +483,34 @@ export async function getWorkspaceDetail(workspaceId: string) {
     listWorkspaceDocumentRows(workspaceId),
     listWorkspaceFolders(workspaceId),
   ]);
-  const documents = await listDocumentsByIds(
-    documentRows.map((row) => row.document_external_id),
+  const documentIds = documentRows.map((row) => row.document_external_id);
+  const [documents, sourceRows] = await Promise.all([
+    listDocumentsByIds(documentIds),
+    listDocumentSourceRows(documentIds),
+  ]);
+  const attachments = toWorkspaceDocumentAttachments(
+    documentRows,
+    documents,
+    sourceRows,
   );
-  const attachments = toWorkspaceDocumentAttachments(documentRows, documents);
+  const uploadedDocuments = attachments.filter(
+    (attachment) => attachment.assetType === "uploaded_document",
+  );
+  const generatedReports = attachments.filter(
+    (attachment) => attachment.assetType === "generated_report",
+  );
   const tree = buildWorkspaceFolderTree(folders, attachments);
 
   return {
-    ...mapWorkspaceSummary(workspace, attachments.length),
+    ...mapWorkspaceSummary(workspace, {
+      documentCount: attachments.length,
+      generatedReportCount: generatedReports.length,
+      uploadedDocumentCount: uploadedDocuments.length,
+    }),
     folders,
     documents: attachments,
+    uploadedDocuments,
+    generatedReports,
     rootDocuments: tree.rootDocuments,
     folderTree: tree.folderTree,
   } satisfies WorkspaceDetail;
