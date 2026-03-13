@@ -247,6 +247,7 @@ export async function canResumeDeepResearchRunFromCheckpoint(runId: string) {
 export async function listDeepResearchRuns(options?: {
   workspaceId?: string;
   limit?: number;
+  clerkUserId?: string;
 }): Promise<DeepResearchRunSummary[]> {
   await ensureDeepResearchDatabase();
   return listDeepResearchRunSummaries(options);
@@ -263,6 +264,7 @@ export async function listSessions(options: {
 export async function listSessionNavigation(options?: {
   limitPerWorkspace?: number;
   workspaceLimit?: number;
+  clerkUserId?: string;
 }): Promise<SessionNavigationWorkspaceGroup[]> {
   await ensureDeepResearchDatabase();
   return listSessionNavigationGroups(options);

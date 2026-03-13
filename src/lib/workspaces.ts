@@ -57,6 +57,7 @@ interface WorkspaceRow {
   id: string;
   name: string;
   description: string | null;
+  clerk_user_id: string;
   created_at: string;
   updated_at: string;
 }
@@ -245,7 +246,7 @@ async function getWorkspaceRow(workspaceId: string) {
   const { supabaseAdmin } = createSupabaseClients();
   const { data, error } = await supabaseAdmin
     .from("workspaces")
-    .select("id, name, description, created_at, updated_at")
+    .select("id, name, description, clerk_user_id, created_at, updated_at")
     .eq("id", workspaceId)
     .maybeSingle();
 
@@ -254,6 +255,11 @@ async function getWorkspaceRow(workspaceId: string) {
   }
 
   return (data as WorkspaceRow | null) ?? null;
+}
+
+export async function verifyWorkspaceOwnership(workspaceId: string, clerkUserId: string): Promise<boolean> {
+  const workspace = await getWorkspaceRow(workspaceId);
+  return workspace?.clerk_user_id === clerkUserId;
 }
 
 async function touchWorkspace(workspaceId: string) {
@@ -375,7 +381,7 @@ function toWorkspaceDocumentAttachments(
     .filter((item): item is WorkspaceDocumentAttachment => item !== null);
 }
 
-export async function listWorkspaces(): Promise<WorkspaceSummary[]> {
+export async function listWorkspaces(clerkUserId?: string): Promise<WorkspaceSummary[]> {
   const { supabaseAdmin } = createSupabaseClients();
   const [
     { data, error },
@@ -383,10 +389,14 @@ export async function listWorkspaces(): Promise<WorkspaceSummary[]> {
     { data: sourceRows, error: sourceError },
   ] =
     await Promise.all([
-      supabaseAdmin
-        .from("workspaces")
-        .select("id, name, description, created_at, updated_at")
-        .order("updated_at", { ascending: false }),
+      (() => {
+        let q = supabaseAdmin
+          .from("workspaces")
+          .select("id, name, description, clerk_user_id, created_at, updated_at")
+          .order("updated_at", { ascending: false });
+        if (clerkUserId) q = q.eq("clerk_user_id", clerkUserId);
+        return q;
+      })(),
       supabaseAdmin
         .from("workspace_documents")
         .select("workspace_id, document_external_id"),
@@ -447,7 +457,7 @@ export async function listWorkspaces(): Promise<WorkspaceSummary[]> {
   );
 }
 
-export async function createWorkspace(input: CreateWorkspaceRequest) {
+export async function createWorkspace(input: CreateWorkspaceRequest, clerkUserId: string) {
   const { supabaseAdmin } = createSupabaseClients();
   const timestamp = new Date().toISOString();
   const { data, error } = await supabaseAdmin
@@ -456,10 +466,11 @@ export async function createWorkspace(input: CreateWorkspaceRequest) {
       id: crypto.randomUUID(),
       name: input.name,
       description: input.description ?? null,
+      clerk_user_id: clerkUserId,
       created_at: timestamp,
       updated_at: timestamp,
     })
-    .select("id, name, description, created_at, updated_at")
+    .select("id, name, description, clerk_user_id, created_at, updated_at")
     .single();
 
   if (error) {

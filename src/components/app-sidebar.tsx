@@ -75,7 +75,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const navUser = {
     name: user?.fullName ?? user?.firstName ?? "User",
     email: user?.primaryEmailAddress?.emailAddress ?? "",
-    avatar: user?.imageUrl ?? "",
+    avatar: user?.imageUrl || undefined,
   }
 
   return (

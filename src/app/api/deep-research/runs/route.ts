@@ -1,3 +1,4 @@
+import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 
 import { scheduleDeepResearchTask } from "@/lib/deep-research/background";
@@ -13,12 +14,16 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 export async function GET(request: Request) {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   try {
     const { searchParams } = new URL(request.url);
     const workspaceId = searchParams.get("workspaceId")?.trim() || undefined;
     const runs = await listDeepResearchRuns({
       workspaceId,
       limit: 12,
+      clerkUserId: userId,
     });
 
     return NextResponse.json(runs);
@@ -30,6 +35,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   try {
     const payload = createDeepResearchRunRequestSchema.parse(
       await request.json(),

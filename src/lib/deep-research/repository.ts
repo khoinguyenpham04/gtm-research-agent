@@ -979,6 +979,7 @@ export async function getDeepResearchRunResponse(runId: string) {
 export async function listDeepResearchRunSummaries(options?: {
   workspaceId?: string;
   limit?: number;
+  clerkUserId?: string;
 }) {
   const { supabaseAdmin } = createSupabaseClients();
   let query = supabaseAdmin
@@ -999,12 +1000,19 @@ export async function listDeepResearchRunSummaries(options?: {
 
   const runs = (data ?? []) as DeepResearchRunRecord[];
   const [workspaces, publishedReportDocumentsByRunId] = await Promise.all([
-    listWorkspaces(),
+    listWorkspaces(options?.clerkUserId),
     getPublishedReportDocumentsByRunIds(runs.map((run) => run.id)),
   ]);
+  // When scoped by user, only include runs that belong to the user's workspaces
+  const userWorkspaceIds = options?.clerkUserId
+    ? new Set(workspaces.map((w) => w.id))
+    : null;
   const workspaceById = new Map(workspaces.map((workspace) => [workspace.id, workspace]));
+  const filteredRuns = userWorkspaceIds
+    ? runs.filter((run) => run.workspace_id && userWorkspaceIds.has(run.workspace_id))
+    : runs;
 
-  return runs.map((run) =>
+  return filteredRuns.map((run) =>
     mapRunSummary(
       run,
       run.workspace_id ? workspaceById.get(run.workspace_id) : undefined,
@@ -1043,14 +1051,23 @@ export async function listSessionSummaries(options: {
 export async function listSessionNavigationGroups(options?: {
   limitPerWorkspace?: number;
   workspaceLimit?: number;
+  clerkUserId?: string;
 }): Promise<SessionNavigationWorkspaceGroup[]> {
   const { supabaseAdmin } = createSupabaseClients();
-  const workspaces = await listWorkspaces();
-  const { data, error } = await supabaseAdmin
+  const workspaces = await listWorkspaces(options?.clerkUserId);
+  const workspaceIds = workspaces.map((w) => w.id);
+  let sessionsQuery = supabaseAdmin
     .from("sessions")
     .select(sessionSelect)
     .is("archived_at", null)
     .order("updated_at", { ascending: false });
+  if (options?.clerkUserId && workspaceIds.length > 0) {
+    sessionsQuery = sessionsQuery.in("workspace_id", workspaceIds);
+  } else if (options?.clerkUserId) {
+    // User has no workspaces — return empty
+    return [];
+  }
+  const { data, error } = await sessionsQuery;
 
   if (error) {
     throw new Error(error.message);
