@@ -27,8 +27,10 @@ export interface IngestDocumentInput {
   fileName: string;
   fileType?: string;
   workspaceId?: string;
-  sourceType: "upload" | "agent_download" | "url_ingest";
+  sourceType: "upload" | "agent_download" | "url_ingest" | "generated_report";
   sourceUrl?: string;
+  generatedFromRunId?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface IngestDocumentResult {
@@ -102,7 +104,13 @@ async function extractTextFromBuffer(
     return fileBuffer.toString("utf-8");
   }
 
-  throw new Error("Unsupported file type. Please upload PDF, DOCX, or TXT files.");
+  if (normalizedFileName.endsWith(".md") || normalizedFileName.endsWith(".markdown")) {
+    return fileBuffer.toString("utf-8");
+  }
+
+  throw new Error(
+    "Unsupported file type. Please upload PDF, DOCX, TXT, or Markdown files.",
+  );
 }
 
 export async function ingestDocumentToLibrary(
@@ -161,6 +169,7 @@ export async function ingestDocumentToLibrary(
         total_chunks: chunks.length,
         file_path: filePath,
         file_url: urlData.publicUrl,
+        ...(input.metadata ?? {}),
       },
       embedding: JSON.stringify(embedding.data[0].embedding),
     });
@@ -174,9 +183,11 @@ export async function ingestDocumentToLibrary(
     documentId,
     sourceType: input.sourceType,
     sourceUrl: input.sourceUrl,
+    generatedFromRunId: input.generatedFromRunId,
     metadata: {
       fileName: input.fileName,
       fileType: input.fileType || extension,
+      ...(input.metadata ?? {}),
     },
   });
 

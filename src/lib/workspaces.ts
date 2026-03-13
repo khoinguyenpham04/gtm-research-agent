@@ -530,8 +530,9 @@ export async function assertWorkspaceDocumentSelection(
 export async function recordDocumentSource(
   input: {
     documentId: string;
-    sourceType: "upload" | "agent_download" | "url_ingest";
+    sourceType: "upload" | "agent_download" | "url_ingest" | "generated_report";
     sourceUrl?: string;
+    generatedFromRunId?: string;
     metadata?: Record<string, unknown>;
     status?: "ready" | "processing" | "failed";
   },
@@ -543,6 +544,7 @@ export async function recordDocumentSource(
       document_external_id: input.documentId,
       source_type: input.sourceType,
       source_url: input.sourceUrl ?? null,
+      generated_from_run_id: input.generatedFromRunId ?? null,
       status: input.status ?? "ready",
       metadata_json: input.metadata ?? {},
       updated_at: timestamp,
@@ -557,4 +559,41 @@ export async function recordDocumentSource(
   if (error) {
     throw new Error(error.message);
   }
+}
+
+export async function getGeneratedReportSourceByRunId(runId: string) {
+  const { supabaseAdmin } = createSupabaseClients();
+  const { data, error } = await supabaseAdmin
+    .from("document_sources")
+    .select(
+      "document_external_id, metadata_json, source_type, source_url, generated_from_run_id, updated_at, created_at",
+    )
+    .eq("generated_from_run_id", runId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return {
+    documentId: data.document_external_id as string,
+    metadata: (data.metadata_json ?? {}) as Record<string, unknown>,
+    sourceType: data.source_type as
+      | "upload"
+      | "agent_download"
+      | "url_ingest"
+      | "generated_report",
+    sourceUrl:
+      typeof data.source_url === "string" ? (data.source_url as string) : undefined,
+    generatedFromRunId:
+      typeof data.generated_from_run_id === "string"
+        ? (data.generated_from_run_id as string)
+        : undefined,
+    updatedAt: data.updated_at as string,
+    createdAt: data.created_at as string,
+  };
 }

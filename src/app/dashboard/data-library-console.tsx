@@ -646,8 +646,12 @@ export function DataLibraryConsole({
             <div className="space-y-3">
               <div className="flex items-center gap-2">
                 <Link2 className="size-4 text-muted-foreground" />
-                <p className="text-sm font-medium">Import PDF from URL</p>
+                <p className="text-sm font-medium">Import direct file URL</p>
               </div>
+              <p className="text-xs leading-5 text-muted-foreground">
+                Paste a direct PDF, DOCX, or TXT file link. Viewer pages and article
+                URLs are not supported.
+              </p>
               <Input
                 placeholder="https://example.com/report.pdf"
                 value={fileUrl}

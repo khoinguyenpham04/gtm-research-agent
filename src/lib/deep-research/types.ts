@@ -553,6 +553,7 @@ export interface DeepResearchRunResponse {
   status: DeepResearchRunStatus;
   workspaceId?: string;
   workspace?: WorkspaceSummary;
+  publishedReportDocument?: DocumentSummary;
   topic: string;
   objective?: string;
   clarificationQuestion?: string;
@@ -570,6 +571,7 @@ export interface DeepResearchRunSummary {
   status: DeepResearchRunStatus;
   workspaceId?: string;
   workspace?: WorkspaceSummary;
+  publishedReportDocument?: DocumentSummary;
   topic: string;
   objective?: string;
   errorMessage?: string;

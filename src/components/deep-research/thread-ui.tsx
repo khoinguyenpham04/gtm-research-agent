@@ -1,15 +1,11 @@
 "use client"
 
 import Link from "next/link"
-import ReactMarkdown, { type Components } from "react-markdown"
-import remarkGfm from "remark-gfm"
 import {
   useEffect,
   useRef,
   useState,
-  type ComponentPropsWithoutRef,
   type RefObject,
-  type ReactNode,
 } from "react"
 import {
   CheckIcon,
@@ -17,9 +13,11 @@ import {
   ChevronUpIcon,
   CopyIcon,
   FileDownIcon,
+  LibraryBigIcon,
 } from "lucide-react"
 
 import type { DocumentSummary } from "@/lib/documents"
+import { DeepResearchReportRenderer } from "@/components/deep-research/report-renderer"
 import type {
   DeepResearchRunEvent,
   DeepResearchRunResponse,
@@ -30,21 +28,6 @@ import {
   ConversationContent,
   ConversationScrollButton,
 } from "@/components/ai-elements/conversation"
-import {
-  InlineCitation,
-  InlineCitationCarousel,
-  InlineCitationCarouselContent,
-  InlineCitationCarouselHeader,
-  InlineCitationCarouselIndex,
-  InlineCitationCarouselItem,
-  InlineCitationCarouselNext,
-  InlineCitationCarouselPrev,
-  InlineCitationCard,
-  InlineCitationCardBody,
-  InlineCitationCardTrigger,
-  InlineCitationQuote,
-  InlineCitationSource,
-} from "@/components/ai-elements/inline-citation"
 import { Message, MessageContent } from "@/components/ai-elements/message"
 import type {
   DeepResearchRateLimitRetry,
@@ -75,112 +58,6 @@ const THREAD_SURFACE_CARD_CLASS =
   "border border-zinc-200 bg-white ring-0 shadow-none"
 
 const THREAD_INSET_SURFACE_CLASS = "border border-zinc-200 bg-white"
-
-const REPORT_MARKDOWN_CLASS =
-  "mx-auto w-full max-w-3xl text-[15px] leading-8 text-zinc-800 [&_a]:break-words [&_blockquote]:my-6 [&_blockquote]:border-l-2 [&_blockquote]:border-zinc-300 [&_blockquote]:bg-zinc-50/60 [&_blockquote]:py-1 [&_blockquote]:pl-4 [&_blockquote]:text-zinc-700 [&_code]:rounded-md [&_code]:bg-zinc-100 [&_code]:px-1.5 [&_code]:py-0.5 [&_em]:text-zinc-700 [&_h1]:mt-2 [&_h1]:mb-6 [&_h1]:text-3xl [&_h1]:font-semibold [&_h1]:tracking-tight [&_h2]:mt-10 [&_h2]:mb-4 [&_h2]:border-b [&_h2]:border-zinc-200 [&_h2]:pb-2 [&_h2]:text-2xl [&_h2]:font-semibold [&_h2]:tracking-tight [&_h3]:mt-8 [&_h3]:mb-3 [&_h3]:text-xl [&_h3]:font-semibold [&_h4]:mt-6 [&_h4]:mb-2 [&_h4]:text-lg [&_h4]:font-semibold [&_hr]:my-8 [&_hr]:border-zinc-200 [&_li]:my-1.5 [&_li]:pl-1 [&_ol]:my-5 [&_ol]:list-decimal [&_ol]:space-y-1 [&_ol]:pl-6 [&_p]:my-5 [&_p]:text-zinc-800 [&_pre]:my-5 [&_pre]:overflow-x-auto [&_pre]:rounded-xl [&_pre]:border [&_pre]:border-zinc-800 [&_pre]:bg-zinc-950 [&_pre]:p-4 [&_pre]:text-zinc-50 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_strong]:font-semibold [&_table]:w-full [&_tbody_tr]:border-t [&_tbody_tr]:border-zinc-200 [&_thead]:border-b [&_thead]:border-zinc-300 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:font-semibold [&_td]:px-3 [&_td]:py-2 [&_td]:align-top [&_ul]:my-5 [&_ul]:list-disc [&_ul]:space-y-1 [&_ul]:pl-6"
-
-function formatCitationHost(url: string) {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "")
-  } catch {
-    return "Source"
-  }
-}
-
-function formatCitationPath(url: string) {
-  try {
-    const path = new URL(url).pathname
-    if (!path || path === "/") {
-      return "Home"
-    }
-
-    const segments = path.split("/").filter(Boolean)
-    return decodeURIComponent(segments.at(-1) ?? "Home")
-  } catch {
-    return "Reference"
-  }
-}
-
-function citationTextFromChildren(children: ReactNode) {
-  if (typeof children === "string") {
-    return children.trim()
-  }
-
-  if (Array.isArray(children)) {
-    const text = children
-      .map((child) => (typeof child === "string" ? child : ""))
-      .join(" ")
-      .trim()
-    return text || null
-  }
-
-  return null
-}
-
-function ReportCitationLink({
-  children,
-  href,
-  ...props
-}: ComponentPropsWithoutRef<"a">) {
-  if (!href) {
-    return <span>{children}</span>
-  }
-
-  const citationText = citationTextFromChildren(children)
-  const sourceTitle = citationText || formatCitationPath(href)
-  const sourceHost = formatCitationHost(href)
-
-  return (
-    <InlineCitation className="inline-flex items-center">
-      <a
-        className="text-primary underline underline-offset-4 hover:text-primary/80"
-        href={href}
-        rel="noreferrer"
-        target="_blank"
-        {...props}
-      >
-        {children}
-      </a>
-
-      <InlineCitationCard>
-        <InlineCitationCardTrigger
-          className="cursor-pointer"
-          sources={[href]}
-        />
-        <InlineCitationCardBody>
-          <InlineCitationCarousel>
-            <InlineCitationCarouselHeader>
-              <InlineCitationCarouselPrev />
-              <InlineCitationCarouselNext />
-              <InlineCitationCarouselIndex />
-            </InlineCitationCarouselHeader>
-            <InlineCitationCarouselContent>
-              <InlineCitationCarouselItem>
-                <InlineCitationSource
-                  description={`Source: ${sourceHost}`}
-                  title={sourceTitle}
-                  url={href}
-                />
-                {citationText ? (
-                  <InlineCitationQuote>{citationText}</InlineCitationQuote>
-                ) : null}
-              </InlineCitationCarouselItem>
-            </InlineCitationCarouselContent>
-          </InlineCitationCarousel>
-        </InlineCitationCardBody>
-      </InlineCitationCard>
-    </InlineCitation>
-  )
-}
-
-const REPORT_MARKDOWN_COMPONENTS: Components = {
-  a: ReportCitationLink,
-  table: ({ children }) => (
-    <div className="my-6 overflow-x-auto rounded-xl border border-zinc-200">
-      <table className="w-full border-collapse text-sm">{children}</table>
-    </div>
-  ),
-}
 
 function StatusCopy({
   launchPending,
@@ -626,13 +503,26 @@ export function DeepResearchFailureCard({
 
 export function DeepResearchFinalReport({
   markdown,
+  publishedDocument,
+  runId,
+  sessionId,
 }: {
   markdown?: string
+  publishedDocument?: DocumentSummary
+  runId?: string
+  sessionId?: string
 }) {
-  const reportRef = useRef<HTMLElement | null>(null)
   const copyTimeoutRef = useRef<number>(0)
   const [isCopied, setIsCopied] = useState(false)
-  const [isSavingPdf, setIsSavingPdf] = useState(false)
+  const [isPublishing, setIsPublishing] = useState(false)
+  const [publishError, setPublishError] = useState<string | null>(null)
+  const [publishedDocumentState, setPublishedDocumentState] = useState<
+    DocumentSummary | undefined
+  >(publishedDocument)
+
+  useEffect(() => {
+    setPublishedDocumentState(publishedDocument)
+  }, [publishedDocument])
 
   useEffect(
     () => () => {
@@ -662,66 +552,46 @@ export function DeepResearchFinalReport({
     }
   }
 
-  const handleDownloadPdf = async () => {
-    if (!markdown || typeof window === "undefined") {
+  const handleAttachToWorkspace = async () => {
+    if (!runId) {
       return
     }
 
-    const reportText = reportRef.current?.innerText?.trim() || markdown.trim()
-    if (!reportText) {
-      return
-    }
-
-    setIsSavingPdf(true)
+    setPublishError(null)
+    setIsPublishing(true)
 
     try {
-      const { jsPDF } = await import("jspdf")
-      const document = new jsPDF({
-        format: "letter",
-        unit: "pt",
+      const response = await fetch(`/api/deep-research/runs/${runId}/attach-report`, {
+        method: "POST",
       })
+      const payload = await response.json()
 
-      const pageWidth = document.internal.pageSize.getWidth()
-      const pageHeight = document.internal.pageSize.getHeight()
-      const margin = 48
-      const contentWidth = pageWidth - margin * 2
-      const lineHeight = 18
-      const paragraphSpacing = 10
-      let currentY = margin
-
-      document.setFont("helvetica", "bold")
-      document.setFontSize(18)
-      document.text("Deep Research Final Report", margin, currentY)
-      currentY += 28
-
-      document.setFont("helvetica", "normal")
-      document.setFontSize(11)
-
-      const paragraphs = reportText
-        .split(/\n{2,}/)
-        .map((paragraph) => paragraph.replace(/\n/g, " ").trim())
-        .filter(Boolean)
-
-      for (const paragraph of paragraphs) {
-        const lines = document.splitTextToSize(paragraph, contentWidth)
-
-        for (const line of lines) {
-          if (currentY > pageHeight - margin) {
-            document.addPage()
-            currentY = margin
-          }
-
-          document.text(line, margin, currentY)
-          currentY += lineHeight
-        }
-
-        currentY += paragraphSpacing
+      if (!response.ok) {
+        throw new Error(payload.error || "Failed to add report to workspace.")
       }
 
-      document.save("deep-research-final-report.pdf")
+      if (payload.document) {
+        setPublishedDocumentState(payload.document as DocumentSummary)
+      }
+    } catch (error) {
+      setPublishError(
+        error instanceof Error ? error.message : "Failed to add report to workspace.",
+      )
     } finally {
-      setIsSavingPdf(false)
+      setIsPublishing(false)
     }
+  }
+
+  const handleOpenPrintView = () => {
+    if (!runId || !sessionId || typeof window === "undefined") {
+      return
+    }
+
+    window.open(
+      `/dashboard/chat/sessions/${sessionId}/reports/${runId}/print`,
+      "_blank",
+      "noopener,noreferrer",
+    )
   }
 
   return (
@@ -735,6 +605,23 @@ export function DeepResearchFinalReport({
         </div>
         {markdown ? (
           <div className="flex flex-wrap items-center gap-2">
+            {runId ? (
+              <Button
+                className="rounded-full"
+                disabled={isPublishing || Boolean(publishedDocumentState)}
+                onClick={() => void handleAttachToWorkspace()}
+                size="sm"
+                type="button"
+                variant={publishedDocumentState ? "secondary" : "outline"}
+              >
+                <LibraryBigIcon className="size-4" />
+                {publishedDocumentState
+                  ? "Added to workspace"
+                  : isPublishing
+                    ? "Adding..."
+                    : "Add to workspace knowledge base"}
+              </Button>
+            ) : null}
             <Button
               className="rounded-full"
               onClick={() => void handleCopyMarkdown()}
@@ -751,38 +638,42 @@ export function DeepResearchFinalReport({
             </Button>
             <Button
               className="rounded-full"
-              disabled={isSavingPdf}
-              onClick={() => void handleDownloadPdf()}
+              disabled={!runId || !sessionId}
+              onClick={handleOpenPrintView}
               size="sm"
               type="button"
               variant="outline"
             >
               <FileDownIcon className="size-4" />
-              {isSavingPdf ? "Saving PDF..." : "Save PDF"}
+              Open print / save PDF
             </Button>
           </div>
         ) : null}
       </CardHeader>
       <CardContent>
         {markdown ? (
-          <article
-            className="max-h-168 overflow-y-auto rounded-xl border border-zinc-200 bg-white px-5 py-5 sm:px-7"
-            ref={reportRef}
-          >
-            <div className={REPORT_MARKDOWN_CLASS}>
-              <ReactMarkdown
-                components={REPORT_MARKDOWN_COMPONENTS}
-                remarkPlugins={[remarkGfm]}
-              >
-                {markdown}
-              </ReactMarkdown>
-            </div>
+          <article className="max-h-168 overflow-y-auto rounded-xl border border-zinc-200 bg-white px-5 py-5 sm:px-7">
+            <DeepResearchReportRenderer markdown={markdown} />
           </article>
         ) : (
           <p className="text-sm text-muted-foreground">
             The final report will appear here once the run completes.
           </p>
         )}
+
+        {publishedDocumentState ? (
+          <p className="mt-3 text-sm text-muted-foreground">
+            Added to the workspace library as{" "}
+            <span className="font-medium text-foreground">
+              {publishedDocumentState.file_name}
+            </span>
+            .
+          </p>
+        ) : null}
+
+        {publishError ? (
+          <p className="mt-3 text-sm text-destructive">{publishError}</p>
+        ) : null}
       </CardContent>
     </Card>
   )
@@ -1256,7 +1147,10 @@ export function DeepResearchThreadShell({
           {run?.finalReportMarkdown ? (
             <Message from="assistant" className="max-w-full">
               <MessageContent className="w-full max-w-full bg-transparent p-0">
-                <DeepResearchFinalReport markdown={run.finalReportMarkdown} />
+                <DeepResearchFinalReport
+                  markdown={run.finalReportMarkdown}
+                  publishedDocument={run.publishedReportDocument}
+                />
               </MessageContent>
             </Message>
           ) : null}

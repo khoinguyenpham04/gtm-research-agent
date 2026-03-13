@@ -167,6 +167,11 @@ interface SessionCompletedReportRow {
   created_at: string;
 }
 
+interface GeneratedReportSourceRow {
+  generated_from_run_id: string | null;
+  document_external_id: string;
+}
+
 export interface SessionCompletedReport {
   runId: string;
   sessionId: string;
@@ -273,6 +278,7 @@ function mapRunResponse(
   workspace: WorkspaceSummary | undefined,
   selectedDocuments: DocumentSummary[],
   events: DeepResearchRunEvent[],
+  publishedReportDocument?: DocumentSummary,
 ): DeepResearchRunResponse {
   return {
     id: run.id,
@@ -280,6 +286,7 @@ function mapRunResponse(
     status: run.status,
     workspaceId: run.workspace_id ?? undefined,
     workspace,
+    publishedReportDocument,
     topic: run.topic,
     objective: run.objective ?? undefined,
     clarificationQuestion: run.clarification_question ?? undefined,
@@ -295,6 +302,7 @@ function mapRunResponse(
 function mapRunSummary(
   run: DeepResearchRunRecord,
   workspace: WorkspaceSummary | undefined,
+  publishedReportDocument?: DocumentSummary,
 ): DeepResearchRunSummary {
   return {
     id: run.id,
@@ -302,12 +310,50 @@ function mapRunSummary(
     status: run.status,
     workspaceId: run.workspace_id ?? undefined,
     workspace,
+    publishedReportDocument,
     topic: run.topic,
     objective: run.objective ?? undefined,
     errorMessage: run.error_message ?? undefined,
     updatedAt: run.updated_at,
     createdAt: run.created_at,
   };
+}
+
+async function getPublishedReportDocumentsByRunIds(runIds: string[]) {
+  if (runIds.length === 0) {
+    return new Map<string, DocumentSummary>();
+  }
+
+  const { supabaseAdmin } = createSupabaseClients();
+  const { data, error } = await supabaseAdmin
+    .from("document_sources")
+    .select("generated_from_run_id, document_external_id")
+    .in("generated_from_run_id", runIds);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const rows = (data ?? []) as GeneratedReportSourceRow[];
+  const documentIds = rows.map((row) => row.document_external_id);
+  const documents = await listDocumentsByIds(documentIds);
+  const documentById = new Map(documents.map((document) => [document.id, document]));
+  const publishedDocumentByRunId = new Map<string, DocumentSummary>();
+
+  for (const row of rows) {
+    if (!row.generated_from_run_id) {
+      continue;
+    }
+
+    const document = documentById.get(row.document_external_id);
+    if (!document) {
+      continue;
+    }
+
+    publishedDocumentByRunId.set(row.generated_from_run_id, document);
+  }
+
+  return publishedDocumentByRunId;
 }
 
 function mapSessionSummary(
@@ -911,10 +957,12 @@ export async function getDeepResearchRunResponse(runId: string) {
     return null;
   }
 
-  const [documentsByRunId, eventsByRunId, workspaces] = await Promise.all([
+  const [documentsByRunId, eventsByRunId, workspaces, publishedReportDocumentsByRunId] =
+    await Promise.all([
     getRunDocumentsByRunIds([runId]),
     getRunEventsByRunIds([runId]),
     listWorkspaces(),
+    getPublishedReportDocumentsByRunIds([runId]),
   ]);
 
   const workspace = workspaces.find((item) => item.id === run.workspace_id);
@@ -924,6 +972,7 @@ export async function getDeepResearchRunResponse(runId: string) {
     workspace,
     documentsByRunId.get(runId) ?? [],
     eventsByRunId.get(runId) ?? [],
+    publishedReportDocumentsByRunId.get(runId),
   );
 }
 
@@ -949,13 +998,17 @@ export async function listDeepResearchRunSummaries(options?: {
   }
 
   const runs = (data ?? []) as DeepResearchRunRecord[];
-  const workspaces = await listWorkspaces();
+  const [workspaces, publishedReportDocumentsByRunId] = await Promise.all([
+    listWorkspaces(),
+    getPublishedReportDocumentsByRunIds(runs.map((run) => run.id)),
+  ]);
   const workspaceById = new Map(workspaces.map((workspace) => [workspace.id, workspace]));
 
   return runs.map((run) =>
     mapRunSummary(
       run,
       run.workspace_id ? workspaceById.get(run.workspace_id) : undefined,
+      publishedReportDocumentsByRunId.get(run.id),
     ),
   );
 }
@@ -1079,9 +1132,11 @@ export async function getSessionThreadResponse(
 
   const runs = (runsResult.data ?? []) as DeepResearchRunRecord[];
   const runIds = runs.map((run) => run.id);
-  const [documentsByRunId, eventsByRunId] = await Promise.all([
+  const [documentsByRunId, eventsByRunId, publishedReportDocumentsByRunId] =
+    await Promise.all([
     getRunDocumentsByRunIds(runIds),
     getRunEventsByRunIds(runIds),
+    getPublishedReportDocumentsByRunIds(runIds),
   ]);
 
   const workspace = workspaces.find((item) => item.id === session.workspace_id);
@@ -1113,6 +1168,7 @@ export async function getSessionThreadResponse(
         workspace,
         documentsByRunId.get(run.id) ?? [],
         eventsByRunId.get(run.id) ?? [],
+        publishedReportDocumentsByRunId.get(run.id),
       ),
     );
   }

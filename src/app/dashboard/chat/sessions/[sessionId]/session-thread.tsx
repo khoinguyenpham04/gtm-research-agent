@@ -742,6 +742,9 @@ export function DeepResearchSessionThread({
                             <MessageContent className="w-full max-w-full bg-transparent p-0">
                               <DeepResearchFinalReport
                                 markdown={linkedRun.finalReportMarkdown}
+                                publishedDocument={linkedRun.publishedReportDocument}
+                                runId={linkedRun.id}
+                                sessionId={currentSession.id}
                               />
                             </MessageContent>
                           </Message>
