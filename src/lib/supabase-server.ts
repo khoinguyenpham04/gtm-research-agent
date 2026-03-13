@@ -32,7 +32,7 @@ export async function createAuthenticatedSupabaseClient() {
         auth: {
             persistSession: false,
             autoRefreshToken: false,
-            detectSessionFromUrl: false,
+            detectSessionInUrl: false,
         },
     })
 }

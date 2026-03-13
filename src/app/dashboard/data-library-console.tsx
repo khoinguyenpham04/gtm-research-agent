@@ -610,13 +610,12 @@ export function DataLibraryConsole({
   }
 
   const openPreview = (document: DocumentSummary) => {
+    const isPDF = document.file_name.toLowerCase().endsWith(".pdf")
     setSelectedPreview({
-      url:
-        document.file_url ||
-        `/api/documents?id=${document.id}&file=true${document.file_name.toLowerCase().endsWith(".pdf") ? "&view=true" : ""}`,
+      url: `/api/documents?id=${document.id}&file=true${isPDF ? "&view=true" : ""}`,
       name: document.file_name,
       id: document.id,
-      isPDF: document.file_name.toLowerCase().endsWith(".pdf"),
+      isPDF,
     })
     setShowPreview(true)
   }
@@ -629,7 +628,7 @@ export function DataLibraryConsole({
             <CardTitle>Workspace Knowledge</CardTitle>
             <CardDescription>
               Workspaces do not duplicate files. They attach and organize the
-              subset of global knowledge used for retrieval, chat, and deep
+              subset of your canonical library used for retrieval, chat, and deep
               research.
             </CardDescription>
           </CardHeader>

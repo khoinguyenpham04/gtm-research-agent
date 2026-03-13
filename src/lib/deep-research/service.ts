@@ -209,10 +209,11 @@ async function finalizeRunFromGraphState(
 
 export async function createDeepResearchRun(
   input: CreateDeepResearchRunRequest,
+  clerkUserId?: string,
 ): Promise<{ created: boolean; run: DeepResearchRunResponse }> {
   await ensureDeepResearchDatabase();
-  const result = await createDeepResearchRunRecord(input);
-  const response = await getDeepResearchRunResponse(result.run.id);
+  const result = await createDeepResearchRunRecord(input, clerkUserId);
+  const response = await getDeepResearchRunResponse(result.run.id, clerkUserId);
   if (!response) {
     throw new Error("Failed to load the deep research run after creation.");
   }
@@ -223,20 +224,23 @@ export async function createDeepResearchRun(
   };
 }
 
-export async function getDeepResearchRun(runId: string) {
+export async function getDeepResearchRun(runId: string, clerkUserId?: string) {
   await ensureDeepResearchDatabase();
-  return getDeepResearchRunResponse(runId);
+  return getDeepResearchRunResponse(runId, clerkUserId);
 }
 
-export async function canResumeDeepResearchRunFromCheckpoint(runId: string) {
+export async function canResumeDeepResearchRunFromCheckpoint(
+  runId: string,
+  clerkUserId?: string,
+) {
   await ensureDeepResearchDatabase();
 
-  const run = await getDeepResearchRunRecord(runId);
+  const run = await getDeepResearchRunRecord(runId, clerkUserId);
   if (!run) {
     throw new Error(`Deep research run ${runId} was not found.`);
   }
 
-  const runResponse = await getDeepResearchRunResponse(runId);
+  const runResponse = await getDeepResearchRunResponse(runId, clerkUserId);
   const selectedDocumentIds =
     runResponse?.selectedDocuments.map((document) => document.id) ?? [];
   const runtime = await getRuntime(run.thread_id, run.id, selectedDocumentIds);
@@ -256,6 +260,7 @@ export async function listDeepResearchRuns(options?: {
 export async function listSessions(options: {
   workspaceId: string;
   limit?: number;
+  clerkUserId?: string;
 }): Promise<SessionSummary[]> {
   await ensureDeepResearchDatabase();
   return listSessionSummaries(options);
@@ -272,26 +277,35 @@ export async function listSessionNavigation(options?: {
 
 export async function getSessionThread(
   sessionId: string,
+  clerkUserId?: string,
 ): Promise<SessionThreadResponse | null> {
   await ensureDeepResearchDatabase();
-  return getSessionThreadResponse(sessionId);
+  return getSessionThreadResponse(sessionId, clerkUserId);
 }
 
-export async function getSession(sessionId: string): Promise<SessionSummary | null> {
+export async function getSession(
+  sessionId: string,
+  clerkUserId?: string,
+): Promise<SessionSummary | null> {
   await ensureDeepResearchDatabase();
-  return getSessionSummary(sessionId);
+  return getSessionSummary(sessionId, clerkUserId);
 }
 
-export async function updateSessionTitle(sessionId: string, title: string) {
+export async function updateSessionTitle(
+  sessionId: string,
+  title: string,
+  clerkUserId?: string,
+) {
   await ensureDeepResearchDatabase();
-  return renameSession(sessionId, title);
+  return renameSession(sessionId, title, clerkUserId);
 }
 
 export async function getDeepResearchRunEvidence(
   runId: string,
+  clerkUserId?: string,
 ): Promise<DeepResearchRunEvidenceResponse | null> {
   await ensureDeepResearchDatabase();
-  return getDeepResearchRunEvidenceResponse(runId);
+  return getDeepResearchRunEvidenceResponse(runId, clerkUserId);
 }
 
 export async function processDeepResearchRun(

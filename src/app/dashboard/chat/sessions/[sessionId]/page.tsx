@@ -1,4 +1,6 @@
+import { auth } from "@clerk/nextjs/server"
 import Link from "next/link"
+import { redirect } from "next/navigation"
 
 import { DeepResearchSessionThread } from "@/app/dashboard/chat/sessions/[sessionId]/session-thread"
 import { SiteHeader } from "@/components/site-header"
@@ -19,17 +21,24 @@ export default async function SessionThreadPage({
 }: {
   params: Promise<{ sessionId: string }>
 }) {
+  const { userId } = await auth()
+  if (!userId) {
+    redirect("/sign-in")
+  }
+
   await ensureDeepResearchDatabase().catch(() => undefined)
 
   const { sessionId } = await params
-  const initialThread = await getSessionThread(sessionId).catch(() => null)
+  const initialThread = await getSessionThread(sessionId, userId).catch(() => null)
 
   const [initialWorkspace, initialWorkspaces] = initialThread
     ? await Promise.all([
-        getWorkspaceDetail(initialThread.session.workspaceId).catch(() => null),
-        listWorkspaces().catch(() => []),
+        getWorkspaceDetail(initialThread.session.workspaceId, userId).catch(
+          () => null,
+        ),
+        listWorkspaces(userId).catch(() => []),
       ])
-    : [null, await listWorkspaces().catch(() => [])]
+    : [null, await listWorkspaces(userId).catch(() => [])]
   const pageTitle =
     initialThread?.workspace?.name ?? initialWorkspace?.name ?? "Workspace"
 

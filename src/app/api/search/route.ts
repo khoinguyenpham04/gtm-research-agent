@@ -1,5 +1,8 @@
+import { auth } from "@clerk/nextjs/server";
 import OpenAI from 'openai';
 import { NextResponse } from 'next/server';
+
+import { listDocuments } from "@/lib/documents";
 import { createSupabaseClients } from '@/lib/supabase';
 
 const openai = new OpenAI();
@@ -13,16 +16,29 @@ interface SearchResultRow {
 }
 
 export async function POST(req: Request) {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   try {
     const { supabaseAdmin } = createSupabaseClients();
     const { query } = await req.json();
+    const ownedDocuments = await listDocuments(userId);
+    const selectedDocumentIds = ownedDocuments.map((document) => document.id);
+
+    if (selectedDocumentIds.length === 0) {
+      return NextResponse.json({
+        answer: "I do not have any documents in your library to answer from yet.",
+        sources: [],
+      });
+    }
+
     const emb = await openai.embeddings.create({ model: 'text-embedding-3-small', input: query });
     const queryEmbedding = emb.data[0]?.embedding ?? [];
     const { data: results, error } = await supabaseAdmin.rpc('match_documents', {
       query_embedding: queryEmbedding,
       match_threshold: 0.0,
       match_count: 5,
-      selected_document_ids: [],
+      selected_document_ids: selectedDocumentIds,
     });
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     const typedResults = (results ?? []) as SearchResultRow[];

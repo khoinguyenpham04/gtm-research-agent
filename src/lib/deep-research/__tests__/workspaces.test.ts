@@ -31,6 +31,7 @@ const attachments: WorkspaceDocumentAttachment[] = [
     workspaceId: "workspace-1",
     documentId: "doc-1",
     attachedAt: "2026-03-11T10:10:00.000Z",
+    assetType: "uploaded_document",
     document: {
       id: "doc-1",
       file_name: "global-overview.pdf",
@@ -45,6 +46,7 @@ const attachments: WorkspaceDocumentAttachment[] = [
     documentId: "doc-2",
     folderId: "folder-1",
     attachedAt: "2026-03-11T10:11:00.000Z",
+    assetType: "uploaded_document",
     document: {
       id: "doc-2",
       file_name: "analyst-report.pdf",
@@ -59,6 +61,7 @@ const attachments: WorkspaceDocumentAttachment[] = [
     documentId: "doc-3",
     folderId: "folder-2",
     attachedAt: "2026-03-11T10:12:00.000Z",
+    assetType: "uploaded_document",
     document: {
       id: "doc-3",
       file_name: "uk-fintech.txt",

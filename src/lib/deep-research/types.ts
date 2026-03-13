@@ -533,6 +533,7 @@ export interface DeepResearchRunRecord {
   session_id: string | null;
   origin_message_id: string | null;
   workspace_id: string | null;
+  clerk_user_id: string;
   planner_type: string | null;
   report_plan_version: number | null;
   report_plan_json: ReportPlan | null;
@@ -637,6 +638,7 @@ export interface SearchMatch {
 export interface SessionRecord {
   id: string;
   workspace_id: string;
+  clerk_user_id: string;
   title: string;
   created_at: string;
   updated_at: string;

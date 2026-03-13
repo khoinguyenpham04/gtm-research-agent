@@ -1,3 +1,6 @@
+import { auth } from "@clerk/nextjs/server"
+import { redirect } from "next/navigation"
+
 import { SiteHeader } from "@/components/site-header"
 import { ensureDeepResearchDatabase } from "@/lib/deep-research/db"
 import {
@@ -8,16 +11,22 @@ import { listWorkspaces } from "@/lib/workspaces"
 import { RecentRunsConsole } from "@/app/dashboard/recent/recent-runs-console"
 
 export default async function RecentRunsPage() {
+  const { userId } = await auth()
+  if (!userId) {
+    redirect("/sign-in")
+  }
+
   await ensureDeepResearchDatabase().catch(() => undefined)
 
-  const initialWorkspaces = await listWorkspaces().catch(() => [])
+  const initialWorkspaces = await listWorkspaces(userId).catch(() => [])
   const initialWorkspaceId = initialWorkspaces[0]?.id ?? ""
   const initialRecentRuns = await listDeepResearchRuns({
     workspaceId: initialWorkspaceId || undefined,
     limit: 20,
+    clerkUserId: userId,
   }).catch(() => [])
   const initialRun = initialRecentRuns[0]
-    ? await getDeepResearchRun(initialRecentRuns[0].id).catch(() => null)
+    ? await getDeepResearchRun(initialRecentRuns[0].id, userId).catch(() => null)
     : null
 
   return (

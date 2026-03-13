@@ -1,3 +1,4 @@
+import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 
 import { ensureDeepResearchDatabase } from "@/lib/deep-research/db";
@@ -134,6 +135,11 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
+  const { userId } = await auth();
+  if (!userId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
     await ensureDeepResearchDatabase();
     const { id } = await context.params;
@@ -147,6 +153,7 @@ export async function POST(
       }
 
       const result = await ingestDocumentToLibrary({
+        clerkUserId: userId,
         fileBuffer: Buffer.from(await file.arrayBuffer()),
         fileName: file.name,
         fileType: file.type || undefined,
@@ -195,6 +202,7 @@ export async function POST(
           : "text/plain; charset=utf-8";
 
     const result = await ingestDocumentToLibrary({
+      clerkUserId: userId,
       fileBuffer,
       fileName,
       fileType,
@@ -207,6 +215,7 @@ export async function POST(
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Failed to ingest document.";
-    return NextResponse.json({ error: message }, { status: 400 });
+    const status = message === "Workspace not found." ? 404 : 400;
+    return NextResponse.json({ error: message }, { status });
   }
 }

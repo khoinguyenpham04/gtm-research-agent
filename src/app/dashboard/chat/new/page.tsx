@@ -1,3 +1,4 @@
+import { auth } from "@clerk/nextjs/server"
 import { redirect } from "next/navigation"
 
 import { DeepResearchChatLauncher } from "@/app/dashboard/chat/new/deep-research-chat-launcher"
@@ -44,6 +45,11 @@ export default async function DeepResearchNewChatPage({
 }: {
   searchParams?: Promise<Record<string, string | string[] | undefined>>
 }) {
+  const { userId } = await auth()
+  if (!userId) {
+    redirect("/sign-in")
+  }
+
   await ensureDeepResearchDatabase().catch(() => undefined)
 
   const resolvedSearchParams = (await searchParams) ?? {}
@@ -70,8 +76,10 @@ export default async function DeepResearchNewChatPage({
     .filter(Boolean)
 
   const [initialWorkspace, initialWorkspaces] = await Promise.all([
-    workspaceId ? getWorkspaceDetail(workspaceId).catch(() => null) : Promise.resolve(null),
-    listWorkspaces().catch(() => []),
+    workspaceId
+      ? getWorkspaceDetail(workspaceId, userId).catch(() => null)
+      : Promise.resolve(null),
+    listWorkspaces(userId).catch(() => []),
   ])
   const selectedDocuments =
     initialWorkspace?.documents

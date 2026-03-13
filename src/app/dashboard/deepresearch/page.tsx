@@ -1,3 +1,6 @@
+import { auth } from "@clerk/nextjs/server"
+import { redirect } from "next/navigation"
+
 import { SiteHeader } from "@/components/site-header"
 import { DeepResearchConsole } from "@/app/dashboard/research-console"
 import { listDocuments } from "@/lib/documents"
@@ -17,11 +20,16 @@ export default async function DeepResearchPage({
 }: {
   searchParams?: Promise<Record<string, string | string[] | undefined>>
 }) {
+  const { userId } = await auth()
+  if (!userId) {
+    redirect("/sign-in")
+  }
+
   await ensureDeepResearchDatabase().catch(() => undefined)
   const resolvedSearchParams = (await searchParams) ?? {}
   const [initialDocuments, initialWorkspaces] = await Promise.all([
-    listDocuments().catch(() => []),
-    listWorkspaces().catch(() => []),
+    listDocuments(userId).catch(() => []),
+    listWorkspaces(userId).catch(() => []),
   ])
   const requestedWorkspaceId =
     readSearchParam(resolvedSearchParams.workspaceId)?.trim() ?? ""
@@ -31,7 +39,7 @@ export default async function DeepResearchPage({
     initialWorkspaces[0]?.id ??
     ""
   const initialWorkspace = initialWorkspaceId
-    ? await getWorkspaceDetail(initialWorkspaceId).catch(() => null)
+    ? await getWorkspaceDetail(initialWorkspaceId, userId).catch(() => null)
     : null
   const initialTopic = readSearchParam(resolvedSearchParams.topic)?.trim() ?? ""
   const initialObjective =

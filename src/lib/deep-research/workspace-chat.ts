@@ -176,6 +176,14 @@ function buildDocumentCitation(match: SearchMatch): WorkspaceChatCitation {
     typeof match.metadata.file_name === "string"
       ? match.metadata.file_name
       : "Workspace document";
+  const documentId =
+    typeof match.metadata.document_id === "string"
+      ? match.metadata.document_id
+      : undefined;
+  const fileType =
+    typeof match.metadata.file_type === "string"
+      ? match.metadata.file_type
+      : undefined;
   const chunkIndex =
     typeof match.metadata.chunk_index === "number"
       ? match.metadata.chunk_index
@@ -198,11 +206,14 @@ function buildDocumentCitation(match: SearchMatch): WorkspaceChatCitation {
       typeof chunkIndex === "number"
         ? `Chunk ${chunkIndex + 1}${typeof totalChunks === "number" && totalChunks > 0 ? ` of ${totalChunks}` : ""}`
         : "Workspace document",
-    url: typeof match.metadata.file_url === "string" ? match.metadata.file_url : undefined,
-    documentId:
-      typeof match.metadata.document_id === "string"
-        ? match.metadata.document_id
-        : undefined,
+    url: documentId
+      ? `/api/documents?id=${documentId}&file=true${
+          fileType === "application/pdf" || fileName.toLowerCase().endsWith(".pdf")
+            ? "&view=true"
+            : ""
+        }`
+      : undefined,
+    documentId,
     fileName,
     chunkIndex: typeof chunkIndex === "number" ? chunkIndex : undefined,
     totalChunks:
@@ -293,13 +304,14 @@ function buildContextBlock(citations: WorkspaceChatCitation[]) {
 async function resolveWorkspaceContext(
   sessionId: string,
   requestedDocumentIds: string[],
+  clerkUserId: string,
 ) {
-  const session = await getSessionSummary(sessionId);
+  const session = await getSessionSummary(sessionId, clerkUserId);
   if (!session) {
     throw new Error("Session not found.");
   }
 
-  const workspace = await getWorkspaceDetail(session.workspaceId);
+  const workspace = await getWorkspaceDetail(session.workspaceId, clerkUserId);
   if (!workspace) {
     throw new Error("Workspace not found.");
   }
@@ -332,6 +344,7 @@ export async function buildWorkspaceChatContext(input: {
   sessionId: string;
   requestMessages: WorkspaceChatUIMessage[];
   selectedDocumentIds: string[];
+  clerkUserId: string;
 }) : Promise<WorkspaceChatContext> {
   const latestUserMessage = [...input.requestMessages]
     .reverse()
@@ -350,6 +363,7 @@ export async function buildWorkspaceChatContext(input: {
   const { effectiveDocumentIds, workspace } = await resolveWorkspaceContext(
     input.sessionId,
     input.selectedDocumentIds,
+    input.clerkUserId,
   );
 
   await appendSessionMessage({
@@ -365,12 +379,17 @@ export async function buildWorkspaceChatContext(input: {
       sourceCount: 0,
       createdAt: new Date().toISOString(),
     },
+    clerkUserId: input.clerkUserId,
   });
 
   const [documentMatches, recentChatMessages, completedReports] = await Promise.all([
     searchWorkspaceDocuments(userText, effectiveDocumentIds, apiKey),
-    listRecentSessionChatMessages(input.sessionId, WORKSPACE_CHAT_HISTORY_LIMIT),
-    listCompletedSessionReports(input.sessionId),
+    listRecentSessionChatMessages(
+      input.sessionId,
+      WORKSPACE_CHAT_HISTORY_LIMIT,
+      input.clerkUserId,
+    ),
+    listCompletedSessionReports(input.sessionId, input.clerkUserId),
   ]);
 
   const reportExcerpts = rankReportExcerpts(userText, completedReports);
@@ -399,6 +418,7 @@ export async function streamWorkspaceChat(input: {
   sessionId: string;
   requestMessages: WorkspaceChatUIMessage[];
   selectedDocumentIds: string[];
+  clerkUserId: string;
   signal?: AbortSignal;
 }) {
   const latestUserMessage = [...input.requestMessages]

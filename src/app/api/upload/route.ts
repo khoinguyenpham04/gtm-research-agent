@@ -1,8 +1,14 @@
+import { auth } from '@clerk/nextjs/server';
 import { NextResponse } from 'next/server';
 import { ensureDeepResearchDatabase } from '@/lib/deep-research/db';
 import { ingestDocumentToLibrary } from '@/lib/document-ingestion';
 
 export async function POST(req: Request) {
+  const { userId } = await auth();
+  if (!userId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   try {
     await ensureDeepResearchDatabase();
     const formData = await req.formData();
@@ -17,6 +23,7 @@ export async function POST(req: Request) {
     const fileBuffer = Buffer.from(await file.arrayBuffer());
 
     const result = await ingestDocumentToLibrary({
+      clerkUserId: userId,
       fileBuffer,
       fileName: file.name,
       fileType: file.type || undefined,
@@ -30,7 +37,6 @@ export async function POST(req: Request) {
       fileName: result.document.file_name,
       chunks: result.chunks,
       textLength: result.textLength,
-      fileUrl: result.document.file_url,
       workspaceAttached: result.attachedToWorkspace,
     });
   } catch (error: unknown) {

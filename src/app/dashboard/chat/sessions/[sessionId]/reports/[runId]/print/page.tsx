@@ -1,3 +1,4 @@
+import { auth } from "@clerk/nextjs/server";
 import { notFound } from "next/navigation";
 
 import { DeepResearchReportRenderer } from "@/components/deep-research/report-renderer";
@@ -10,10 +11,15 @@ export default async function DeepResearchReportPrintPage({
 }: {
   params: Promise<{ runId: string; sessionId: string }>;
 }) {
+  const { userId } = await auth();
+  if (!userId) {
+    notFound();
+  }
+
   const { runId, sessionId } = await params;
   const [session, run] = await Promise.all([
-    getSessionSummary(sessionId),
-    getDeepResearchRunResponse(runId),
+    getSessionSummary(sessionId, userId),
+    getDeepResearchRunResponse(runId, userId),
   ]);
 
   if (!session || !run || run.sessionId !== sessionId || !run.finalReportMarkdown) {

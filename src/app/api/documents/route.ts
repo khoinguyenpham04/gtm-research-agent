@@ -1,4 +1,8 @@
+import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from 'next/server';
+
+import { listDocuments } from "@/lib/documents";
+import { listWorkspaces } from "@/lib/workspaces";
 import { createSupabaseClients } from '@/lib/supabase';
 
 interface DocumentMetadata extends Record<string, unknown> {
@@ -18,8 +22,11 @@ interface DocumentChunkRow {
 }
 
 export async function GET(req: Request) {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   try {
-    const { supabase, supabaseStorage } = createSupabaseClients();
+    const { supabaseAdmin, supabaseStorage } = createSupabaseClients();
     const reqUrl = new URL(req.url);
     const id = reqUrl.searchParams.get('id');
     const file = reqUrl.searchParams.get('file') === 'true';
@@ -27,11 +34,16 @@ export async function GET(req: Request) {
 
     // File download/view
     if (id && file) {
-      const { data: documents } = await supabase
+      const { data: documents, error } = await supabaseAdmin
         .from('documents')
         .select('metadata')
-        .eq('metadata->>document_id', id)
+        .eq('document_external_id', id)
+        .eq('clerk_user_id', userId)
         .limit(1);
+
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
 
       if (!documents || documents.length === 0) {
         return NextResponse.json({ error: 'Document not found' }, { status: 404 });
@@ -58,11 +70,11 @@ export async function GET(req: Request) {
 
     // Single document with text content
     if (id) {
-      const { data: chunks, error } = await supabase
+      const { data: chunks, error } = await supabaseAdmin
         .from('documents')
         .select('content, metadata')
-        .eq('metadata->>document_id', id)
-        .order('metadata->>chunk_index', { ascending: true });
+        .eq('document_external_id', id)
+        .eq('clerk_user_id', userId);
 
       if (error || !chunks || chunks.length === 0) {
         return NextResponse.json({ error: 'Document not found' }, { status: 404 });
@@ -77,35 +89,14 @@ export async function GET(req: Request) {
         upload_date: m.upload_date || new Date().toISOString(),
         total_chunks: chunks.length,
         fullText: (chunks as DocumentChunkRow[]).map((chunk) => chunk.content).join('\n\n'),
-        file_url: m.file_url,
         file_path: m.file_path
       });
     }
 
     // List all documents
-    const { data: documents, error } = await supabase.from('documents').select('metadata');
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-
-    const map = new Map<string, DocumentMetadata>();
-    (documents as { metadata: DocumentMetadata }[] | null)?.forEach((doc) => {
-      const m = doc.metadata;
-      if (m?.document_id && !map.has(m.document_id)) {
-        map.set(m.document_id, m);
-      }
-    });
+    const documents = await listDocuments(userId);
     return NextResponse.json({
-      documents: Array.from(map.values()).map((m) => ({
-        id: m.document_id,
-        file_name: m.file_name || 'Unknown',
-        file_type: m.file_type || 'unknown',
-        file_size: m.file_size || 0,
-        upload_date: m.upload_date || new Date().toISOString(),
-        total_chunks: m.total_chunks || 0,
-        file_url: m.file_url,
-        file_path: m.file_path,
-      })),
+      documents,
     });
   } catch (error: unknown) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Failed to load documents' }, { status: 500 });
@@ -113,18 +104,45 @@ export async function GET(req: Request) {
 }
 
 export async function DELETE(req: Request) {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   try {
-    const { supabase, supabaseAdmin, supabaseStorage } = createSupabaseClients();
+    const { supabaseAdmin, supabaseStorage } = createSupabaseClients();
     const id = new URL(req.url).searchParams.get('id');
     if (!id) return NextResponse.json({ error: 'Document ID required' }, { status: 400 });
-    const { data: docs } = await supabase.from('documents').select('metadata').eq('metadata->>document_id', id).limit(1);
+    const { data: docs, error: documentError } = await supabaseAdmin
+      .from('documents')
+      .select('metadata')
+      .eq('document_external_id', id)
+      .eq('clerk_user_id', userId)
+      .limit(1);
+    if (documentError) return NextResponse.json({ error: documentError.message }, { status: 500 });
+    if (!docs || docs.length === 0) return NextResponse.json({ error: 'Document not found' }, { status: 404 });
     const filePath = docs?.[0]?.metadata?.file_path;
     if (filePath) await supabaseStorage.storage.from('documents').remove([filePath]);
-    const { error } = await supabase.from('documents').delete().eq('metadata->>document_id', id);
+    const { error } = await supabaseAdmin
+      .from('documents')
+      .delete()
+      .eq('document_external_id', id)
+      .eq('clerk_user_id', userId);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+    const ownedWorkspaces = await listWorkspaces(userId);
+    const ownedWorkspaceIds = ownedWorkspaces.map((workspace) => workspace.id);
     await Promise.all([
-      supabaseAdmin.from('workspace_documents').delete().eq('document_external_id', id),
-      supabaseAdmin.from('document_sources').delete().eq('document_external_id', id),
+      ownedWorkspaceIds.length > 0
+        ? supabaseAdmin
+            .from('workspace_documents')
+            .delete()
+            .eq('document_external_id', id)
+            .in('workspace_id', ownedWorkspaceIds)
+        : Promise.resolve({ error: null }),
+      supabaseAdmin
+        .from('document_sources')
+        .delete()
+        .eq('document_external_id', id)
+        .eq('clerk_user_id', userId),
     ]);
     return NextResponse.json({ success: true, fileDeleted: !!filePath });
   } catch (error: unknown) {

@@ -232,8 +232,16 @@ export function formatDocumentSearchResults(matches: SearchMatch[]) {
         ? match.metadata.total_chunks
         : Number(match.metadata.total_chunks ?? 0);
     const fileUrl =
-      typeof match.metadata.file_url === "string"
-        ? match.metadata.file_url
+      typeof match.metadata.document_id === "string"
+        ? `/api/documents?id=${match.metadata.document_id}&file=true${
+            typeof match.metadata.file_type === "string" &&
+            match.metadata.file_type === "application/pdf"
+              ? "&view=true"
+              : typeof match.metadata.file_name === "string" &&
+                  match.metadata.file_name.toLowerCase().endsWith(".pdf")
+                ? "&view=true"
+                : ""
+          }`
         : undefined;
 
     lines.push("");
@@ -722,8 +730,16 @@ export function createResearcherTools(context: ResearchToolContext) {
               ? match.metadata.file_name
               : undefined,
           fileUrl:
-            typeof match.metadata.file_url === "string"
-              ? match.metadata.file_url
+            typeof match.metadata.document_id === "string"
+              ? `/api/documents?id=${match.metadata.document_id}&file=true${
+                  typeof match.metadata.file_type === "string" &&
+                  match.metadata.file_type === "application/pdf"
+                    ? "&view=true"
+                    : typeof match.metadata.file_name === "string" &&
+                        match.metadata.file_name.toLowerCase().endsWith(".pdf")
+                      ? "&view=true"
+                      : ""
+                }`
               : undefined,
         })),
       };

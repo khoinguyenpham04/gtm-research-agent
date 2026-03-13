@@ -1,3 +1,4 @@
+import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 
 import { scheduleDeepResearchTask } from "@/lib/deep-research/background";
@@ -16,9 +17,12 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   try {
     const { id } = await context.params;
-    const run = await getDeepResearchRun(id);
+    const run = await getDeepResearchRun(id, userId);
 
     if (!run) {
       return NextResponse.json(
@@ -57,7 +61,7 @@ export async function POST(
       );
     }
 
-    const checkpointAvailable = await canResumeDeepResearchRunFromCheckpoint(id);
+    const checkpointAvailable = await canResumeDeepResearchRunFromCheckpoint(id, userId);
     if (!checkpointAvailable) {
       return NextResponse.json(
         {

@@ -23,7 +23,7 @@ export async function GET(
       return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
     }
 
-    const workspace = await getWorkspaceDetail(id);
+    const workspace = await getWorkspaceDetail(id, userId);
     if (!workspace) {
       return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
     }

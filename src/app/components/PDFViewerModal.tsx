@@ -17,6 +17,10 @@ export default function PDFViewerModal({ isOpen, onClose, fileUrl, fileName, doc
   const [text, setText] = useState<string>('');
   const [textLoading, setTextLoading] = useState(false);
   const [textError, setTextError] = useState<string | null>(null);
+  const resolvedFileUrl =
+    documentId
+      ? `/api/documents?id=${documentId}&file=true${isPDF ? "&view=true" : ""}`
+      : fileUrl;
 
   useEffect(() => {
     document.body.style.overflow = isOpen ? 'hidden' : 'unset';
@@ -32,8 +36,8 @@ export default function PDFViewerModal({ isOpen, onClose, fileUrl, fileName, doc
   }, [isOpen, documentId, activeTab, text, textLoading, textError]);
 
   useEffect(() => {
-    if (isOpen && fileUrl && isPDF) {
-      fetch(fileUrl, { method: 'GET', headers: { 'Accept': 'application/json' } })
+    if (isOpen && resolvedFileUrl && isPDF) {
+      fetch(resolvedFileUrl, { method: 'GET', headers: { 'Accept': 'application/json' } })
         .then(async res => {
           if (res.headers.get('content-type')?.includes('application/json')) {
             const data = await res.json();
@@ -47,7 +51,7 @@ export default function PDFViewerModal({ isOpen, onClose, fileUrl, fileName, doc
           setLoading(false);
         });
     } else if (isOpen && !isPDF) setLoading(false);
-  }, [isOpen, fileUrl, isPDF]);
+  }, [isOpen, resolvedFileUrl, isPDF]);
 
   const fetchDocumentText = async () => {
     if (!documentId) return;
@@ -127,7 +131,7 @@ export default function PDFViewerModal({ isOpen, onClose, fileUrl, fileName, doc
                 <div className="flex items-center justify-center h-full"><p className="text-gray-500 dark:text-gray-400">Loading PDF...</p></div>
               ) : (
                 <iframe
-                  src={`${fileUrl}${fileUrl.includes('?') ? '&' : '?'}view=true#toolbar=1&navpanes=0&scrollbar=1`}
+                  src={`${resolvedFileUrl}#toolbar=1&navpanes=0&scrollbar=1`}
                   className="w-full h-full border-0"
                   title={fileName}
                   allow="fullscreen"
@@ -160,4 +164,3 @@ export default function PDFViewerModal({ isOpen, onClose, fileUrl, fileName, doc
     </div>
   );
 }
-

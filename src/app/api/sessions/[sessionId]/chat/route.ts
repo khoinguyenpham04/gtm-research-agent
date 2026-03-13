@@ -1,3 +1,4 @@
+import { auth } from "@clerk/nextjs/server";
 import { consumeStream, type UIMessage } from "ai";
 import { NextResponse } from "next/server";
 
@@ -25,6 +26,9 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ sessionId: string }> },
 ) {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   try {
     await ensureDeepResearchDatabase();
 
@@ -43,6 +47,7 @@ export async function POST(
     }
 
     const { assistantMetadata, result } = await streamWorkspaceChat({
+      clerkUserId: userId,
       requestMessages,
       selectedDocumentIds: Array.isArray(body.selectedDocumentIds)
         ? body.selectedDocumentIds
@@ -92,6 +97,7 @@ export async function POST(
             ...assistantMetadata,
             finishedAt: new Date().toISOString(),
           },
+          clerkUserId: userId,
         });
       },
       originalMessages: requestMessages,
@@ -102,6 +108,13 @@ export async function POST(
         ? error.message
         : "Failed to generate a workspace chat response.";
 
-    return NextResponse.json({ error: message }, { status: 500 });
+    const status =
+      message === "Session not found." || message === "Workspace not found."
+        ? 404
+        : message === "Selected documents must belong to the session workspace."
+          ? 400
+          : 500;
+
+    return NextResponse.json({ error: message }, { status });
   }
 }

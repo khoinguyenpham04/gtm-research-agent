@@ -18,6 +18,12 @@ export interface DocumentChunk {
   embedding?: unknown;
 }
 
+type DocumentRow = {
+  document_external_id?: string | null;
+  clerk_user_id?: string | null;
+  metadata: Record<string, unknown> | null;
+};
+
 function mapDocumentMetadata(metadata: Record<string, unknown>): DocumentSummary {
   return {
     id: String(metadata.document_id ?? ""),
@@ -26,23 +32,30 @@ function mapDocumentMetadata(metadata: Record<string, unknown>): DocumentSummary
     file_size: Number(metadata.file_size ?? 0),
     upload_date: String(metadata.upload_date ?? new Date().toISOString()),
     total_chunks: Number(metadata.total_chunks ?? 0),
-    file_url: typeof metadata.file_url === "string" ? metadata.file_url : undefined,
     file_path: typeof metadata.file_path === "string" ? metadata.file_path : undefined,
   };
 }
 
-export async function listDocuments(): Promise<DocumentSummary[]> {
+export async function listDocuments(clerkUserId?: string): Promise<DocumentSummary[]> {
   const { supabaseAdmin } = createSupabaseClients();
-  const { data, error } = await supabaseAdmin.from("documents").select("metadata");
+  let query = supabaseAdmin
+    .from("documents")
+    .select("document_external_id, clerk_user_id, metadata");
+
+  if (clerkUserId) {
+    query = query.eq("clerk_user_id", clerkUserId);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     throw new Error(error.message);
   }
 
   const documents = new Map<string, DocumentSummary>();
-  for (const row of data ?? []) {
+  for (const row of (data ?? []) as DocumentRow[]) {
     const metadata = (row.metadata ?? {}) as Record<string, unknown>;
-    const documentId = metadata.document_id;
+    const documentId = row.document_external_id ?? metadata.document_id;
     if (typeof documentId !== "string" || documents.has(documentId)) {
       continue;
     }
@@ -57,58 +70,67 @@ export async function listDocuments(): Promise<DocumentSummary[]> {
 
 export async function listDocumentsByIds(
   documentIds: string[],
+  clerkUserId?: string,
 ): Promise<DocumentSummary[]> {
   if (documentIds.length === 0) {
     return [];
   }
 
-  const documents = await Promise.all(
-    documentIds.map(async (documentId) => {
-      const { supabaseAdmin } = createSupabaseClients();
-      const { data, error } = await supabaseAdmin
-        .from("documents")
-        .select("metadata")
-        .eq("metadata->>document_id", documentId)
-        .limit(1)
-        .maybeSingle();
+  const { supabaseAdmin } = createSupabaseClients();
+  let query = supabaseAdmin
+    .from("documents")
+    .select("document_external_id, clerk_user_id, metadata")
+    .in("document_external_id", documentIds);
 
-      if (error) {
-        throw new Error(error.message);
-      }
+  if (clerkUserId) {
+    query = query.eq("clerk_user_id", clerkUserId);
+  }
 
-      if (!data?.metadata) {
-        return null;
-      }
+  const { data, error } = await query;
 
-      return mapDocumentMetadata(data.metadata as Record<string, unknown>);
-    }),
-  );
+  if (error) {
+    throw new Error(error.message);
+  }
 
-  return documents.filter((document): document is DocumentSummary => document !== null);
+  const documents = new Map<string, DocumentSummary>();
+  for (const row of (data ?? []) as DocumentRow[]) {
+    const metadata = (row.metadata ?? {}) as Record<string, unknown>;
+    const documentId = row.document_external_id ?? metadata.document_id;
+    if (typeof documentId !== "string" || documents.has(documentId)) {
+      continue;
+    }
+
+    documents.set(documentId, mapDocumentMetadata(metadata));
+  }
+
+  return documentIds
+    .map((documentId) => documents.get(documentId) ?? null)
+    .filter((document): document is DocumentSummary => document !== null);
 }
 
 export async function listDocumentChunksByIds(
   documentIds: string[],
+  clerkUserId?: string,
 ): Promise<DocumentChunk[]> {
   if (documentIds.length === 0) {
     return [];
   }
 
   const { supabaseAdmin } = createSupabaseClients();
-  const chunkSets = await Promise.all(
-    documentIds.map(async (documentId) => {
-      const { data, error } = await supabaseAdmin
-        .from("documents")
-        .select("id, content, metadata, embedding")
-        .eq("metadata->>document_id", documentId);
+  let query = supabaseAdmin
+    .from("documents")
+    .select("id, content, metadata, embedding")
+    .in("document_external_id", documentIds);
 
-      if (error) {
-        throw new Error(error.message);
-      }
+  if (clerkUserId) {
+    query = query.eq("clerk_user_id", clerkUserId);
+  }
 
-      return (data ?? []) as DocumentChunk[];
-    }),
-  );
+  const { data, error } = await query;
 
-  return chunkSets.flat();
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []) as DocumentChunk[];
 }

@@ -3,7 +3,7 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { Menu, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { SignInButton, SignUpButton, UserButton } from '@clerk/nextjs'
+import { SignInButton, SignUpButton } from '@clerk/nextjs'
 import { Show } from '@clerk/nextjs'
 import React from 'react'
 import { cn } from '@/lib/utils'
@@ -105,7 +105,9 @@ export const HeroHeader = () => {
                                     </SignUpButton>
                                 </Show>
                                 <Show when="signed-in">
-                                    <UserButton />
+                                    <Button asChild size="sm">
+                                        <Link href="/dashboard">Dashboard</Link>
+                                    </Button>
                                 </Show>
                             </div>
                         </div>

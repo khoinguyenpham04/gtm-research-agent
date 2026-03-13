@@ -51,6 +51,7 @@ const deepResearchRunSelect = `
   session_id,
   origin_message_id,
   workspace_id,
+  clerk_user_id,
   planner_type,
   report_plan_version,
   report_plan_json,
@@ -68,6 +69,7 @@ const deepResearchRunSelect = `
 const sessionSelect = `
   id,
   workspace_id,
+  clerk_user_id,
   title,
   created_at,
   updated_at,
@@ -142,6 +144,7 @@ interface DeepResearchRunSectionEvidenceLinkRecord {
 interface SessionRow {
   id: string;
   workspace_id: string;
+  clerk_user_id: string;
   title: string;
   created_at: string;
   updated_at: string;
@@ -319,16 +322,25 @@ function mapRunSummary(
   };
 }
 
-async function getPublishedReportDocumentsByRunIds(runIds: string[]) {
+async function getPublishedReportDocumentsByRunIds(
+  runIds: string[],
+  clerkUserId?: string,
+) {
   if (runIds.length === 0) {
     return new Map<string, DocumentSummary>();
   }
 
   const { supabaseAdmin } = createSupabaseClients();
-  const { data, error } = await supabaseAdmin
+  let query = supabaseAdmin
     .from("document_sources")
     .select("generated_from_run_id, document_external_id")
     .in("generated_from_run_id", runIds);
+
+  if (clerkUserId) {
+    query = query.eq("clerk_user_id", clerkUserId);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     throw new Error(error.message);
@@ -336,7 +348,7 @@ async function getPublishedReportDocumentsByRunIds(runIds: string[]) {
 
   const rows = (data ?? []) as GeneratedReportSourceRow[];
   const documentIds = rows.map((row) => row.document_external_id);
-  const documents = await listDocumentsByIds(documentIds);
+  const documents = await listDocumentsByIds(documentIds, clerkUserId);
   const documentById = new Map(documents.map((document) => [document.id, document]));
   const publishedDocumentByRunId = new Map<string, DocumentSummary>();
 
@@ -388,7 +400,7 @@ function mapSessionMessage(
   };
 }
 
-async function getRunDocumentsByRunIds(runIds: string[]) {
+async function getRunDocumentsByRunIds(runIds: string[], clerkUserId?: string) {
   if (runIds.length === 0) {
     return new Map<string, DocumentSummary[]>();
   }
@@ -407,7 +419,7 @@ async function getRunDocumentsByRunIds(runIds: string[]) {
   const documentIds = Array.from(
     new Set(documentRows.map((row) => row.document_external_id)),
   );
-  const documents = await listDocumentsByIds(documentIds);
+  const documents = await listDocumentsByIds(documentIds, clerkUserId);
   const documentsById = new Map(documents.map((document) => [document.id, document]));
   const documentsByRunId = new Map<string, DocumentSummary[]>();
 
@@ -461,13 +473,18 @@ async function getRunEventsByRunIds(runIds: string[]) {
   return eventsByRunId;
 }
 
-async function getSessionRecord(sessionId: string) {
+async function getSessionRecord(sessionId: string, clerkUserId?: string) {
   const { supabaseAdmin } = createSupabaseClients();
-  const { data, error } = await supabaseAdmin
+  let query = supabaseAdmin
     .from("sessions")
     .select(sessionSelect)
-    .eq("id", sessionId)
-    .maybeSingle();
+    .eq("id", sessionId);
+
+  if (clerkUserId) {
+    query = query.eq("clerk_user_id", clerkUserId);
+  }
+
+  const { data, error } = await query.maybeSingle();
 
   if (error) {
     throw new Error(error.message);
@@ -497,17 +514,26 @@ async function getSessionMessageRows(sessionId: string) {
   );
 }
 
-async function getLatestRunsBySessionId(sessionIds: string[]) {
+async function getLatestRunsBySessionId(
+  sessionIds: string[],
+  clerkUserId?: string,
+) {
   if (sessionIds.length === 0) {
     return new Map<string, DeepResearchRunRecord>();
   }
 
   const { supabaseAdmin } = createSupabaseClients();
-  const { data, error } = await supabaseAdmin
+  let query = supabaseAdmin
     .from("deep_research_runs")
     .select(deepResearchRunSelect)
     .in("session_id", sessionIds)
     .order("updated_at", { ascending: false });
+
+  if (clerkUserId) {
+    query = query.eq("clerk_user_id", clerkUserId);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     throw new Error(error.message);
@@ -546,6 +572,7 @@ export async function appendSessionMessage(input: {
   metadata?: SessionMessageMetadata;
   createdAt?: string;
   id?: string;
+  clerkUserId?: string;
 }) {
   const timestamp = input.createdAt ?? new Date().toISOString();
   const messageId = input.id?.trim() || crypto.randomUUID();
@@ -556,9 +583,12 @@ export async function appendSessionMessage(input: {
         select ${sessionSelect}
         from public.sessions
         where id = $1
+        ${input.clerkUserId ? "  and clerk_user_id = $2" : ""}
         for update
       `,
-      [input.sessionId],
+      input.clerkUserId
+        ? [input.sessionId, input.clerkUserId]
+        : [input.sessionId],
     );
 
     const session = sessionResult.rows[0];
@@ -614,7 +644,15 @@ export async function appendSessionMessage(input: {
 export async function listRecentSessionChatMessages(
   sessionId: string,
   limit = 12,
+  clerkUserId?: string,
 ) {
+  if (clerkUserId) {
+    const session = await getSessionRecord(sessionId, clerkUserId);
+    if (!session) {
+      return [];
+    }
+  }
+
   const { supabaseAdmin } = createSupabaseClients();
   const { data, error } = await supabaseAdmin
     .from("session_messages")
@@ -641,15 +679,29 @@ export async function listRecentSessionChatMessages(
 
 export async function listCompletedSessionReports(
   sessionId: string,
+  clerkUserId?: string,
 ): Promise<SessionCompletedReport[]> {
+  if (clerkUserId) {
+    const session = await getSessionRecord(sessionId, clerkUserId);
+    if (!session) {
+      return [];
+    }
+  }
+
   const { supabaseAdmin } = createSupabaseClients();
-  const { data, error } = await supabaseAdmin
+  let query = supabaseAdmin
     .from("deep_research_runs")
     .select("id, session_id, topic, final_report_markdown, updated_at, created_at")
     .eq("session_id", sessionId)
     .eq("status", "completed")
     .not("final_report_markdown", "is", null)
     .order("updated_at", { ascending: false });
+
+  if (clerkUserId) {
+    query = query.eq("clerk_user_id", clerkUserId);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     throw new Error(error.message);
@@ -674,13 +726,17 @@ export async function listCompletedSessionReports(
 
 export async function createDeepResearchRunRecord(
   input: CreateDeepResearchRunRequest,
+  clerkUserId?: string,
 ): Promise<CreateDeepResearchRunRecordResult> {
   const id = crypto.randomUUID();
   const timestamp = new Date().toISOString();
   const threadId = input.launchKey ?? id;
 
   if (input.launchKey) {
-    const existingRun = await getDeepResearchRunRecordByThreadId(input.launchKey);
+    const existingRun = await getDeepResearchRunRecordByThreadId(
+      input.launchKey,
+      clerkUserId,
+    );
     if (existingRun) {
       return {
         created: false,
@@ -692,8 +748,9 @@ export async function createDeepResearchRunRecord(
   const workspace = await assertWorkspaceDocumentSelection(
     input.workspaceId,
     input.selectedDocumentIds,
+    clerkUserId,
   );
-  const documents = await listDocumentsByIds(input.selectedDocumentIds);
+  const documents = await listDocumentsByIds(input.selectedDocumentIds, clerkUserId);
 
   try {
     const result = await withPgTransaction(async (client) => {
@@ -712,6 +769,10 @@ export async function createDeepResearchRunRecord(
 
         const session = sessionResult.rows[0];
         if (!session) {
+          throw new Error("Session not found.");
+        }
+
+        if (clerkUserId && session.clerk_user_id !== clerkUserId) {
           throw new Error("Session not found.");
         }
 
@@ -738,14 +799,21 @@ export async function createDeepResearchRunRecord(
             insert into public.sessions (
               id,
               workspace_id,
+              clerk_user_id,
               title,
               created_at,
               updated_at,
               archived_at
             )
-            values ($1, $2, $3, $4, $4, null)
+            values ($1, $2, $3, $4, $5, $5, null)
           `,
-          [sessionId, workspace.id, input.topic, timestamp],
+          [
+            sessionId,
+            workspace.id,
+            workspace.clerk_user_id,
+            input.topic,
+            timestamp,
+          ],
         );
       }
 
@@ -783,13 +851,14 @@ export async function createDeepResearchRunRecord(
             session_id,
             origin_message_id,
             workspace_id,
+            clerk_user_id,
             topic,
             objective,
             status,
             updated_at,
             last_progress_at
           )
-          values ($1, $2, $3, $4, $5, $6, $7, 'queued', $8, $8)
+          values ($1, $2, $3, $4, $5, $6, $7, $8, 'queued', $9, $9)
           returning ${deepResearchRunSelect}
         `,
         [
@@ -798,6 +867,7 @@ export async function createDeepResearchRunRecord(
           sessionId,
           originMessageId,
           workspace.id,
+          workspace.clerk_user_id,
           input.topic,
           input.objective ?? null,
           timestamp,
@@ -861,7 +931,10 @@ export async function createDeepResearchRunRecord(
       "code" in error &&
       error.code === "23505"
     ) {
-      const existingRun = await getDeepResearchRunRecordByThreadId(input.launchKey);
+      const existingRun = await getDeepResearchRunRecordByThreadId(
+        input.launchKey,
+        clerkUserId,
+      );
       if (existingRun) {
         return {
           created: false,
@@ -921,13 +994,18 @@ export async function updateDeepResearchRun(runId: string, update: RunUpdate) {
   return run;
 }
 
-export async function getDeepResearchRunRecord(runId: string) {
+export async function getDeepResearchRunRecord(runId: string, clerkUserId?: string) {
   const { supabaseAdmin } = createSupabaseClients();
-  const { data, error } = await supabaseAdmin
+  let query = supabaseAdmin
     .from("deep_research_runs")
     .select(deepResearchRunSelect)
-    .eq("id", runId)
-    .maybeSingle();
+    .eq("id", runId);
+
+  if (clerkUserId) {
+    query = query.eq("clerk_user_id", clerkUserId);
+  }
+
+  const { data, error } = await query.maybeSingle();
 
   if (error) {
     throw new Error(error.message);
@@ -936,13 +1014,21 @@ export async function getDeepResearchRunRecord(runId: string) {
   return (data as DeepResearchRunRecord | null) ?? null;
 }
 
-export async function getDeepResearchRunRecordByThreadId(threadId: string) {
+export async function getDeepResearchRunRecordByThreadId(
+  threadId: string,
+  clerkUserId?: string,
+) {
   const { supabaseAdmin } = createSupabaseClients();
-  const { data, error } = await supabaseAdmin
+  let query = supabaseAdmin
     .from("deep_research_runs")
     .select(deepResearchRunSelect)
-    .eq("thread_id", threadId)
-    .maybeSingle();
+    .eq("thread_id", threadId);
+
+  if (clerkUserId) {
+    query = query.eq("clerk_user_id", clerkUserId);
+  }
+
+  const { data, error } = await query.maybeSingle();
 
   if (error) {
     throw new Error(error.message);
@@ -951,18 +1037,21 @@ export async function getDeepResearchRunRecordByThreadId(threadId: string) {
   return (data as DeepResearchRunRecord | null) ?? null;
 }
 
-export async function getDeepResearchRunResponse(runId: string) {
-  const run = await getDeepResearchRunRecord(runId);
+export async function getDeepResearchRunResponse(
+  runId: string,
+  clerkUserId?: string,
+) {
+  const run = await getDeepResearchRunRecord(runId, clerkUserId);
   if (!run) {
     return null;
   }
 
   const [documentsByRunId, eventsByRunId, workspaces, publishedReportDocumentsByRunId] =
     await Promise.all([
-    getRunDocumentsByRunIds([runId]),
+    getRunDocumentsByRunIds([runId], clerkUserId),
     getRunEventsByRunIds([runId]),
-    listWorkspaces(),
-    getPublishedReportDocumentsByRunIds([runId]),
+    listWorkspaces(clerkUserId),
+    getPublishedReportDocumentsByRunIds([runId], clerkUserId),
   ]);
 
   const workspace = workspaces.find((item) => item.id === run.workspace_id);
@@ -992,6 +1081,10 @@ export async function listDeepResearchRunSummaries(options?: {
     query = query.eq("workspace_id", options.workspaceId);
   }
 
+  if (options?.clerkUserId) {
+    query = query.eq("clerk_user_id", options.clerkUserId);
+  }
+
   const { data, error } = await query;
 
   if (error) {
@@ -1001,18 +1094,11 @@ export async function listDeepResearchRunSummaries(options?: {
   const runs = (data ?? []) as DeepResearchRunRecord[];
   const [workspaces, publishedReportDocumentsByRunId] = await Promise.all([
     listWorkspaces(options?.clerkUserId),
-    getPublishedReportDocumentsByRunIds(runs.map((run) => run.id)),
+    getPublishedReportDocumentsByRunIds(runs.map((run) => run.id), options?.clerkUserId),
   ]);
-  // When scoped by user, only include runs that belong to the user's workspaces
-  const userWorkspaceIds = options?.clerkUserId
-    ? new Set(workspaces.map((w) => w.id))
-    : null;
   const workspaceById = new Map(workspaces.map((workspace) => [workspace.id, workspace]));
-  const filteredRuns = userWorkspaceIds
-    ? runs.filter((run) => run.workspace_id && userWorkspaceIds.has(run.workspace_id))
-    : runs;
 
-  return filteredRuns.map((run) =>
+  return runs.map((run) =>
     mapRunSummary(
       run,
       run.workspace_id ? workspaceById.get(run.workspace_id) : undefined,
@@ -1024,15 +1110,22 @@ export async function listDeepResearchRunSummaries(options?: {
 export async function listSessionSummaries(options: {
   workspaceId: string;
   limit?: number;
+  clerkUserId?: string;
 }) {
   const { supabaseAdmin } = createSupabaseClients();
-  const { data, error } = await supabaseAdmin
+  let query = supabaseAdmin
     .from("sessions")
     .select(sessionSelect)
     .eq("workspace_id", options.workspaceId)
     .is("archived_at", null)
     .order("updated_at", { ascending: false })
     .limit(options.limit ?? 24);
+
+  if (options.clerkUserId) {
+    query = query.eq("clerk_user_id", options.clerkUserId);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     throw new Error(error.message);
@@ -1041,6 +1134,7 @@ export async function listSessionSummaries(options: {
   const sessions = (data ?? []) as SessionRecord[];
   const latestRunBySessionId = await getLatestRunsBySessionId(
     sessions.map((session) => session.id),
+    options.clerkUserId,
   );
 
   return sessions.map((session) =>
@@ -1062,7 +1156,9 @@ export async function listSessionNavigationGroups(options?: {
     .is("archived_at", null)
     .order("updated_at", { ascending: false });
   if (options?.clerkUserId && workspaceIds.length > 0) {
-    sessionsQuery = sessionsQuery.in("workspace_id", workspaceIds);
+    sessionsQuery = sessionsQuery
+      .eq("clerk_user_id", options.clerkUserId)
+      .in("workspace_id", workspaceIds);
   } else if (options?.clerkUserId) {
     // User has no workspaces — return empty
     return [];
@@ -1076,6 +1172,7 @@ export async function listSessionNavigationGroups(options?: {
   const sessions = (data ?? []) as SessionRecord[];
   const latestRunBySessionId = await getLatestRunsBySessionId(
     sessions.map((session) => session.id),
+    options?.clerkUserId,
   );
   const workspaceById = new Map(workspaces.map((workspace) => [workspace.id, workspace]));
   const groupedSessions = new Map<string, SessionSummary[]>();
@@ -1114,20 +1211,24 @@ export async function listSessionNavigationGroups(options?: {
     .slice(0, options?.workspaceLimit ?? 8);
 }
 
-export async function getSessionSummary(sessionId: string) {
-  const session = await getSessionRecord(sessionId);
+export async function getSessionSummary(sessionId: string, clerkUserId?: string) {
+  const session = await getSessionRecord(sessionId, clerkUserId);
   if (!session) {
     return null;
   }
 
-  const latestRunBySessionId = await getLatestRunsBySessionId([sessionId]);
+  const latestRunBySessionId = await getLatestRunsBySessionId(
+    [sessionId],
+    clerkUserId,
+  );
   return mapSessionSummary(session, latestRunBySessionId.get(sessionId));
 }
 
 export async function getSessionThreadResponse(
   sessionId: string,
+  clerkUserId?: string,
 ): Promise<SessionThreadResponse | null> {
-  const session = await getSessionRecord(sessionId);
+  const session = await getSessionRecord(sessionId, clerkUserId);
   if (!session) {
     return null;
   }
@@ -1135,12 +1236,20 @@ export async function getSessionThreadResponse(
   const { supabaseAdmin } = createSupabaseClients();
   const [messages, runsResult, workspaces] = await Promise.all([
     getSessionMessageRows(sessionId),
-    supabaseAdmin
+    (() => {
+      let query = supabaseAdmin
       .from("deep_research_runs")
       .select(deepResearchRunSelect)
       .eq("session_id", sessionId)
-      .order("created_at", { ascending: true }),
-    listWorkspaces(),
+      .order("created_at", { ascending: true });
+
+      if (clerkUserId) {
+        query = query.eq("clerk_user_id", clerkUserId);
+      }
+
+      return query;
+    })(),
+    listWorkspaces(clerkUserId),
   ]);
 
   if (runsResult.error) {
@@ -1151,9 +1260,9 @@ export async function getSessionThreadResponse(
   const runIds = runs.map((run) => run.id);
   const [documentsByRunId, eventsByRunId, publishedReportDocumentsByRunId] =
     await Promise.all([
-    getRunDocumentsByRunIds(runIds),
+    getRunDocumentsByRunIds(runIds, clerkUserId),
     getRunEventsByRunIds(runIds),
-    getPublishedReportDocumentsByRunIds(runIds),
+    getPublishedReportDocumentsByRunIds(runIds, clerkUserId),
   ]);
 
   const workspace = workspaces.find((item) => item.id === session.workspace_id);
@@ -1202,7 +1311,16 @@ export async function getSessionThreadResponse(
   };
 }
 
-export async function renameSession(sessionId: string, title: string) {
+export async function renameSession(
+  sessionId: string,
+  title: string,
+  clerkUserId?: string,
+) {
+  const session = await getSessionRecord(sessionId, clerkUserId);
+  if (!session) {
+    return null;
+  }
+
   const { supabaseAdmin } = createSupabaseClients();
   const { error } = await supabaseAdmin
     .from("sessions")
@@ -1216,7 +1334,7 @@ export async function renameSession(sessionId: string, title: string) {
     throw new Error(error.message);
   }
 
-  return getSessionSummary(sessionId);
+  return getSessionSummary(sessionId, clerkUserId);
 }
 
 export async function markDeepResearchRunStatus(
@@ -1360,8 +1478,9 @@ export async function persistDeepResearchRunArtifacts(
 
 export async function getDeepResearchRunEvidenceResponse(
   runId: string,
+  clerkUserId?: string,
 ): Promise<DeepResearchRunEvidenceResponse | null> {
-  const run = await getDeepResearchRunRecord(runId);
+  const run = await getDeepResearchRunRecord(runId, clerkUserId);
   if (!run) {
     return null;
   }

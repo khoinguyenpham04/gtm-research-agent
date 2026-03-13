@@ -23,6 +23,7 @@ interface PdfParseData {
 }
 
 export interface IngestDocumentInput {
+  clerkUserId: string;
   fileBuffer: Buffer;
   fileName: string;
   fileType?: string;
@@ -116,7 +117,7 @@ async function extractTextFromBuffer(
 export async function ingestDocumentToLibrary(
   input: IngestDocumentInput,
 ): Promise<IngestDocumentResult> {
-  const { supabase, supabaseStorage } = createSupabaseClients();
+  const { supabaseAdmin, supabaseStorage } = createSupabaseClients();
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
   const documentId = crypto.randomUUID();
@@ -135,10 +136,6 @@ export async function ingestDocumentToLibrary(
     throw new Error(storageError.message || "Failed to store file.");
   }
 
-  const { data: urlData } = supabaseStorage.storage
-    .from("documents")
-    .getPublicUrl(filePath);
-
   const extractedText = await extractTextFromBuffer(input.fileBuffer, input.fileName);
   if (!extractedText.trim()) {
     throw new Error("Could not extract text from file.");
@@ -156,8 +153,10 @@ export async function ingestDocumentToLibrary(
       input: chunk,
     });
 
-    const { error } = await supabase.from("documents").insert({
+    const { error } = await supabaseAdmin.from("documents").insert({
+      clerk_user_id: input.clerkUserId,
       content: chunk,
+      document_external_id: documentId,
       metadata: {
         source: input.fileName,
         document_id: documentId,
@@ -168,7 +167,6 @@ export async function ingestDocumentToLibrary(
         chunk_index: index,
         total_chunks: chunks.length,
         file_path: filePath,
-        file_url: urlData.publicUrl,
         ...(input.metadata ?? {}),
       },
       embedding: JSON.stringify(embedding.data[0].embedding),
@@ -180,6 +178,7 @@ export async function ingestDocumentToLibrary(
   }
 
   await recordDocumentSource({
+    clerkUserId: input.clerkUserId,
     documentId,
     sourceType: input.sourceType,
     sourceUrl: input.sourceUrl,
@@ -193,7 +192,7 @@ export async function ingestDocumentToLibrary(
 
   let attachedToWorkspace = false;
   if (input.workspaceId) {
-    await attachDocumentsToWorkspace(input.workspaceId, [documentId]);
+    await attachDocumentsToWorkspace(input.workspaceId, [documentId], input.clerkUserId);
     attachedToWorkspace = true;
   }
 
@@ -207,7 +206,6 @@ export async function ingestDocumentToLibrary(
       upload_date: uploadDate,
       total_chunks: chunks.length,
       file_path: filePath,
-      file_url: urlData.publicUrl,
     },
     chunks: chunks.length,
     textLength: extractedText.length,

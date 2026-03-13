@@ -1,3 +1,6 @@
+import { auth } from "@clerk/nextjs/server"
+import { redirect } from "next/navigation"
+
 import { SiteHeader } from "@/components/site-header"
 import { DashboardHome } from "@/app/dashboard/dashboard-home"
 import { ensureDeepResearchDatabase } from "@/lib/deep-research/db"
@@ -5,19 +8,25 @@ import { listSessions } from "@/lib/deep-research/service"
 import { getWorkspaceDetail, listWorkspaces } from "@/lib/workspaces"
 
 export default async function DashboardPage() {
+  const { userId } = await auth()
+  if (!userId) {
+    redirect("/sign-in")
+  }
+
   await ensureDeepResearchDatabase().catch(() => undefined)
 
-  const initialWorkspaces = await listWorkspaces().catch(() => [])
+  const initialWorkspaces = await listWorkspaces(userId).catch(() => [])
 
   const initialWorkspaceId = initialWorkspaces[0]?.id ?? ""
   const [initialWorkspace, initialSessions] = await Promise.all([
     initialWorkspaceId
-      ? getWorkspaceDetail(initialWorkspaceId).catch(() => null)
+      ? getWorkspaceDetail(initialWorkspaceId, userId).catch(() => null)
       : Promise.resolve(null),
     initialWorkspaceId
       ? listSessions({
           workspaceId: initialWorkspaceId,
           limit: 24,
+          clerkUserId: userId,
         }).catch(() => [])
       : Promise.resolve([]),
   ])

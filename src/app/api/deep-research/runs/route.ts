@@ -42,7 +42,7 @@ export async function POST(request: Request) {
     const payload = createDeepResearchRunRequestSchema.parse(
       await request.json(),
     );
-    const result = await createDeepResearchRun(payload);
+    const result = await createDeepResearchRun(payload, userId);
 
     if (result.created) {
       scheduleDeepResearchTask(
@@ -57,6 +57,10 @@ export async function POST(request: Request) {
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Failed to create research run.";
-    return NextResponse.json({ error: message }, { status: 400 });
+    const status =
+      message === "Workspace not found." || message === "Session not found."
+        ? 404
+        : 400;
+    return NextResponse.json({ error: message }, { status });
   }
 }

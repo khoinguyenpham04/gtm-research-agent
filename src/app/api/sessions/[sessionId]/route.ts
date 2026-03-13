@@ -1,3 +1,4 @@
+import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 
 import { getSessionThread, updateSessionTitle } from "@/lib/deep-research/service";
@@ -11,9 +12,12 @@ export async function GET(
   _request: Request,
   context: { params: Promise<{ sessionId: string }> },
 ) {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   try {
     const { sessionId } = await context.params;
-    const session = await getSessionThread(sessionId);
+    const session = await getSessionThread(sessionId, userId);
 
     if (!session) {
       return NextResponse.json(
@@ -34,10 +38,13 @@ export async function PATCH(
   request: Request,
   context: { params: Promise<{ sessionId: string }> },
 ) {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   try {
     const { sessionId } = await context.params;
     const payload = updateSessionRequestSchema.parse(await request.json());
-    const session = await updateSessionTitle(sessionId, payload.title);
+    const session = await updateSessionTitle(sessionId, payload.title, userId);
 
     if (!session) {
       return NextResponse.json(

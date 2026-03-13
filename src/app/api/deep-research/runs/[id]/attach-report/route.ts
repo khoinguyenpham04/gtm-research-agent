@@ -1,3 +1,4 @@
+import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 
 import { listDocumentsByIds } from "@/lib/documents";
@@ -27,10 +28,13 @@ export async function POST(
   _request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   try {
     await ensureDeepResearchDatabase();
     const { id } = await context.params;
-    const run = await getDeepResearchRunRecord(id);
+    const run = await getDeepResearchRunRecord(id, userId);
 
     if (!run) {
       return NextResponse.json({ error: "Run not found." }, { status: 404 });
@@ -57,10 +61,10 @@ export async function POST(
       );
     }
 
-    const existingSource = await getGeneratedReportSourceByRunId(run.id);
+    const existingSource = await getGeneratedReportSourceByRunId(run.id, userId);
     if (existingSource) {
-      await attachDocumentsToWorkspace(run.workspace_id, [existingSource.documentId]);
-      const [document] = await listDocumentsByIds([existingSource.documentId]);
+      await attachDocumentsToWorkspace(run.workspace_id, [existingSource.documentId], userId);
+      const [document] = await listDocumentsByIds([existingSource.documentId], userId);
 
       return NextResponse.json(
         {
@@ -85,6 +89,7 @@ export async function POST(
       },
       sourceType: "generated_report",
       workspaceId: run.workspace_id,
+      clerkUserId: userId,
     });
 
     return NextResponse.json(

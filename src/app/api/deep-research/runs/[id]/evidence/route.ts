@@ -1,3 +1,4 @@
+import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 
 import { getDeepResearchRunEvidence } from "@/lib/deep-research/service";
@@ -10,9 +11,12 @@ export async function GET(
   _request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   try {
     const { id } = await context.params;
-    const evidence = await getDeepResearchRunEvidence(id);
+    const evidence = await getDeepResearchRunEvidence(id, userId);
 
     if (!evidence) {
       return NextResponse.json(

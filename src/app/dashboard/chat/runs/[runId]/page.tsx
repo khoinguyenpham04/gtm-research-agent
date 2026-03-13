@@ -1,3 +1,4 @@
+import { auth } from "@clerk/nextjs/server"
 import Link from "next/link"
 import { redirect } from "next/navigation"
 
@@ -21,10 +22,15 @@ export default async function DeepResearchRunThreadPage({
 }: {
   params: Promise<{ runId: string }>
 }) {
+  const { userId } = await auth()
+  if (!userId) {
+    redirect("/sign-in")
+  }
+
   await ensureDeepResearchDatabase().catch(() => undefined)
 
   const { runId } = await params
-  const initialRun = await getDeepResearchRun(runId).catch(() => null)
+  const initialRun = await getDeepResearchRun(runId, userId).catch(() => null)
 
   if (initialRun?.sessionId) {
     redirect(
@@ -38,10 +44,10 @@ export default async function DeepResearchRunThreadPage({
 
   const [initialWorkspace, initialWorkspaces] = initialRun?.workspaceId
     ? await Promise.all([
-        getWorkspaceDetail(initialRun.workspaceId).catch(() => null),
-        listWorkspaces().catch(() => []),
+        getWorkspaceDetail(initialRun.workspaceId, userId).catch(() => null),
+        listWorkspaces(userId).catch(() => []),
       ])
-    : [null, await listWorkspaces().catch(() => [])]
+    : [null, await listWorkspaces(userId).catch(() => [])]
 
   return (
     <>

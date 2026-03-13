@@ -242,13 +242,18 @@ export function findInvalidWorkspaceDocumentSelections(
   return selectedDocumentIds.filter((documentId) => !attachedIds.has(documentId));
 }
 
-async function getWorkspaceRow(workspaceId: string) {
+async function getWorkspaceRow(workspaceId: string, clerkUserId?: string) {
   const { supabaseAdmin } = createSupabaseClients();
-  const { data, error } = await supabaseAdmin
+  let query = supabaseAdmin
     .from("workspaces")
     .select("id, name, description, clerk_user_id, created_at, updated_at")
-    .eq("id", workspaceId)
-    .maybeSingle();
+    .eq("id", workspaceId);
+
+  if (clerkUserId) {
+    query = query.eq("clerk_user_id", clerkUserId);
+  }
+
+  const { data, error } = await query.maybeSingle();
 
   if (error) {
     throw new Error(error.message);
@@ -258,7 +263,7 @@ async function getWorkspaceRow(workspaceId: string) {
 }
 
 export async function verifyWorkspaceOwnership(workspaceId: string, clerkUserId: string): Promise<boolean> {
-  const workspace = await getWorkspaceRow(workspaceId);
+  const workspace = await getWorkspaceRow(workspaceId, clerkUserId);
   return workspace?.clerk_user_id === clerkUserId;
 }
 
@@ -348,7 +353,7 @@ function toWorkspaceDocumentAttachments(
           ? "generated_report"
           : "uploaded_document";
 
-      return {
+      const attachment: WorkspaceDocumentAttachment = {
         workspaceId: row.workspace_id,
         documentId: row.document_external_id,
         folderId: row.folder_id ?? undefined,
@@ -376,7 +381,9 @@ function toWorkspaceDocumentAttachments(
                     : document.file_name,
               }
             : undefined,
-      } satisfies WorkspaceDocumentAttachment;
+      };
+
+      return attachment;
     })
     .filter((item): item is WorkspaceDocumentAttachment => item !== null);
 }
@@ -484,8 +491,8 @@ export async function createWorkspace(input: CreateWorkspaceRequest, clerkUserId
   });
 }
 
-export async function getWorkspaceDetail(workspaceId: string) {
-  const workspace = await getWorkspaceRow(workspaceId);
+export async function getWorkspaceDetail(workspaceId: string, clerkUserId?: string) {
+  const workspace = await getWorkspaceRow(workspaceId, clerkUserId);
   if (!workspace) {
     return null;
   }
@@ -496,7 +503,7 @@ export async function getWorkspaceDetail(workspaceId: string) {
   ]);
   const documentIds = documentRows.map((row) => row.document_external_id);
   const [documents, sourceRows] = await Promise.all([
-    listDocumentsByIds(documentIds),
+    listDocumentsByIds(documentIds, clerkUserId),
     listDocumentSourceRows(documentIds),
   ]);
   const attachments = toWorkspaceDocumentAttachments(
@@ -530,13 +537,14 @@ export async function getWorkspaceDetail(workspaceId: string) {
 export async function attachDocumentsToWorkspace(
   workspaceId: string,
   documentIds: string[],
+  clerkUserId?: string,
 ) {
-  const workspace = await getWorkspaceRow(workspaceId);
+  const workspace = await getWorkspaceRow(workspaceId, clerkUserId);
   if (!workspace) {
     throw new Error("Workspace not found.");
   }
 
-  const allDocuments = await listDocuments();
+  const allDocuments = await listDocuments(clerkUserId);
   const availableIds = new Set(allDocuments.map((document) => document.id));
   const missing = documentIds.filter((documentId) => !availableIds.has(documentId));
   if (missing.length > 0) {
@@ -565,14 +573,15 @@ export async function attachDocumentsToWorkspace(
   }
 
   await touchWorkspace(workspaceId);
-  return getWorkspaceDetail(workspaceId);
+  return getWorkspaceDetail(workspaceId, clerkUserId);
 }
 
 export async function createWorkspaceFolder(
   workspaceId: string,
   input: CreateWorkspaceFolderRequest,
+  clerkUserId?: string,
 ) {
-  const workspace = await getWorkspaceRow(workspaceId);
+  const workspace = await getWorkspaceRow(workspaceId, clerkUserId);
   if (!workspace) {
     throw new Error("Workspace not found.");
   }
@@ -613,8 +622,9 @@ export async function moveWorkspaceDocumentToFolder(
   workspaceId: string,
   documentId: string,
   folderId: string | null,
+  clerkUserId?: string,
 ) {
-  const workspace = await getWorkspaceRow(workspaceId);
+  const workspace = await getWorkspaceRow(workspaceId, clerkUserId);
   if (!workspace) {
     throw new Error("Workspace not found.");
   }
@@ -655,14 +665,15 @@ export async function moveWorkspaceDocumentToFolder(
   }
 
   await touchWorkspace(workspaceId);
-  return getWorkspaceDetail(workspaceId);
+  return getWorkspaceDetail(workspaceId, clerkUserId);
 }
 
 export async function assertWorkspaceDocumentSelection(
   workspaceId: string,
   selectedDocumentIds: string[],
+  clerkUserId?: string,
 ) {
-  const workspace = await getWorkspaceRow(workspaceId);
+  const workspace = await getWorkspaceRow(workspaceId, clerkUserId);
   if (!workspace) {
     throw new Error("Workspace not found.");
   }
@@ -684,6 +695,7 @@ export async function assertWorkspaceDocumentSelection(
 
 export async function recordDocumentSource(
   input: {
+    clerkUserId: string;
     documentId: string;
     sourceType: "upload" | "agent_download" | "url_ingest" | "generated_report";
     sourceUrl?: string;
@@ -696,6 +708,7 @@ export async function recordDocumentSource(
   const timestamp = new Date().toISOString();
   const { error } = await supabaseAdmin.from("document_sources").upsert(
     {
+      clerk_user_id: input.clerkUserId,
       document_external_id: input.documentId,
       source_type: input.sourceType,
       source_url: input.sourceUrl ?? null,
@@ -716,15 +729,23 @@ export async function recordDocumentSource(
   }
 }
 
-export async function getGeneratedReportSourceByRunId(runId: string) {
+export async function getGeneratedReportSourceByRunId(
+  runId: string,
+  clerkUserId?: string,
+) {
   const { supabaseAdmin } = createSupabaseClients();
-  const { data, error } = await supabaseAdmin
+  let query = supabaseAdmin
     .from("document_sources")
     .select(
       "document_external_id, metadata_json, source_type, source_url, generated_from_run_id, updated_at, created_at",
     )
-    .eq("generated_from_run_id", runId)
-    .maybeSingle();
+    .eq("generated_from_run_id", runId);
+
+  if (clerkUserId) {
+    query = query.eq("clerk_user_id", clerkUserId);
+  }
+
+  const { data, error } = await query.maybeSingle();
 
   if (error) {
     throw new Error(error.message);
