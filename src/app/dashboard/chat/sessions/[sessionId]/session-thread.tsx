@@ -309,8 +309,8 @@ function StreamingAssistantPlaceholder({
     <div className="px-1 py-1">
       <Shimmer
         as="span"
-        className="text-sm font-medium [--color-background:#FFFFFF] [--color-muted-foreground:#52525B]"
-        duration={1.55}
+        className="text-sm font-semibold [--color-background:#0F172A] [--color-muted-foreground:#5B6472]"
+        duration={1.35}
       >
         {label}
       </Shimmer>
@@ -601,6 +601,7 @@ export function DeepResearchSessionThread({
     if (hasActiveAskWorkspaceRequest && chatActivityEvents.length > 0) {
       return {
         events: chatActivityEvents,
+        kind: "ask-workspace" as const,
         title: "Ask Workspace activity",
       }
     }
@@ -608,6 +609,7 @@ export function DeepResearchSessionThread({
     if (activeMode === "chat" && latestPersistedChatTraceEvents.length > 0) {
       return {
         events: latestPersistedChatTraceEvents,
+        kind: "ask-workspace" as const,
         title: "Ask Workspace activity",
       }
     }
@@ -615,6 +617,7 @@ export function DeepResearchSessionThread({
     if (activityRun?.events.length) {
       return {
         events: activityRun.events,
+        kind: "research" as const,
         title: "Research activity",
       }
     }
@@ -622,6 +625,7 @@ export function DeepResearchSessionThread({
     if (latestPersistedChatTraceEvents.length > 0) {
       return {
         events: latestPersistedChatTraceEvents,
+        kind: "ask-workspace" as const,
         title: "Ask Workspace activity",
       }
     }
@@ -1093,6 +1097,7 @@ export function DeepResearchSessionThread({
                   <div className="pointer-events-auto">
                     <SessionActivityDrawer
                       events={sessionActivityDrawer.events}
+                      kind={sessionActivityDrawer.kind}
                       title={sessionActivityDrawer.title}
                     />
                   </div>

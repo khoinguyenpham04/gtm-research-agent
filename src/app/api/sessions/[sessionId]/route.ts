@@ -1,7 +1,11 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 
-import { getSessionThread, updateSessionTitle } from "@/lib/deep-research/service";
+import {
+  deleteSession,
+  getSessionThread,
+  updateSessionTitle,
+} from "@/lib/deep-research/service";
 import { updateSessionRequestSchema } from "@/lib/deep-research/types";
 
 export const runtime = "nodejs";
@@ -58,5 +62,34 @@ export async function PATCH(
     const message =
       error instanceof Error ? error.message : "Failed to update session.";
     return NextResponse.json({ error: message }, { status: 400 });
+  }
+}
+
+export async function DELETE(
+  _request: Request,
+  context: { params: Promise<{ sessionId: string }> },
+) {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  try {
+    const { sessionId } = await context.params;
+    const deleted = await deleteSession(sessionId, userId);
+
+    if (!deleted) {
+      return NextResponse.json(
+        { error: "Session not found." },
+        { status: 404 },
+      );
+    }
+
+    return NextResponse.json({
+      deleted: true,
+      sessionId,
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to delete session.";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

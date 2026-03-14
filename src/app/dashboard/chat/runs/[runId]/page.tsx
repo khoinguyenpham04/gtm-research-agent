@@ -62,7 +62,7 @@ export default async function DeepResearchRunThreadPage({
     <>
       <SiteHeader title="Deep Research" />
       <div className="flex flex-1 flex-col">
-        <div className="@container/main flex flex-1 flex-col px-4 py-4 lg:px-6 lg:py-6">
+        <div className="@container/main flex flex-1 flex-col px-4 pt-4 lg:px-6 lg:pt-6">
           <Card className="mx-auto w-full max-w-2xl border border-border/60">
             <CardHeader>
               <CardTitle>Research thread not found</CardTitle>

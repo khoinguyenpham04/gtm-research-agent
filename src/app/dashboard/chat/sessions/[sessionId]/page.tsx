@@ -46,7 +46,7 @@ export default async function SessionThreadPage({
     <>
       <SiteHeader title={pageTitle} />
       <div className="flex flex-1 flex-col">
-        <div className="@container/main flex flex-1 flex-col px-4 py-4 lg:px-6 lg:py-6">
+        <div className="@container/main flex flex-1 flex-col px-4 pt-4 lg:px-6 lg:pt-6">
           {initialThread ? (
             <DeepResearchSessionThread
               initialThread={initialThread}

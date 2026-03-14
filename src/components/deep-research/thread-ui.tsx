@@ -31,6 +31,7 @@ import {
   ConversationScrollButton,
 } from "@/components/ai-elements/conversation"
 import { Message, MessageContent } from "@/components/ai-elements/message"
+import { Shimmer } from "@/components/ai-elements/shimmer"
 import type {
   DeepResearchRateLimitRetry,
   DeepResearchSourceLink,
@@ -65,6 +66,8 @@ type ActivityDrawerEvent = Pick<
   DeepResearchRunEvent,
   "createdAt" | "id" | "message" | "stage"
 >
+
+type ActivityDrawerKind = "ask-workspace" | "research"
 
 function StatusCopy({
   launchPending,
@@ -263,6 +266,7 @@ export function DeepResearchActivityTimeline({
           containerRef={containerRef}
           events={events}
           freshEventIds={freshEventIds}
+          kind="research"
           maxHeightClass="max-h-96"
         />
       </CardContent>
@@ -272,9 +276,11 @@ export function DeepResearchActivityTimeline({
 
 function SharedActivityDrawer({
   events,
+  kind,
   title,
 }: {
   events: ActivityDrawerEvent[]
+  kind: ActivityDrawerKind
   title: string
 }) {
   const [collapsedByUser, setCollapsedByUser] = useState(false)
@@ -329,6 +335,7 @@ function SharedActivityDrawer({
               containerRef={containerRef}
               events={events}
               freshEventIds={freshEventIds}
+              kind={kind}
               maxHeightClass="max-h-40"
             />
           </div>
@@ -340,12 +347,14 @@ function SharedActivityDrawer({
 
 export function SessionActivityDrawer({
   events,
+  kind = "research",
   title,
 }: {
   events: ActivityDrawerEvent[]
+  kind?: ActivityDrawerKind
   title: string
 }) {
-  return <SharedActivityDrawer events={events} title={title} />
+  return <SharedActivityDrawer events={events} kind={kind} title={title} />
 }
 
 export function DeepResearchActivityDrawer({
@@ -353,7 +362,13 @@ export function DeepResearchActivityDrawer({
 }: {
   events: DeepResearchRunEvent[]
 }) {
-  return <SessionActivityDrawer events={events} title="Research activity" />
+  return (
+    <SessionActivityDrawer
+      events={events}
+      kind="research"
+      title="Research activity"
+    />
+  )
 }
 
 export function AskWorkspaceActivityDrawer({
@@ -364,6 +379,7 @@ export function AskWorkspaceActivityDrawer({
   return (
     <SessionActivityDrawer
       events={events}
+      kind="ask-workspace"
       title="Ask Workspace activity"
     />
   )
@@ -412,10 +428,12 @@ function ResearchActivityEvents({
   containerRef,
   events,
   freshEventIds,
+  kind,
   maxHeightClass,
 }: {
   events: ActivityDrawerEvent[]
   freshEventIds: string[]
+  kind: ActivityDrawerKind
   maxHeightClass: string
   containerRef: RefObject<HTMLDivElement | null>
 }) {
@@ -436,23 +454,44 @@ function ResearchActivityEvents({
         <div
           key={event.id}
           className={cn(
-            "rounded-xl border border-zinc-200 bg-white px-4 py-3",
+            "rounded-xl border border-zinc-200 bg-white px-4 py-3.5",
             freshEventIds.includes(event.id)
               ? "animate-in fade-in-0 slide-in-from-bottom-3 duration-500"
               : undefined,
           )}
         >
-          <div className="flex flex-wrap items-center gap-2">
-            <RunActivityStagePill stage={event.stage} />
-            <p className="text-sm font-medium">{event.message}</p>
+          <div className="flex items-center gap-3">
+            <RunActivityStagePill
+              className="shrink-0"
+              stage={event.stage}
+            />
+            <div className="min-w-0 flex-1">
+              {kind === "ask-workspace" && isActiveAskWorkspaceStage(event.stage) ? (
+                <Shimmer
+                  as="span"
+                  className="text-sm font-medium [--color-background:#111827] [--color-muted-foreground:#5B6472]"
+                  duration={1.4}
+                >
+                  {event.message}
+                </Shimmer>
+              ) : (
+                <p className="text-sm font-medium text-foreground">
+                  {event.message}
+                </p>
+              )}
+            </div>
+            <span className="shrink-0 text-xs text-muted-foreground">
+              {formatTimestamp(event.createdAt)}
+            </span>
           </div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            · {formatTimestamp(event.createdAt)}
-          </p>
         </div>
       ))}
     </div>
   )
+}
+
+function isActiveAskWorkspaceStage(stage: string) {
+  return stage === "starting" || stage === "retrieving" || stage === "streaming"
 }
 
 export function DeepResearchClarificationCard({

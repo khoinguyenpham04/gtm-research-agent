@@ -14,6 +14,7 @@ import {
   appendDeepResearchRunEvent,
   createSessionRecord,
   createDeepResearchRunRecord,
+  deleteSessionRecord,
   getDeepResearchRunEvidenceResponse,
   getDeepResearchRunRecord,
   getDeepResearchRunResponse,
@@ -321,6 +322,14 @@ export async function updateSessionTitle(
 ) {
   await ensureDeepResearchDatabase();
   return renameSession(sessionId, title, clerkUserId);
+}
+
+export async function deleteSession(
+  sessionId: string,
+  clerkUserId?: string,
+) {
+  await ensureDeepResearchDatabase();
+  return deleteSessionRecord(sessionId, clerkUserId);
 }
 
 export async function getDeepResearchRunEvidence(

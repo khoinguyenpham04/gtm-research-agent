@@ -1367,6 +1367,49 @@ export async function renameSession(
   return getSessionSummary(sessionId, clerkUserId);
 }
 
+export async function deleteSessionRecord(
+  sessionId: string,
+  clerkUserId?: string,
+) {
+  return withPgTransaction(async (client) => {
+    const sessionResult = await client.query<SessionRow>(
+      `
+        select ${sessionSelect}
+        from public.sessions
+        where id = $1
+        ${clerkUserId ? "  and clerk_user_id = $2" : ""}
+        for update
+      `,
+      clerkUserId ? [sessionId, clerkUserId] : [sessionId],
+    );
+
+    const session = sessionResult.rows[0];
+    if (!session) {
+      return false;
+    }
+
+    await client.query(
+      `
+        delete from public.deep_research_runs
+        where session_id = $1
+        ${clerkUserId ? "  and clerk_user_id = $2" : ""}
+      `,
+      clerkUserId ? [sessionId, clerkUserId] : [sessionId],
+    );
+
+    await client.query(
+      `
+        delete from public.sessions
+        where id = $1
+        ${clerkUserId ? "  and clerk_user_id = $2" : ""}
+      `,
+      clerkUserId ? [sessionId, clerkUserId] : [sessionId],
+    );
+
+    return true;
+  });
+}
+
 export async function markDeepResearchRunStatus(
   runId: string,
   status: DeepResearchRunStatus,
