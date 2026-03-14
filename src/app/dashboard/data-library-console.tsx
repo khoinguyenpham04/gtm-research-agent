@@ -812,100 +812,6 @@ export function DataLibraryConsole({
             ) : null}
           </CardContent>
         </Card>
-
-        <Card className="border border-border/60">
-          <CardHeader>
-            <CardTitle>Attached workspace knowledge</CardTitle>
-            <CardDescription>
-              Uploaded source material can be organized into folders. Generated
-              reports stay available as workspace-native knowledge beside those
-              source files.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {!workspace ? (
-              <p className="text-sm text-muted-foreground">
-                Select a workspace to see its attached documents.
-              </p>
-            ) : workspaceLoading ? (
-              <p className="text-sm text-muted-foreground">Loading workspace…</p>
-            ) : (
-              <>
-                <div className="rounded-xl border border-dashed border-border/70 px-3 py-3">
-                  <div className="flex items-center gap-2 text-sm font-medium">
-                    <Folder className="size-4 text-muted-foreground" />
-                    <span>{workspace.name}</span>
-                    <Badge variant="outline">{workspace.documentCount}</Badge>
-                  </div>
-                </div>
-
-                {workspace.generatedReports.length > 0 ? (
-                  <div className="space-y-3 rounded-2xl border border-border/60 bg-muted/20 p-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-medium">Generated reports</p>
-                        <p className="text-xs text-muted-foreground">
-                          Published deep research outputs now available in this workspace.
-                        </p>
-                      </div>
-                      <Badge variant="outline">
-                        {workspace.generatedReports.length}
-                      </Badge>
-                    </div>
-
-                    <div className="space-y-3">
-                      {workspace.generatedReports.map((attachment) => (
-                        <GeneratedReportRow
-                          attachment={attachment}
-                          key={attachment.documentId}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-
-                <div className="space-y-3 rounded-2xl border border-border/60 bg-background p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-medium">Uploaded documents</p>
-                      <p className="text-xs text-muted-foreground">
-                        Source files attached from the global library.
-                      </p>
-                    </div>
-                    <Badge variant="outline">
-                      {workspace.uploadedDocumentCount}
-                    </Badge>
-                  </div>
-
-                {uploadedRootDocuments.map((attachment) => (
-                  <WorkspaceDocumentRow
-                    key={attachment.documentId}
-                    attachment={attachment}
-                    folderOptions={folderOptions}
-                    onMove={handleMoveDocument}
-                    submitting={submitting}
-                  />
-                ))}
-                {uploadedFolderTree.map((node) => (
-                  <FolderBranch
-                    key={node.id}
-                    folderOptions={folderOptions}
-                    node={node}
-                    onMove={handleMoveDocument}
-                    submitting={submitting}
-                  />
-                ))}
-                </div>
-
-                {workspace.documents.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">
-                    Attach documents or publish reports to build this workspace.
-                  </p>
-                ) : null}
-              </>
-            )}
-          </CardContent>
-        </Card>
       </div>
 
       <div className="space-y-6">
@@ -982,6 +888,100 @@ export function DataLibraryConsole({
                   )
                 })}
               </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="border border-border/60">
+          <CardHeader>
+            <CardTitle>Attached workspace knowledge</CardTitle>
+            <CardDescription>
+              Uploaded source material can be organized into folders. Generated
+              reports stay available as workspace-native knowledge beside those
+              source files.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {!workspace ? (
+              <p className="text-sm text-muted-foreground">
+                Select a workspace to see its attached documents.
+              </p>
+            ) : workspaceLoading ? (
+              <p className="text-sm text-muted-foreground">Loading workspace…</p>
+            ) : (
+              <>
+                <div className="rounded-xl border border-dashed border-border/70 px-3 py-3">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <Folder className="size-4 text-muted-foreground" />
+                    <span>{workspace.name}</span>
+                    <Badge variant="outline">{workspace.documentCount}</Badge>
+                  </div>
+                </div>
+
+                {workspace.generatedReports.length > 0 ? (
+                  <div className="space-y-3 rounded-2xl border border-border/60 bg-muted/20 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium">Generated reports</p>
+                        <p className="text-xs text-muted-foreground">
+                          Published deep research outputs now available in this workspace.
+                        </p>
+                      </div>
+                      <Badge variant="outline">
+                        {workspace.generatedReports.length}
+                      </Badge>
+                    </div>
+
+                    <div className="space-y-3">
+                      {workspace.generatedReports.map((attachment) => (
+                        <GeneratedReportRow
+                          attachment={attachment}
+                          key={attachment.documentId}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="space-y-3 rounded-2xl border border-border/60 bg-background p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium">Uploaded documents</p>
+                      <p className="text-xs text-muted-foreground">
+                        Source files attached from the global library.
+                      </p>
+                    </div>
+                    <Badge variant="outline">
+                      {workspace.uploadedDocumentCount}
+                    </Badge>
+                  </div>
+
+                  {uploadedRootDocuments.map((attachment) => (
+                    <WorkspaceDocumentRow
+                      key={attachment.documentId}
+                      attachment={attachment}
+                      folderOptions={folderOptions}
+                      onMove={handleMoveDocument}
+                      submitting={submitting}
+                    />
+                  ))}
+                  {uploadedFolderTree.map((node) => (
+                    <FolderBranch
+                      key={node.id}
+                      folderOptions={folderOptions}
+                      node={node}
+                      onMove={handleMoveDocument}
+                      submitting={submitting}
+                    />
+                  ))}
+                </div>
+
+                {workspace.documents.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    Attach documents or publish reports to build this workspace.
+                  </p>
+                ) : null}
+              </>
             )}
           </CardContent>
         </Card>
