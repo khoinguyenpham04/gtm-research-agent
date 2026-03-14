@@ -447,7 +447,7 @@ function DashboardHomeContent({
               </h1>
               <p className="mx-auto max-w-2xl text-pretty text-[1rem] leading-8 text-muted-foreground sm:text-[1.06rem]">
                 {activeMode === "chat"
-                  ? "Chat with your workspace knowledge, then escalate to deep research when you need a full report."
+                  ? "Chat with your workspace knowledge with grounded sources."
                   : "Ask a complex question. Get a full report, with sources."}
               </p>
             </div>
@@ -522,9 +522,6 @@ function DashboardHomeContent({
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-border/55 pt-4">
                     <Button onClick={handleStartNewSession} type="button">
                       New Session
-                    </Button>
-                    <Button asChild className="px-0 text-[0.98rem]" variant="link">
-                      <Link href="/dashboard/recent">Recent Runs</Link>
                     </Button>
                     <Button asChild className="px-0 text-[0.98rem]" variant="link">
                       <Link href="/dashboard/data-library">Data Library</Link>

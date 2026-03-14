@@ -1,11 +1,4 @@
-import { auth } from "@clerk/nextjs/server"
 import { redirect } from "next/navigation"
-
-import { SiteHeader } from "@/components/site-header"
-import { DeepResearchConsole } from "@/app/dashboard/research-console"
-import { listDocuments } from "@/lib/documents"
-import { ensureDeepResearchDatabase } from "@/lib/deep-research/db"
-import { getWorkspaceDetail, listWorkspaces } from "@/lib/workspaces"
 
 function readSearchParam(value: string | string[] | undefined) {
   if (Array.isArray(value)) {
@@ -20,56 +13,33 @@ export default async function DeepResearchPage({
 }: {
   searchParams?: Promise<Record<string, string | string[] | undefined>>
 }) {
-  const { userId } = await auth()
-  if (!userId) {
-    redirect("/sign-in")
+  const resolvedSearchParams = (await searchParams) ?? {}
+  const nextSearchParams = new URLSearchParams()
+
+  nextSearchParams.set("mode", "research")
+
+  const topic = readSearchParam(resolvedSearchParams.topic)?.trim()
+  const objective = readSearchParam(resolvedSearchParams.objective)?.trim()
+  const workspaceId = readSearchParam(resolvedSearchParams.workspaceId)?.trim()
+  const selectedDocumentIds = readSearchParam(
+    resolvedSearchParams.selectedDocumentIds,
+  )?.trim()
+
+  if (workspaceId) {
+    nextSearchParams.set("workspaceId", workspaceId)
   }
 
-  await ensureDeepResearchDatabase().catch(() => undefined)
-  const resolvedSearchParams = (await searchParams) ?? {}
-  const [initialDocuments, initialWorkspaces] = await Promise.all([
-    listDocuments(userId).catch(() => []),
-    listWorkspaces(userId).catch(() => []),
-  ])
-  const requestedWorkspaceId =
-    readSearchParam(resolvedSearchParams.workspaceId)?.trim() ?? ""
-  const initialWorkspaceId =
-    initialWorkspaces.find((workspace) => workspace.id === requestedWorkspaceId)
-      ?.id ??
-    initialWorkspaces[0]?.id ??
-    ""
-  const initialWorkspace = initialWorkspaceId
-    ? await getWorkspaceDetail(initialWorkspaceId, userId).catch(() => null)
-    : null
-  const initialTopic = readSearchParam(resolvedSearchParams.topic)?.trim() ?? ""
-  const initialObjective =
-    readSearchParam(resolvedSearchParams.objective)?.trim() ?? ""
-  const initialSelectedDocumentIds = (
-    readSearchParam(resolvedSearchParams.selectedDocumentIds)?.trim() ?? ""
-  )
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean)
+  if (topic) {
+    nextSearchParams.set("topic", topic)
+  }
 
-  return (
-    <>
-      <SiteHeader
-        title="Deep Research"
-        description="Run workspace-scoped deep research without managing the full file tree here."
-      />
-      <div className="flex flex-1 flex-col">
-        <div className="@container/main flex flex-1 flex-col gap-2 px-4 py-4 lg:px-6 lg:py-6">
-          <DeepResearchConsole
-            initialDocuments={initialDocuments}
-            initialObjective={initialObjective}
-            initialSelectedDocumentIds={initialSelectedDocumentIds}
-            initialTopic={initialTopic}
-            initialWorkspace={initialWorkspace}
-            initialWorkspaceId={initialWorkspaceId}
-            initialWorkspaces={initialWorkspaces}
-          />
-        </div>
-      </div>
-    </>
-  )
+  if (objective) {
+    nextSearchParams.set("objective", objective)
+  }
+
+  if (selectedDocumentIds) {
+    nextSearchParams.set("selectedDocumentIds", selectedDocumentIds)
+  }
+
+  redirect(`/dashboard?${nextSearchParams.toString()}`)
 }

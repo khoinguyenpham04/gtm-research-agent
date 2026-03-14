@@ -17,12 +17,10 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
 import {
-  LayoutDashboardIcon,
   HomeIcon,
   Settings2Icon,
   CircleHelpIcon,
   DatabaseIcon,
-  HistoryIcon,
 } from "lucide-react"
 import Link from "next/link"
 import Image from "next/image"
@@ -32,16 +30,6 @@ const navMain = [
     title: "Home",
     url: "/dashboard",
     icon: <HomeIcon />,
-  },
-  {
-    title: "Deep Research",
-    url: "/dashboard/deepresearch",
-    icon: <LayoutDashboardIcon />,
-  },
-  {
-    title: "Recent Runs",
-    url: "/dashboard/recent",
-    icon: <HistoryIcon />,
   },
   {
     title: "Data Library",

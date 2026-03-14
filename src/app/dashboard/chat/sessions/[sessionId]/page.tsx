@@ -65,9 +65,6 @@ export default async function SessionThreadPage({
                 <Button asChild>
                   <Link href="/dashboard">Back to dashboard</Link>
                 </Button>
-                <Button asChild variant="outline">
-                  <Link href="/dashboard/recent">Open recent runs</Link>
-                </Button>
               </CardContent>
             </Card>
           )}

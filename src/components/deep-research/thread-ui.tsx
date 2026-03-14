@@ -1226,7 +1226,7 @@ export function DeepResearchThreadShell({
 }
 
 export function DeepResearchThreadRecoveryActions({
-  fallbackHref = "/dashboard/deepresearch",
+  fallbackHref = "/dashboard?mode=research",
   homeHref = "/dashboard",
 }: {
   homeHref?: string
@@ -1238,7 +1238,7 @@ export function DeepResearchThreadRecoveryActions({
         <Link href={homeHref}>Start another research</Link>
       </Button>
       <Button asChild variant="outline">
-        <Link href={fallbackHref}>Open fallback console</Link>
+        <Link href={fallbackHref}>Open dashboard launcher</Link>
       </Button>
     </>
   )

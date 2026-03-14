@@ -41,12 +41,21 @@ export default async function DeepResearchRunThreadPage({
   }
 
   if (run) {
-    const searchParams = new URLSearchParams({ runId })
+    const nextSearchParams = new URLSearchParams({ mode: "research" })
     if (run.workspaceId) {
-      searchParams.set("workspaceId", run.workspaceId)
+      nextSearchParams.set("workspaceId", run.workspaceId)
+    }
+    if (run.topic) {
+      nextSearchParams.set("topic", run.topic)
+    }
+    if (run.selectedDocuments.length > 0) {
+      nextSearchParams.set(
+        "selectedDocumentIds",
+        run.selectedDocuments.map((document) => document.id).join(","),
+      )
     }
 
-    redirect(`/dashboard/recent?${searchParams.toString()}`)
+    redirect(`/dashboard?${nextSearchParams.toString()}`)
   }
 
   return (
@@ -57,20 +66,17 @@ export default async function DeepResearchRunThreadPage({
           <Card className="mx-auto w-full max-w-2xl border border-border/60">
             <CardHeader>
               <CardTitle>Research thread not found</CardTitle>
-              <CardDescription>
-                This run may have been removed, or the link may be invalid.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-wrap gap-3">
-              <Button asChild>
-                <Link href="/dashboard">Back to dashboard</Link>
-              </Button>
-              <Button asChild variant="outline">
-                <Link href="/dashboard/recent">Open recent runs</Link>
-              </Button>
-            </CardContent>
-          </Card>
-        </div>
+            <CardDescription>
+              This run may have been removed, or the link may be invalid.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-wrap gap-3">
+            <Button asChild>
+              <Link href="/dashboard">Back to dashboard</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
       </div>
     </>
   )
