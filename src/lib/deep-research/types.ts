@@ -466,13 +466,31 @@ export const workspaceChatCitationSourceTypeSchema = z.enum(
   workspaceChatCitationSourceTypeValues,
 );
 
+function isWorkspaceChatCitationUrl(value: string) {
+  if (value.startsWith("/")) {
+    return true;
+  }
+
+  try {
+    new URL(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export const workspaceChatCitationSchema = z.object({
   id: z.string().trim().min(1),
   sourceType: workspaceChatCitationSourceTypeSchema,
   title: z.string().trim().min(1),
   excerpt: z.string().trim().min(1),
   locationLabel: z.string().trim().optional(),
-  url: z.string().trim().url().optional(),
+  url: z
+    .string()
+    .trim()
+    .min(1)
+    .refine(isWorkspaceChatCitationUrl)
+    .optional(),
   documentId: z.string().trim().optional(),
   fileName: z.string().trim().optional(),
   chunkIndex: z.number().int().nonnegative().optional(),

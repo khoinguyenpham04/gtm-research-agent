@@ -15,9 +15,60 @@ export type AskWorkspaceStatus =
   | "streaming"
   | "error"
 
+export type PendingWorkspaceTurn = {
+  assistantMessageId: string
+  requestId: string
+  userMessageId: string
+}
+
 type StreamEvent = {
   data: string
   event: string
+}
+
+function buildTraceEvent(
+  stage: WorkspaceChatTraceEvent["stage"],
+  message: string,
+  details: Record<string, unknown> = {},
+): WorkspaceChatTraceEvent {
+  return {
+    createdAt: new Date().toISOString(),
+    details,
+    id: crypto.randomUUID(),
+    message,
+    stage,
+  }
+}
+
+function mergeTraceEvent(
+  current: WorkspaceChatTraceEvent[],
+  nextTraceEvent: WorkspaceChatTraceEvent,
+) {
+  const existingEventIndex = current.findIndex(
+    (event) =>
+      event.id === nextTraceEvent.id ||
+      (event.stage === nextTraceEvent.stage &&
+        event.details?.optimistic === true),
+  )
+
+  if (existingEventIndex === -1) {
+    return [...current, nextTraceEvent].sort(
+      (left, right) =>
+        new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime(),
+    )
+  }
+
+  const nextEvents = [...current]
+  nextEvents[existingEventIndex] = {
+    ...nextEvents[existingEventIndex],
+    ...nextTraceEvent,
+    details: {
+      ...nextEvents[existingEventIndex].details,
+      ...nextTraceEvent.details,
+    },
+  }
+
+  return nextEvents
 }
 
 function parseSseEvents(buffer: string) {
@@ -80,11 +131,15 @@ export function useSessionWorkspaceChat({
     WorkspaceChatTraceEvent[]
   >([])
   const [transientUserText, setTransientUserText] = useState<string | null>(null)
+  const [pendingTurn, setPendingTurn] = useState<PendingWorkspaceTurn | null>(
+    null,
+  )
   const [requestId, setRequestId] = useState<string | null>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
 
   const clearTransient = useCallback(() => {
     startTransition(() => {
+      setPendingTurn(null)
       setRequestId(null)
       setStatus("idle")
       setStreamingAssistantText("")
@@ -100,6 +155,10 @@ export function useSessionWorkspaceChat({
     abortControllerRef.current = null
     setStatus("idle")
   }, [])
+
+  const acknowledgePersistedWorkspaceTurn = useCallback(() => {
+    clearTransient()
+  }, [clearTransient])
 
   const sendWorkspaceMessage = useCallback(
     async ({
@@ -117,15 +176,22 @@ export function useSessionWorkspaceChat({
       abortControllerRef.current?.abort()
       const controller = new AbortController()
       abortControllerRef.current = controller
+      const nextRequestId = crypto.randomUUID()
 
       setError(null)
       setStatus("starting")
+      setPendingTurn(null)
       setStreamingAssistantText("")
       setTransientMetadata(null)
       setTransientSources([])
-      setTransientTraceEvents([])
+      setTransientTraceEvents([
+        buildTraceEvent("starting", "Ask Workspace request started.", {
+          optimistic: true,
+          requestId: nextRequestId,
+        }),
+      ])
       setTransientUserText(trimmedText)
-      setRequestId(crypto.randomUUID())
+      setRequestId(nextRequestId)
 
       try {
         const response = await fetch(`/api/sessions/${sessionId}/chat`, {
@@ -195,7 +261,9 @@ export function useSessionWorkspaceChat({
                 setTransientSources(metadata.sources)
               }
               if (Array.isArray(metadata?.traceEvents)) {
-                setTransientTraceEvents(metadata.traceEvents)
+                setTransientTraceEvents((current) =>
+                  metadata.traceEvents.reduce(mergeTraceEvent, current),
+                )
               }
               continue
             }
@@ -210,7 +278,9 @@ export function useSessionWorkspaceChat({
             if (event.event === "trace") {
               const traceEvent = payload.traceEvent as WorkspaceChatTraceEvent | undefined
               if (traceEvent) {
-                setTransientTraceEvents((current) => [...current, traceEvent])
+                setTransientTraceEvents((current) =>
+                  mergeTraceEvent(current, traceEvent),
+                )
               }
               continue
             }
@@ -226,8 +296,19 @@ export function useSessionWorkspaceChat({
             }
 
             if (event.event === "done") {
+              if (
+                typeof payload.assistantMessageId === "string" &&
+                typeof payload.requestId === "string" &&
+                typeof payload.userMessageId === "string"
+              ) {
+                setPendingTurn({
+                  assistantMessageId: payload.assistantMessageId,
+                  requestId: payload.requestId,
+                  userMessageId: payload.userMessageId,
+                })
+              }
+              setStatus("idle")
               await onPersisted()
-              clearTransient()
               abortControllerRef.current = null
               return
             }
@@ -268,16 +349,12 @@ export function useSessionWorkspaceChat({
         )
         setTransientTraceEvents((current) => [
           ...current,
-          {
-            createdAt: new Date().toISOString(),
-            details: {},
-            id: crypto.randomUUID(),
-            message:
-              nextError instanceof Error
-                ? nextError.message
-                : "Workspace chat failed to generate a response.",
-            stage: "error",
-          },
+          buildTraceEvent(
+            "error",
+            nextError instanceof Error
+              ? nextError.message
+              : "Workspace chat failed to generate a response.",
+          ),
         ])
         setStatus("error")
         abortControllerRef.current = null
@@ -289,6 +366,8 @@ export function useSessionWorkspaceChat({
   return {
     chatError: error,
     chatStatus: status,
+    acknowledgePersistedWorkspaceTurn,
+    pendingTurn,
     requestId,
     sendWorkspaceMessage,
     stopWorkspaceMessage,

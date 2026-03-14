@@ -13,13 +13,12 @@ import { BookIcon, TelescopeIcon } from "lucide-react"
 import { useStickToBottomContext } from "use-stick-to-bottom"
 
 import {
-  AskWorkspaceActivityDrawer,
-  DeepResearchActivityDrawer,
   DeepResearchArtifactsPanel,
   DeepResearchClarificationCard,
   DeepResearchFailureCard,
   DeepResearchFinalReport,
   DeepResearchLaunchStatusCard,
+  SessionActivityDrawer,
 } from "@/components/deep-research/thread-ui"
 import {
   buildSessionThreadHref,
@@ -53,6 +52,7 @@ import type {
 } from "@/lib/deep-research/types"
 import {
   isWorkspaceChatMessageMetadata,
+  workspaceChatCitationSchema,
 } from "@/lib/deep-research/types"
 import type {
   WorkspaceDetail,
@@ -77,6 +77,97 @@ type SelectionPrefill = {
 
 function buildEscalationPrompt(question: string) {
   return question.trim()
+}
+
+function getWorkspaceChatCitationsFromMetadata(
+  metadata: unknown,
+): WorkspaceChatCitation[] {
+  if (isWorkspaceChatMessageMetadata(metadata)) {
+    return metadata.sources.length > 0 ? metadata.sources : metadata.citations
+  }
+
+  if (!metadata || typeof metadata !== "object") {
+    return []
+  }
+
+  const rawMetadata = metadata as Record<string, unknown>
+  const rawSources = [rawMetadata.sources, rawMetadata.citations]
+  const citations: WorkspaceChatCitation[] = []
+  const seenCitationIds = new Set<string>()
+
+  rawSources.forEach((sourceGroup) => {
+    if (!Array.isArray(sourceGroup)) {
+      return
+    }
+
+    sourceGroup.forEach((candidate) => {
+      const parsedCitation = workspaceChatCitationSchema.safeParse(candidate)
+      if (!parsedCitation.success || seenCitationIds.has(parsedCitation.data.id)) {
+        return
+      }
+
+      citations.push(parsedCitation.data)
+      seenCitationIds.add(parsedCitation.data.id)
+    })
+  })
+
+  return citations
+}
+
+function getWorkspaceChatTraceEventsFromMetadata(
+  metadata: unknown,
+): WorkspaceChatTraceEvent[] {
+  if (isWorkspaceChatMessageMetadata(metadata)) {
+    return metadata.traceEvents ?? []
+  }
+
+  if (!metadata || typeof metadata !== "object") {
+    return []
+  }
+
+  const rawTraceEvents = (metadata as Record<string, unknown>).traceEvents
+  if (!Array.isArray(rawTraceEvents)) {
+    return []
+  }
+
+  return rawTraceEvents
+    .flatMap((candidate) => {
+      if (!candidate || typeof candidate !== "object") {
+        return []
+      }
+
+      const traceEvent = candidate as Record<string, unknown>
+      const stage = traceEvent.stage
+      if (
+        typeof traceEvent.id !== "string" ||
+        typeof traceEvent.createdAt !== "string" ||
+        typeof traceEvent.message !== "string" ||
+        (stage !== "starting" &&
+          stage !== "retrieving" &&
+          stage !== "streaming" &&
+          stage !== "completed" &&
+          stage !== "error")
+      ) {
+        return []
+      }
+
+      return [
+        {
+          createdAt: traceEvent.createdAt,
+          details:
+            traceEvent.details && typeof traceEvent.details === "object"
+              ? (traceEvent.details as Record<string, unknown>)
+              : {},
+          id: traceEvent.id,
+          message: traceEvent.message,
+          stage,
+        } satisfies WorkspaceChatTraceEvent,
+      ]
+    })
+    .sort(
+      (left, right) =>
+        new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime(),
+    )
 }
 
 function normalizeWorkspaceChatSourceType(citation: WorkspaceChatCitation) {
@@ -218,8 +309,8 @@ function StreamingAssistantPlaceholder({
     <div className="px-1 py-1">
       <Shimmer
         as="span"
-        className="text-sm font-medium text-muted-foreground"
-        duration={1.8}
+        className="text-sm font-medium [--color-background:#FFFFFF] [--color-muted-foreground:#52525B]"
+        duration={1.55}
       >
         {label}
       </Shimmer>
@@ -347,14 +438,10 @@ function renderSessionMessageCard({
     )
   }
 
-  const chatMetadata = isWorkspaceChatMessageMetadata(message.metadata)
-    ? message.metadata
-    : null
-
   if (message.messageType === "chat" && message.role === "assistant") {
     return (
       <AssistantChatMessage
-        citations={chatMetadata?.sources ?? chatMetadata?.citations ?? []}
+        citations={getWorkspaceChatCitationsFromMetadata(message.metadata)}
         contentMarkdown={message.contentMarkdown}
         onEscalate={onEscalate}
         sessionId={sessionId}
@@ -374,11 +461,7 @@ function getWorkspaceChatTraceEvents(
     return []
   }
 
-  const metadata = isWorkspaceChatMessageMetadata(message.metadata)
-    ? message.metadata
-    : null
-
-  return metadata?.traceEvents ?? []
+  return getWorkspaceChatTraceEventsFromMetadata(message.metadata)
 }
 
 export function DeepResearchSessionThread({
@@ -421,8 +504,10 @@ export function DeepResearchSessionThread({
     searchParams.get("runId")?.trim() || currentSession.latestRunId || ""
 
   const {
+    acknowledgePersistedWorkspaceTurn,
     chatError,
     chatStatus,
+    pendingTurn,
     requestId: chatRequestId,
     sendWorkspaceMessage,
     stopWorkspaceMessage,
@@ -439,6 +524,18 @@ export function DeepResearchSessionThread({
     sessionId: currentSession.id,
   })
 
+  const visibleSessionMessages = useMemo(
+    () =>
+      pendingTurn
+        ? sessionMessages.filter(
+            (message) =>
+              message.id !== pendingTurn.assistantMessageId &&
+              message.id !== pendingTurn.userMessageId,
+          )
+        : sessionMessages,
+    [pendingTurn, sessionMessages],
+  )
+
   const activityRun =
     sessionMessages.find((message) => message.linkedRun?.id === focusedRunId)
       ?.linkedRun ??
@@ -446,21 +543,97 @@ export function DeepResearchSessionThread({
       .reverse()
       .find((message) => message.linkedRun)
       ?.linkedRun
-  const latestPersistedChatTraceEvents = [...sessionMessages]
-    .reverse()
-    .find((message) => getWorkspaceChatTraceEvents(message).length > 0)
-  const chatActivityEvents =
-    transientTraceEvents.length > 0
-      ? transientTraceEvents
-      : latestPersistedChatTraceEvents
-        ? getWorkspaceChatTraceEvents(latestPersistedChatTraceEvents)
-        : []
-
+  const latestPersistedChatTraceMessage = useMemo(
+    () =>
+      [...sessionMessages]
+        .reverse()
+        .find((message) => getWorkspaceChatTraceEvents(message).length > 0),
+    [sessionMessages],
+  )
+  const latestPersistedChatTraceEvents = useMemo(
+    () =>
+      latestPersistedChatTraceMessage
+        ? getWorkspaceChatTraceEvents(latestPersistedChatTraceMessage)
+        : [],
+    [latestPersistedChatTraceMessage],
+  )
   const combinedError = composerError ?? chatError ?? error
   const isChatSubmitting =
     chatStatus === "starting" ||
     chatStatus === "retrieving" ||
     chatStatus === "streaming"
+  const chatActivityEvents =
+    transientTraceEvents.length > 0
+      ? transientTraceEvents
+      : latestPersistedChatTraceEvents
+  const transientCitations =
+    transientAssistantSources.length > 0
+      ? transientAssistantSources
+      : getWorkspaceChatCitationsFromMetadata(transientAssistantMetadata)
+  const persistedPendingAssistantMessage = pendingTurn
+    ? sessionMessages.find(
+        (message) =>
+          message.id === pendingTurn.assistantMessageId &&
+          message.messageType === "chat" &&
+          message.role === "assistant",
+      )
+    : null
+  const persistedPendingUserMessage = pendingTurn
+    ? sessionMessages.find(
+        (message) =>
+          message.id === pendingTurn.userMessageId &&
+          message.messageType === "chat" &&
+          message.role === "user",
+      )
+    : null
+  const persistedPendingAssistantCitations = persistedPendingAssistantMessage
+    ? getWorkspaceChatCitationsFromMetadata(
+        persistedPendingAssistantMessage.metadata,
+      )
+    : []
+  const hasActiveAskWorkspaceRequest =
+    transientTraceEvents.length > 0 ||
+    transientUserText !== null ||
+    transientAssistantText.length > 0 ||
+    pendingTurn !== null ||
+    isChatSubmitting
+  const sessionActivityDrawer = useMemo(() => {
+    if (hasActiveAskWorkspaceRequest && chatActivityEvents.length > 0) {
+      return {
+        events: chatActivityEvents,
+        title: "Ask Workspace activity",
+      }
+    }
+
+    if (activeMode === "chat" && latestPersistedChatTraceEvents.length > 0) {
+      return {
+        events: latestPersistedChatTraceEvents,
+        title: "Ask Workspace activity",
+      }
+    }
+
+    if (activityRun?.events.length) {
+      return {
+        events: activityRun.events,
+        title: "Research activity",
+      }
+    }
+
+    if (latestPersistedChatTraceEvents.length > 0) {
+      return {
+        events: latestPersistedChatTraceEvents,
+        title: "Ask Workspace activity",
+      }
+    }
+
+    return null
+  }, [
+    activeMode,
+    activityRun?.events,
+    chatActivityEvents,
+    hasActiveAskWorkspaceRequest,
+    latestPersistedChatTraceEvents,
+  ])
   const launcherChatSubmitStatus =
     chatStatus === "streaming"
       ? "streaming"
@@ -471,7 +644,55 @@ export function DeepResearchSessionThread({
           : undefined
   const scrolledRunIdRef = useRef<string | null>(null)
   const handledAutostartKeyRef = useRef<string | null>(null)
+  const persistenceRetryRef = useRef<Map<string, number>>(new Map())
   const researchLaunchControllerRef = useRef<AbortController | null>(null)
+
+  useEffect(() => {
+    if (!pendingTurn) {
+      persistenceRetryRef.current.clear()
+      return
+    }
+
+    const attemptCount =
+      persistenceRetryRef.current.get(pendingTurn.requestId) ?? 0
+    const isPersistedTurnReady = Boolean(
+      persistedPendingAssistantMessage && persistedPendingUserMessage,
+    )
+    const shouldRetryMissingTurn =
+      !isPersistedTurnReady && attemptCount < 2
+    const shouldRetryMissingCitations =
+      isPersistedTurnReady &&
+      transientCitations.length > 0 &&
+      persistedPendingAssistantCitations.length === 0 &&
+      attemptCount < 1
+
+    if (shouldRetryMissingTurn || shouldRetryMissingCitations) {
+      const timeoutId = window.setTimeout(() => {
+        persistenceRetryRef.current.set(
+          pendingTurn.requestId,
+          attemptCount + 1,
+        )
+        void refreshThread().catch(() => undefined)
+      }, 240)
+
+      return () => window.clearTimeout(timeoutId)
+    }
+
+    if (!isPersistedTurnReady) {
+      return
+    }
+
+    persistenceRetryRef.current.delete(pendingTurn.requestId)
+    acknowledgePersistedWorkspaceTurn()
+  }, [
+    acknowledgePersistedWorkspaceTurn,
+    pendingTurn,
+    persistedPendingAssistantCitations.length,
+    persistedPendingAssistantMessage,
+    persistedPendingUserMessage,
+    refreshThread,
+    transientCitations.length,
+  ])
 
   useEffect(() => {
     const focusRunId = searchParams.get("runId")?.trim()
@@ -683,7 +904,7 @@ export function DeepResearchSessionThread({
                 </Card>
               ) : null}
 
-              {sessionMessages.map((message, index) => {
+              {visibleSessionMessages.map((message, index) => {
                 const linkedRun = message.linkedRun
                 const activeRateLimitRetry = linkedRun
                   ? extractActiveRateLimitRetry(linkedRun)
@@ -696,7 +917,7 @@ export function DeepResearchSessionThread({
                   : []
                 const priorChatQuestion =
                   message.messageType === "chat" && message.role === "assistant"
-                    ? [...sessionMessages.slice(0, index)]
+                    ? [...visibleSessionMessages.slice(0, index)]
                         .reverse()
                         .find(
                           (candidate) =>
@@ -842,13 +1063,7 @@ export function DeepResearchSessionThread({
                 <Message from="assistant" className="ml-0 max-w-full">
                   <div className="w-full">
                     <AssistantChatMessage
-                      citations={
-                        transientAssistantSources.length > 0
-                          ? transientAssistantSources
-                          : transientAssistantMetadata?.sources ??
-                            transientAssistantMetadata?.citations ??
-                            []
-                      }
+                      citations={transientCitations}
                       contentMarkdown={transientAssistantText}
                       sessionId={currentSession.id}
                     />
@@ -856,7 +1071,7 @@ export function DeepResearchSessionThread({
                 </Message>
               ) : null}
 
-              {sessionMessages.length === 0 &&
+              {visibleSessionMessages.length === 0 &&
               !transientUserText &&
               !transientAssistantText &&
               !isChatSubmitting ? (
@@ -873,18 +1088,13 @@ export function DeepResearchSessionThread({
 
           <div className="sticky bottom-0 z-10 px-4 pb-4 pt-6 sm:px-6">
             <div className="relative">
-              {activeMode === "chat" && chatActivityEvents.length > 0 ? (
+              {sessionActivityDrawer ? (
                 <div className="pointer-events-none absolute inset-x-0 bottom-[calc(100%-1.15rem)] z-0">
                   <div className="pointer-events-auto">
-                    <AskWorkspaceActivityDrawer events={chatActivityEvents} />
-                  </div>
-                </div>
-              ) : null}
-
-              {activeMode !== "chat" && activityRun?.events.length ? (
-                <div className="pointer-events-none absolute inset-x-0 bottom-[calc(100%-1.15rem)] z-0">
-                  <div className="pointer-events-auto">
-                    <DeepResearchActivityDrawer events={activityRun.events} />
+                    <SessionActivityDrawer
+                      events={sessionActivityDrawer.events}
+                      title={sessionActivityDrawer.title}
+                    />
                   </div>
                 </div>
               ) : null}

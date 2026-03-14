@@ -338,12 +338,22 @@ function SharedActivityDrawer({
   )
 }
 
+export function SessionActivityDrawer({
+  events,
+  title,
+}: {
+  events: ActivityDrawerEvent[]
+  title: string
+}) {
+  return <SharedActivityDrawer events={events} title={title} />
+}
+
 export function DeepResearchActivityDrawer({
   events,
 }: {
   events: DeepResearchRunEvent[]
 }) {
-  return <SharedActivityDrawer events={events} title="Research activity" />
+  return <SessionActivityDrawer events={events} title="Research activity" />
 }
 
 export function AskWorkspaceActivityDrawer({
@@ -351,7 +361,12 @@ export function AskWorkspaceActivityDrawer({
 }: {
   events: WorkspaceChatTraceEvent[]
 }) {
-  return <SharedActivityDrawer events={events} title="Ask Workspace activity" />
+  return (
+    <SessionActivityDrawer
+      events={events}
+      title="Ask Workspace activity"
+    />
+  )
 }
 
 function useResearchActivityFeed(events: ActivityDrawerEvent[]) {

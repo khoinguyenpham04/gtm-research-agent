@@ -312,6 +312,7 @@ export async function POST(
 
       sendEvent("done", {
         assistantMessageId,
+        userMessageId,
         requestId: assistantMessageId,
       });
     },
